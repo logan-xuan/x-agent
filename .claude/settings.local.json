@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:alidocs.dingtalk.com)",
+      "Bash(git fetch --all --prune)",
+      "Bash(.specify/scripts/bash/setup-plan.sh --json)",
+      "Bash(.specify/scripts/bash/update-agent-context.sh claude)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --paths-only)",
+      "Bash(/Users/hzliuxuan/Documents/qoder-workspace/x-agent2/documents/corn.md << 'EOL'\n# Cron 定时任务管理设计文档\n\n## 概述\nCron 定时任务管理系统允许用户设置时间计划，让 AI Agent 在指定时间执行特定任务。当用户提到某个时间计划提醒做某事时，系统会创建一个 cron 任务，到点执行预定任务。\n\n## 设计目标\n\n1. **自动化提醒**: 在设定时间自动执行提醒任务\n2. **任务调度**: 支持复杂的时间安排和重复任务\n3. **集成能力**: 与 AI Agent 的其他功能无缝集成\n4. **可靠性**: 确保任务按时准确执行\n\n## 核心功能\n\n### 任务创建\n- 解析自然语言形式的时间表达\n- 支持标准 cron 表达式\n- 创建一次性或重复性任务\n\n### 任务管理\n- 任务列表查看\n- 任务状态监控\n- 任务修改与删除\n- 执行历史记录\n\n### 执行引擎\n- 基于时间的触发机制\n- 任务队列管理\n- 并发控制\n- 错误处理与重试\n\n## API 接口\n\n### 创建任务\n```python\ndef create_cron_task\\(time_expr: str, task_desc: str, user_id: str, params: dict = None\\) -> str\n```\n\n### 删除任务\n```python\ndef delete_cron_task\\(task_id: str\\) -> bool\n```\n\n### 查看任务\n```python\ndef list_cron_tasks\\(user_id: str = None\\) -> List[CronTask]\n```\n\n## 时间表达式\n\n### 自然语言支持\n- \"明天早上9点提醒我开会\"\n- \"每周三下午2点运行数据分析\"\n- \"下个月第一天备份数据\"\n- \"每天晚上10点清理临时文件\"\n\n### Cron 表达式\n- 标准 Unix cron 格式：`分钟 小时 日 月 星期`\n- 扩展支持：秒、年字段（可选）\n- 预定义宏：@hourly, @daily, @weekly, @monthly, @yearly\n\n## 任务类型\n\n### 通知提醒\n- 消息推送\n- 邮件发送\n- 日历事件\n\n### 自动化操作\n- 代码执行\n- 文件操作\n- 系统维护\n\n### AI 任务\n- 知识复习\n- 数据分析\n- 报告生成\n\n## 安全机制\n\n### 权限控制\n- 用户只能管理自己的任务\n- 限制危险操作的执行\n- 任务执行范围限制\n\n### 资源限制\n- 任务执行时间限制\n- 系统资源使用限制\n- 并发任务数量限制\n\n## 实现架构\n\n### 调度器\n```python\nclass CronScheduler:\n    def add_task\\(self, cron_expr: str, func: callable, *args, **kwargs\\):\n        # 添加定时任务\n    \n    def start\\(self\\):\n        # 启动调度器\n    \n    def stop\\(self\\):\n        # 停止调度器\n```\n\n### 任务处理器\n```python\nclass TaskHandler:\n    def handle_notification_task\\(self, task: CronTask\\):\n        # 处理通知类任务\n    \n    def handle_ai_task\\(self, task: CronTask\\):\n        # 处理 AI 相关任务\n```\n\n## 错误处理\n\n### 任务执行失败\n- 记录失败日志\n- 支持重试机制\n- 通知用户失败情况\n\n### 系统异常\n- 调度器故障恢复\n- 数据持久化保证\n- 任务状态一致性维护\n\n## 性能优化\n\n### 任务队列\n- 内存中的优先队列\n- 高效的时间比较算法\n- 延迟加载未到期任务\n\n### 资源管理\n- 任务执行池管理\n- 内存使用优化\n- 避免任务堆积\n\n## 用户体验\n\n### 自然语言处理\n- 智能时间识别\n- 表达式建议与纠正\n- 执行时间预览\n\n### 交互界面\n- 任务列表视图\n- 创建向导\n- 执行结果反馈\n\n## 扩展性\n\n### 插件化任务类型\n- 支持自定义任务处理器\n- 可扩展的任务类型\n- 第三方集成支持\n\n### 分布式支持\n- 多实例协调\n- 任务分片处理\n- 高可用保障\nEOL)"
+    ]
+  }
+}

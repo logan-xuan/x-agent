@@ -1,0 +1,322 @@
+# API Contract: x-agent2 AI Assistant System
+
+## Overview
+This document defines the API contracts for the x-agent2 AI assistant system, specifying endpoints for chat interactions, session management, tool execution, and plugin management.
+
+## Base URL
+`http://localhost:8000/api/v1` (development) or your deployed domain
+
+## Authentication
+Bearer token authentication using API keys configured in the system.
+
+## Endpoints
+
+### Chat & Conversation Management
+
+#### POST /chat
+Initiate or continue a conversation with the AI assistant.
+
+**Request Body:**
+```json
+{
+  "message": "User message content",
+  "session_id": "optional session identifier",
+  "model_override": "optional model name",
+  "context": {
+    "user_preferences": {},
+    "recent_interactions": []
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Assistant's response",
+  "session_id": "identifier for the conversation session",
+  "timestamp": "ISO 8601 timestamp",
+  "usage": {
+    "input_tokens": 15,
+    "output_tokens": 42,
+    "total_tokens": 57
+  },
+  "metadata": {
+    "processing_time_ms": 1250,
+    "model_used": "claude-3-5-sonnet-20241022"
+  }
+}
+```
+
+**Headers:**
+- `Authorization: Bearer {api_key}`
+- `Content-Type: application/json`
+
+#### GET /chat/history
+Retrieve conversation history for a session.
+
+**Query Parameters:**
+- `session_id`: Required session identifier
+- `limit`: Optional number of messages to return (default: 50, max: 200)
+- `offset`: Optional offset for pagination (default: 0)
+
+**Response:**
+```json
+{
+  "session_id": "session identifier",
+  "messages": [
+    {
+      "id": "message id",
+      "sender": "user|assistant|system",
+      "content": "message content",
+      "timestamp": "ISO 8601 timestamp",
+      "type": "text|image|file|tool_result"
+    }
+  ],
+  "pagination": {
+    "total_count": 120,
+    "returned_count": 50,
+    "has_more": true
+  }
+}
+```
+
+#### DELETE /chat/session/{session_id}
+Delete a conversation session and its history.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Session deleted successfully"
+}
+```
+
+### File Operations
+
+#### POST /files/upload
+Upload a file to be processed by the AI assistant.
+
+**Request:**
+Form data with file field:
+```
+Content-Type: multipart/form-data
+```
+Form field: `file` - the file to upload
+
+**Query Parameters:**
+- `session_id`: Optional session to associate with
+
+**Response:**
+```json
+{
+  "file_id": "unique identifier for uploaded file",
+  "filename": "original filename",
+  "size_bytes": 102400,
+  "mime_type": "detected mime type",
+  "upload_timestamp": "ISO 8601 timestamp",
+  "analysis_result": "optional initial analysis"
+}
+```
+
+#### GET /files/{file_id}
+Download a previously uploaded file.
+
+**Response:**
+Binary file content with appropriate Content-Type header.
+
+### Tool Execution
+
+#### POST /tools/execute
+Execute a specific tool with provided parameters.
+
+**Request Body:**
+```json
+{
+  "tool_name": "web-search|file-read|command-exec",
+  "parameters": {
+    "query": "search query",
+    "file_path": "/path/to/file",
+    "command": "shell command"
+  },
+  "session_id": "optional session identifier"
+}
+```
+
+**Response:**
+```json
+{
+  "result": "tool execution result",
+  "status": "success|failed|cancelled",
+  "execution_time_ms": 150,
+  "metadata": {
+    "tool_used": "web-search",
+    "parameters_used": {...}
+  }
+}
+```
+
+### Memory System
+
+#### POST /memory/store
+Store information in the assistant's memory.
+
+**Request Body:**
+```json
+{
+  "user_id": "user identifier",
+  "content": "information to remember",
+  "entry_type": "preference|fact|interaction|summary",
+  "tags": ["optional", "tags"],
+  "expiry_days": 30
+}
+```
+
+**Response:**
+```json
+{
+  "memory_id": "unique identifier for stored memory",
+  "stored": true,
+  "expires_at": "ISO 8601 timestamp"
+}
+```
+
+#### POST /memory/search
+Search through stored memories.
+
+**Request Body:**
+```json
+{
+  "query": "search query",
+  "user_id": "user identifier",
+  "filters": {
+    "entry_type": ["preference", "fact"],
+    "tags": ["important"],
+    "date_range": {
+      "start": "ISO 8601 timestamp",
+      "end": "ISO 8601 timestamp"
+    }
+  },
+  "limit": 10
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "memory_id": "memory identifier",
+      "content": "memory content",
+      "entry_type": "preference",
+      "relevance_score": 0.92,
+      "created_at": "ISO 8601 timestamp",
+      "tags": ["important", "preference"]
+    }
+  ],
+  "total_results": 1,
+  "query_processed": "processed query terms"
+}
+```
+
+### Plugin Management
+
+#### GET /plugins
+List all available plugins.
+
+**Response:**
+```json
+{
+  "plugins": [
+    {
+      "id": "plugin unique id",
+      "name": "Plugin Name",
+      "description": "Plugin description",
+      "version": "1.0.0",
+      "author": "Author Name",
+      "enabled": true,
+      "installed": true,
+      "permissions_needed": ["file_read", "network_access"]
+    }
+  ]
+}
+```
+
+#### POST /plugins/{plugin_id}/toggle
+Enable or disable a plugin.
+
+**Request Body:**
+```json
+{
+  "enabled": true
+}
+```
+
+**Response:**
+```json
+{
+  "plugin_id": "plugin id",
+  "enabled": true,
+  "message": "Plugin state updated successfully"
+}
+```
+
+### Session Management
+
+#### POST /sessions
+Create a new session.
+
+**Request Body:**
+```json
+{
+  "user_id": "optional user identifier",
+  "session_name": "optional session name",
+  "initial_context": {}
+}
+```
+
+**Response:**
+```json
+{
+  "session_id": "new session identifier",
+  "created_at": "ISO 8601 timestamp",
+  "status": "active"
+}
+```
+
+#### GET /sessions/{session_id}
+Get information about a specific session.
+
+**Response:**
+```json
+{
+  "session_id": "session identifier",
+  "user_id": "associated user id",
+  "started_at": "ISO 8601 timestamp",
+  "last_interaction_at": "ISO 8601 timestamp",
+  "message_count": 25,
+  "status": "active",
+  "context_summary": "brief summary of session context"
+}
+```
+
+## Error Responses
+All error responses follow this format:
+
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human readable error message",
+    "details": "Optional detailed information"
+  }
+}
+```
+
+## Common Error Codes
+- `AUTHENTICATION_ERROR`: Invalid or missing API key
+- `VALIDATION_ERROR`: Request parameters do not meet requirements
+- `RESOURCE_NOT_FOUND`: Requested resource does not exist
+- `RATE_LIMIT_EXCEEDED`: Too many requests in a time period
+- `TOOL_EXECUTION_ERROR`: Error occurred while executing a tool
+- `PLUGIN_ERROR`: Error related to plugin functionality
+- `INTERNAL_ERROR`: Unspecified server-side error
