@@ -12,12 +12,12 @@
 ## Technical Context
 
 **Language/Version**: Python 3.11, TypeScript 5.x
-**Primary Dependencies**: FastAPI, React, sqlite-vss, Anthropic SDK or OpenAI SDK
+**Primary Dependencies**: FastAPI, React, sqlite-vss, Anthropic SDK or OpenAI SDK, **LangChain**
 **Storage**: SQLite for structured data, sqlite-vss for vector storage, Markdown files for user logs
 **Testing**: pytest for backend, Jest for frontend
 **Target Platform**: Linux/Unix server environment with web interface
 **Project Type**: Web application with backend services and frontend UI
-**Performance Goals**: 90% responses within 5 seconds, support 100 concurrent users
+**Performance Goals**: 90% responses within 10 seconds, support 10 concurrent users
 **Constraints**: Secure command execution, prevent unauthorized system access, <1GB memory usage under normal load
 **Scale/Scope**: Support 1000+ users, extensible via plugins, multi-channel messaging
 

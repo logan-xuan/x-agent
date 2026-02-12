@@ -1,11 +1,8 @@
-现在我们再设计agent core 执行引擎流程，来帮助LLM tools mcp subagent协助合作
+# 需求
+构建一个支持 LLM + Tools + MCP + SubAgent 协同工作的智能执行中枢
+让 AI Agent 不再是“单打独斗”，而是成为一个会调用工具、能分解任务、可协调子代理的智能指挥官。
 
-
-✅ X-Agent Core 执行引擎设计（v1.0）
-—— 构建一个支持 LLM + Tools + MCP + SubAgent 协同工作的智能执行中枢
-目标：让 AI Agent 不再是“单打独斗”，而是成为一个会调用工具、能分解任务、可协调子代理的智能指挥官。
-
-🎯 一、设计目标
+# 一、设计目标
 能力
 实现方式
 ✅ 任务自动规划与拆解
@@ -23,7 +20,7 @@
 ✅ 异常回滚与恢复机制
 出错时自动降级或请求人工干预
 
-🖼️ 二、整体架构图
+# 二、整体架构图
                      +------------------+
                      |   用户输入        |
                      | "帮我分析项目风险" |
@@ -62,8 +59,8 @@
                               共享：压缩上下文 + 心跳通信 + 审计日志
 
 
-🔧 三、核心模块详解
-1. 【任务规划器】Planner
+# 三、核心模块详解
+## 1. 【任务规划器】Planner
 class Planner:
     def plan(self, goal: str, context: str) -> List[Task]:
         prompt = f"""
@@ -88,9 +85,9 @@ class Planner:
         result = llm_json_mode(prompt)
         return parse_tasks(result)
 
-✅ 支持 type: tool | agent | mcp | human_confirm
+支持 type: tool | agent | mcp | human_confirm
 
-2. 【上下文管理器】ContextManager
+## 2. 【上下文管理器】ContextManager
 ● 自动加载：
 
     ○ SOUL.md, USER.md
@@ -102,7 +99,7 @@ ctx = ContextManager()
 compressed = ctx.compress(session_id, full_history)
 
 
-3. 【工具选择器】ToolSelector
+## 3. 【工具选择器】ToolSelector
 class ToolSelector:
     def select(self, task: Task) -> Optional[Tool]:
         if task.type == "shell":
@@ -115,9 +112,9 @@ class ToolSelector:
 
 ✅ 支持自动绑定参数、权限检查、审计记录
 
-4. 【MCP 层】Model Control Protocol 支持
+## 4. 【MCP 层】Model Control Protocol 支持
 类似 Anthropic 的 tool use 或 OpenAI 的 function calling
-# 定义工具 schema
+### 定义工具 schema
 tools_schemas = [
   {
     "name": "execute_local_command",
@@ -143,19 +140,19 @@ tools_schemas = [
   }
 ]
 
-# 调用 LLM 启用 MCP 模式
+### 调用 LLM 启用 MCP 模式
 response = llm.invoke(
   prompt,
   tools=tools_schemas,
   tool_choice="auto"
 )
 
-# 解析调用
+ 解析调用
 for tool_call in response.tool_calls:
     handle_tool_call(tool_call)
 
 
-5. 【子代理调度器】SubAgentOrchestrator
+## 5. 【子代理调度器】SubAgentOrchestrator
 class SubAgentOrchestrator:
     AGENTS = {
         "researcher": ResearcherAgent(),
@@ -192,7 +189,7 @@ class SubAgentOrchestrator:
         return results
 
 
-6. 【执行流程主干】AgentCore.run()
+## 6. 【执行流程主干】AgentCore.run()
 class AgentCore:
     def run(self, user_input: str, session_id: str):
         # Step 1: 加载并压缩上下文
@@ -238,7 +235,7 @@ class AgentCore:
         return final_result
 
 
-🔄 四、协作模式示例
+# 四、协作模式示例
 场景：用户提问：“帮我写一个 Python 脚本分析日志”
 执行流程：
 步骤
@@ -262,36 +259,24 @@ reviewer
 6
 main agent
 汇总结果返回用户，并归档到 MEMORY.md
-✅ 实现了真正的“团队协作”。
+ 实现了真正的“团队协作”。
 
-✅ 五、优势总结
+# 五、优势总结
 特性
 效果
-🧠 智能规划
+ 智能规划
 把复杂问题变成分步行动
-🔧 工具联动
+ 工具联动
 CLI / 文件 / 搜索自动调用
-🤝 多代理协同
+ 多代理协同
 不同角色各司其职
-📡 MCP 支持
+ MCP 支持
 结构化输出，避免幻觉
-💓 心跳可见
+ 心跳可见
 长任务不再失联
-🧹 上下文压缩
+ 上下文压缩
 始终轻量高效
-📜 全程审计
+ 全程审计
 所有行为可追溯
-
-🚀 六、交付建议
-我可以为你生成完整的核心引擎包：
-✅ core/planner.py  
-✅ core/orchestrator.py  
-✅ core/context_manager.py  
-✅ tools/*.py（CLI/Web/File）  
-✅ agents/researcher.py, coder.py, reviewer.py  
-✅ main.py 示例入口
-
-📢 请回复：“请生成 Agent Core 执行引擎完整包”，我将立即交付一套 工业级 AI Agent 核心框架，助你打造真正智能、可扩展的本地 AI 助手系统。
-
 
 

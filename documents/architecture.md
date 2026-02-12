@@ -13,6 +13,7 @@
 ## 技术栈
 采用模块化 + 插件式架构，便于扩展功能（skills）
 前后端分离架构（TypeScript + Python），后端（Python FastAPI）
+LangChain
 
 ## 架构分层
 Expression（表达）->Gateway（网关接入）->Agent Core（智能体核心）-> tools（工具库和执行）->DBM（databese数据库存储和管理）
@@ -30,6 +31,7 @@ http或WebSocket通信链路管理。
 心跳检测：主要检查agent与表达层的链接状态，确保agent在执行长任务活跃状态检测
 ### Agent Core 控制中心
 LLM 推理引擎
+LangChain
 Context engineering  (上下文工程管理：select subAgent、 压缩、外部记忆存储)
 Task Planner（任务规划）
 Skill Router（技能路由)
@@ -61,7 +63,7 @@ Tools 工具执行层
 config.md
 ### 上下文工程
 不是把所有历史塞给 LLM，而是只传递最精准、最关键的上下文
-ConversationCompression.md
+Conversation.md
 同时增加每个会话session的交互记录，同步到sqlite，便于后续查询
 session.md
 

@@ -126,11 +126,67 @@
   - Queued → Running (when picked up for execution)
   - Running → Succeeded/Failed/Cancelled (when complete)
 
+### SubAgent
+- **Fields**:
+  - id (UUID): Unique identifier
+  - name (string): SubAgent name (e.g., "coder", "researcher", "reviewer")
+  - role (string): The specialized role of this SubAgent
+  - description (text): Description of what this SubAgent does
+  - prompt (text): System prompt for this SubAgent
+  - activated_status (boolean): Whether the SubAgent is currently activated
+  - activation_timestamp (datetime, optional): When the SubAgent was activated
+  - deactivation_timestamp (datetime, optional): When the SubAgent was deactivated
+  - session_id (UUID, optional): Session where the SubAgent is active
+  - timeout_duration (int): Auto-deactivation timeout in seconds
+  - created_at (datetime): When SubAgent was registered
+  - updated_at (datetime): When SubAgent configuration was last updated
+
+- **Relationships**:
+  - Optionally belongs to Session (when active)
+  - One-to-many with SubAgentExecution
+
+- **Validation Rules**:
+  - Role must be a predefined role
+  - Only one instance of each SubAgent type per session
+  - Activation requires proper user permissions
+
+### Task
+- **Fields**:
+  - id (UUID): Unique identifier
+  - session_id (UUID): Foreign key to Session where task was created
+  - parent_task_id (UUID, optional): Foreign key to parent task if this is a sub-task
+  - title (string): Brief description of the task
+  - description (text): Detailed description of the task
+  - task_type (enum: planning, research, coding, review, execution, coordination): Type of task
+  - priority (enum: low, medium, high, critical): Priority level
+  - assigned_to (enum: main_agent, sub_agent, tool, external_service): Who will execute this task
+  - sub_agent_role (string, optional): Role name if assigned to sub-agent
+  - status (enum: created, planned, assigned, in_progress, paused, completed, failed, cancelled): Current status
+  - estimated_duration (int, optional): Estimated completion time in seconds
+  - actual_duration (int, optional): Actual time taken in seconds
+  - created_at (datetime): When task was created
+  - started_at (datetime, optional): When task execution started
+  - completed_at (datetime, optional): When task was completed
+  - dependencies (UUID[]): List of task IDs this task depends on
+  - result (text, optional): Result/output of the task
+  - error_message (text, optional): Error details if task failed
+
+- **Relationships**:
+  - Belongs to Session
+  - Optionally has parent Task (for hierarchical tasks)
+  - One-to-many with TaskExecutionTrace
+
+- **State Transitions**:
+  - Created → Planned (when task is planned)
+  - Planned → Assigned (when assigned to executor)
+  - Assigned → In Progress (when execution starts)
+  - In Progress → Completed/Failed/Cancelled/Paused (when execution ends)
+
 ### InteractionTrace
 - **Fields**:
   - id (UUID): Unique identifier
   - session_id (UUID): Foreign key to Session
-  - interaction_type (enum: user_input, ai_response, tool_call, plugin_call, context_update): Type of interaction
+  - interaction_type (enum: user_input, ai_response, tool_call, plugin_call, subagent_call, task_update, context_update): Type of interaction
   - request_data (JSON): Incoming request details
   - response_data (JSON): Response details
   - timestamp (datetime): When interaction occurred
@@ -141,6 +197,48 @@
 - **Relationships**:
   - Belongs to Session
 
+### Configuration
+- **Fields**:
+  - id (UUID): Unique identifier
+  - name (string): Configuration key name
+  - value (JSON): Configuration value (can be string, number, boolean, or object)
+  - scope (enum: global, user, session): Configuration scope level
+  - user_id (UUID, optional): Foreign key to User if user-scoped
+  - session_id (UUID, optional): Foreign key to Session if session-scoped
+  - updated_at (datetime): When configuration was last updated
+  - updated_by (UUID): User who last updated the configuration
+  - encrypted (boolean): Whether the value is encrypted (for sensitive data)
+
+- **Relationships**:
+  - Optionally belongs to User (for user-scoped configs)
+  - Optionally belongs to Session (for session-scoped configs)
+
+- **Validation Rules**:
+  - Global configs cannot be user-specific
+  - Value type must match configuration type specification
+  - Sensitive values must be encrypted
+
+### Configuration
+- **Fields**:
+  - id (UUID): Unique identifier
+  - name (string): Configuration key name
+  - value (JSON): Configuration value (can be string, number, boolean, or object)
+  - scope (enum: global, user, session): Configuration scope level
+  - user_id (UUID, optional): Foreign key to User if user-scoped
+  - session_id (UUID, optional): Foreign key to Session if session-scoped
+  - updated_at (datetime): When configuration was last updated
+  - updated_by (UUID): User who last updated the configuration
+  - encrypted (boolean): Whether the value is encrypted (for sensitive data)
+
+- **Relationships**:
+  - Optionally belongs to User (for user-scoped configs)
+  - Optionally belongs to Session (for session-scoped configs)
+
+- **Validation Rules**:
+  - Global configs cannot be user-specific
+  - Value type must match configuration type specification
+  - Sensitive values must be encrypted
+
 ## Validation Rules Summary
 
 From functional requirements:
@@ -149,6 +247,10 @@ From functional requirements:
 - FR-008: Security validation for command execution
 - FR-010: Channel authentication validation
 - FR-014: Cron expression validation
+- FR-016: SubAgent role validation and permission checks
+- FR-017: Context compression threshold validation
+- FR-019: Task cancellation permission validation
+- FR-020: Configuration update validation and change approval
 
 ## State Transition Diagrams
 
@@ -169,4 +271,23 @@ From functional requirements:
              [EXECUTING       [ERROR]
               TOOLS] -----> (needs retry/
                              user action)
+```
+
+### Task States
+```
+[CREATED] --> [PLANNED] --> [IN_PROGRESS] --> [COMPLETED]
+    |           |              |               |
+    v           v              v               v
+(Creation  (Planning     (Execution     (Completion
+Failure)   Confirmation)  Execution)    Validation)
+```
+
+### SubAgent States
+```
+[OFFLINE] --> [LOADING] --> [ACTIVE] --> [BUSY] --> [IDLE]
+    |           |            |          |          |
+    +-----------+------------+----------+----------+
+         ^                      (Task completion)
+         +----------------------+
+         (Manual shutdown or timeout)
 ```

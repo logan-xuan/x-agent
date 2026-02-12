@@ -30,7 +30,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install backend dependencies
 pip install -r requirements.txt
 # If requirements.txt doesn't exist, install core dependencies:
-pip install fastapi uvicorn python-multipart anthropic openai pydantic sqlalchemy sqlite-vss python-jose[cryptography] passlib[bcrypt]
+pip install fastapi uvicorn python-multipart anthropic openai pydantic sqlalchemy sqlite-vss python-jose[cryptography] passlib[bcrypt] langchain-community langchain-core langchain-openai langchain-anthropic
 ```
 
 ### 3. Frontend Setup
@@ -74,6 +74,12 @@ LOG_LEVEL=info
 # Plugin Settings
 PLUGIN_DIR=./plugins
 WORKSPACE_DIR=./workspace
+
+# LangChain Settings
+LANGCHAIN_TRACING_V2=false
+LANGCHAIN_ENDPOINT=
+LANGCHAIN_API_KEY=
+LANGCHAIN_PROJECT=
 ```
 
 ### 2. Application Configuration
@@ -87,6 +93,15 @@ models:
   providers:
     - anthropic
     - openai
+
+langchain:
+  enabled: true
+  tracing:
+    enabled: false
+    endpoint: ""  # e.g., "https://api.smith.langchain.com"
+    project: "x-agent2"
+  callbacks:
+    enabled: true
 
 plugins:
   auto_load: true
@@ -216,10 +231,35 @@ The memory system is active by default. The assistant will remember:
 - Your preferences and frequently used information
 - Important facts shared across conversations
 
+#### Task Planning
+The assistant can automatically decompose complex tasks into subtasks:
+- For complex requests, the assistant will create and execute a sequence of subtasks
+- Example: "Write a report analyzing market trends" → Research → Analyze → Write → Review
+
+#### SubAgents
+Specialized agents for specific tasks can be activated using commands:
+- `/subagent coder` - Activate the code-writing expert
+- `/subagent researcher` - Activate the research expert
+- `/subagent reviewer` - Activate the review and critique expert
+- `/subagent off` - Deactivate current subagent
+- SubAgents are automatically deactivated after a timeout period
+
+#### Heartbeat Monitoring
+Long-running tasks provide progress updates:
+- Long operations (like code generation or research) show progress in the UI
+- Users can monitor task status and cancel operations if needed
+- Feedback is provided at regular intervals to prevent "unresponsive" perceptions
+
 #### Plugins
 1. Place plugin files in the `workspace/` directory
 2. Restart the application or use the plugin management interface
 3. Enable desired plugins through the web UI
+
+#### Context Compression
+The system manages long conversations efficiently:
+- Automatically compresses long conversation histories to stay within token limits
+- Preserves important context while discarding less relevant information
+- Maintains conversation continuity across compressed sessions
 
 ## API Usage
 
