@@ -6,12 +6,12 @@ from pathlib import Path
 # Add src to path to import modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.agent_core.llm_engine.service import LLMEngineService  # Adjust imports based on actual implementation
-from src.gateway.messaging.chat_endpoint import ChatEndpoint
-from src.agent_core.memory.storage_service import MemoryStorageService
-from src.agent_core.planner.planner import Planner
-from src.tools.web-search.web_search_tool import WebSearchTool
-from src.agent_core.monitoring.heartbeat_emitter import HeartbeatEmitter
+from src.agent-core.llm_engine.service import LLMEngineService  # Adjust imports based on actual implementation
+from src.gateway.messaging.message_handler import MessageHandler
+from src.agent-core.memory.storage_service import MemoryStorageService
+from src.agent-core.planner.planner import Planner
+from src.tools.web_search.web_search_tool import WebSearchTool
+from src.agent-core.monitoring.heartbeat_emitter import HeartbeatEmitter
 
 
 @pytest.mark.asyncio

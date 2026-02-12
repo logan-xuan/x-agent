@@ -16,7 +16,7 @@ from src.agent_core.memory.embedding_service import EmbeddingService
 async def test_memory_storage_basic():
     """Test basic memory storage functionality"""
 
-    with patch('src.agent_core.memory.storage_service.MemoryStorageService.save_memory_entry') as mock_save:
+    with patch('src.agent-core.memory.storage_service.MemoryStorageService.save_memory_entry') as mock_save:
         mock_save.return_value = {"status": "success", "entry_id": "memory-123"}
 
         storage_service = MemoryStorageService()
@@ -44,8 +44,8 @@ async def test_memory_retrieval_by_content():
     # Mock embeddings and retrieval
     mock_embeddings = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
 
-    with patch('src.agent_core.memory.embedding_service.EmbeddingService.generate_embedding') as mock_embed, \
-         patch('src.agent_core.memory.retrieval_service.MemoryRetrievalService.find_similar_memories') as mock_find:
+    with patch('src.agent-core.memory.embedding_service.EmbeddingService.generate_embedding') as mock_embed, \
+         patch('src.agent-core.memory.retrieval_service.MemoryRetrievalService.find_similar_memories') as mock_find:
 
         mock_embed.return_value = [0.15, 0.25, 0.35]
         mock_find.return_value = [
@@ -72,7 +72,7 @@ async def test_memory_retrieval_by_content():
 async def test_memory_persistence():
     """Test memory persistence and retrieval"""
 
-    with patch.multiple('src.agent_core.memory',
+    with patch.multiple('src.agent-core.memory',
                         MemoryStorageService=MagicMock(),
                         MemoryRetrievalService=MagicMock()):
 
@@ -106,7 +106,7 @@ async def test_memory_persistence():
 def test_embedding_generation():
     """Test embedding generation functionality"""
 
-    with patch('src.agent_core.memory.embedding_service.EmbeddingService.create_embeddings') as mock_create:
+    with patch('src.agent-core.memory.embedding_service.EmbeddingService.create_embeddings') as mock_create:
         mock_create.return_value = [[0.1, 0.2, 0.3, 0.4]]
 
         embedding_service = EmbeddingService()
@@ -124,7 +124,7 @@ def test_embedding_generation():
 async def test_memory_cleanup_expired():
     """Test cleanup of expired memories"""
 
-    with patch('src.agent_core.memory.storage_service.MemoryStorageService.cleanup_expired_memories') as mock_cleanup:
+    with patch('src.agent-core.memory.storage_service.MemoryStorageService.cleanup_expired_memories') as mock_cleanup:
         mock_cleanup.return_value = {"deleted_count": 5, "status": "cleanup_complete"}
 
         storage_service = MemoryStorageService()
@@ -141,7 +141,7 @@ async def test_memory_cleanup_expired():
 async def test_memory_search_functionality():
     """Test memory search functionality"""
 
-    with patch('src.agent_core.memory.retrieval_service.MemoryRetrievalService.search_memories') as mock_search:
+    with patch('src.agent-core.memory.retrieval_service.MemoryRetrievalService.search_memories') as mock_search:
         mock_search.return_value = [
             {"id": "mem-1", "content": "Found memory 1", "relevance": 0.9},
             {"id": "mem-2", "content": "Found memory 2", "relevance": 0.75},
@@ -189,7 +189,7 @@ async def test_vector_similarity_search():
 async def test_memory_metadata_filtering():
     """Test filtering memories by metadata"""
 
-    with patch('src.agent_core.memory.retrieval_service.MemoryRetrievalService.filter_memories_by_metadata') as mock_filter:
+    with patch('src.agent-core.memory.retrieval_service.MemoryRetrievalService.filter_memories_by_metadata') as mock_filter:
         mock_filter.return_value = [
             {"id": "filtered-1", "content": "Important memory", "metadata": {"importance": 0.9, "category": "fact"}},
             {"id": "filtered-2", "content": "Another important memory", "metadata": {"importance": 0.85, "category": "fact"}}

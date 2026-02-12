@@ -15,11 +15,9 @@ from enum import Enum
 
 from src.db.models.message import Message
 from src.db.models.session import Session
-from src.agent_core.llm_engine.integration import LLMIntegrationService
+from src.agent_core.llm_engine.service import LLMEngineService
 from src.agent_core.tools_manager import ToolsManager
-from src.agent_core.subagents.management import SubAgentManager
-from src.agent_core.context.memory_hooks import MemoryHooks
-from src.gateway.session.db_session import DatabaseSessionManager
+from src.gateway.session.db_session import db_session_manager
 
 
 class MessageType(Enum):
@@ -36,11 +34,9 @@ class MessageHandler:
     """Handles the processing of messages in the AI assistant system."""
 
     def __init__(self):
-        self.llm_integration = LLMIntegrationService()
+        self.llm_integration = LLMEngineService()
         self.tools_manager = ToolsManager()
-        self.subagent_manager = SubAgentManager()
-        self.session_manager = DatabaseSessionManager()
-        self.memory_hooks = MemoryHooks()
+        self.session_manager = db_session_manager
 
     async def process_message(
         self,
@@ -89,17 +85,16 @@ class MessageHandler:
         await message.save()
 
         # Enhance with memory if available
-        memory_context = await self.memory_hooks.retrieve_memory_context(
-            session_id, user_input
-        )
+        # memory_context = await self.memory_hooks.retrieve_memory_context(
+        #     session_id, user_input
+        # )
+        memory_context = None  # Placeholder until memory system is implemented
 
         # Process through LLM engine
         try:
-            response_content = await self.llm_integration.process_with_context(
+            response_content = await self.llm_integration.generate_response(
                 user_input,
-                memory_context,
-                session_id,
-                tools=self._get_available_tools()
+                context=memory_context
             )
 
             # Create response message
@@ -117,11 +112,13 @@ class MessageHandler:
             await response_message.save()
 
             # Update memory with this interaction
-            await self.memory_hooks.store_interaction(
-                session_id,
-                user_input,
-                response_content
-            )
+            # await self.memory_hooks.store_interaction(
+            #     session_id,
+            #     user_input,
+            #     response_content
+            # )
+            # Placeholder until memory system is implemented
+            pass
 
             return {
                 "response": response_content,

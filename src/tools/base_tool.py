@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
-from langchain.tools import StructuredTool
+from langchain_core.tools import BaseTool as LangChainBaseTool
 from pydantic import BaseModel, Field
 
 
-class BaseTool(StructuredTool, ABC):
+class BaseTool(LangChainBaseTool, ABC):
     """
     Base class for all tools in the x-agent2 system.
-    Inherits from LangChain's StructuredTool to ensure compatibility
+    Inherits from LangChain's BaseTool to ensure compatibility
     with LangChain's agent framework.
     """
 
@@ -27,7 +27,6 @@ class BaseTool(StructuredTool, ABC):
         super().__init__(
             name=name,
             description=description,
-            func=self._run,
             args_schema=args_schema,
             **kwargs
         )

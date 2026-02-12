@@ -8,8 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from src.agent_core.monitoring.heartbeat_emitter import HeartbeatEmitter  # Adjust import based on actual implementation
-from src.agent_core.monitoring.progress_tracker import ProgressTracker
-from src.agent_core.monitoring.cancellation_handler import CancellationHandler
+from src.agent_core.monitoring.progress_tracker import TaskProgressTracker
+from src.agent_core.monitoring.cancellation_handler import TaskCancellationManager
 
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_heartbeat_emission():
 async def test_progress_tracking():
     """Test progress tracking functionality"""
 
-    with patch('src.agent_core.monitoring.progress_tracker.ProgressTracker.update_progress') as mock_update:
+    with patch('src.agent_core.monitoring.progress_tracker.TaskProgressTracker.update_progress') as mock_update:
         mock_update.return_value = {
             "task_id": "tracking-task-456",
             "current_step": 3,
@@ -56,7 +56,7 @@ async def test_progress_tracking():
             "eta_seconds": 120
         }
 
-        tracker = ProgressTracker()
+        tracker = TaskProgressTracker()
 
         # Test updating progress
         progress_data = {
@@ -106,14 +106,14 @@ async def test_heartbeat_broadcasting():
 async def test_task_cancellation_request():
     """Test requesting task cancellation"""
 
-    with patch('src.agent_core.monitoring.cancellation_handler.CancellationHandler.request_cancellation') as mock_cancel:
+    with patch('src.agent_core.monitoring.cancellation_handler.TaskCancellationManager.request_cancellation') as mock_cancel:
         mock_cancel.return_value = {
             "task_id": "cancel-task-999",
             "status": "cancellation_requested",
             "timestamp": "2023-01-01T10:30:00Z"
         }
 
-        handler = CancellationHandler()
+        handler = TaskCancellationManager()
 
         # Test canceling a task
         result = await handler.request_cancellation("cancel-task-999")
@@ -127,14 +127,14 @@ async def test_task_cancellation_request():
 async def test_active_task_monitoring():
     """Test monitoring of active tasks"""
 
-    with patch('src.agent_core.monitoring.progress_tracker.ProgressTracker.get_active_tasks') as mock_get:
+    with patch('src.agent_core.monitoring.progress_tracker.TaskProgressTracker.get_active_tasks') as mock_get:
         mock_get.return_value = [
             {"task_id": "active-1", "progress": 30, "status": "running"},
             {"task_id": "active-2", "progress": 65, "status": "running"},
             {"task_id": "active-3", "progress": 10, "status": "starting"}
         ]
 
-        tracker = ProgressTracker()
+        tracker = TaskProgressTracker()
 
         # Get list of active tasks
         active_tasks = await tracker.get_active_tasks()
@@ -149,14 +149,14 @@ async def test_active_task_monitoring():
 async def test_cancellation_of_nonexistent_task():
     """Test cancelling a task that doesn't exist"""
 
-    with patch('src.agent_core.monitoring.cancellation_handler.CancellationHandler.request_cancellation') as mock_cancel:
+    with patch('src.agent_core.monitoring.cancellation_handler.TaskCancellationManager.request_cancellation') as mock_cancel:
         mock_cancel.return_value = {
             "task_id": "nonexistent-task",
             "status": "not_found",
             "message": "Task not found or already completed"
         }
 
-        handler = CancellationHandler()
+        handler = TaskCancellationManager()
 
         # Try to cancel a nonexistent task
         result = await handler.request_cancellation("nonexistent-task")
@@ -204,7 +204,7 @@ async def test_monitoring_integration():
     # Create mock objects for integration test
     with patch.multiple('src.agent_core.monitoring',
                         HeartbeatEmitter=MagicMock(),
-                        ProgressTracker=MagicMock()):
+                        TaskProgressTracker=MagicMock()):
 
         heartbeat_mock = MagicMock()
         heartbeat_mock.emit_heartbeat.return_value = {
@@ -249,7 +249,7 @@ def test_monitoring_component_names():
         pass
 
     try:
-        tracker = ProgressTracker()
+        tracker = TaskProgressTracker()
         assert hasattr(tracker, 'update_progress')
         assert hasattr(tracker, 'get_task_status')
     except NameError:
@@ -257,7 +257,7 @@ def test_monitoring_component_names():
         pass
 
     try:
-        handler = CancellationHandler()
+        handler = TaskCancellationManager()
         assert hasattr(handler, 'request_cancellation')
         assert hasattr(handler, 'is_cancelled')
     except NameError:

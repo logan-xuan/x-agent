@@ -1,7 +1,7 @@
 import requests
 from typing import Dict, Any
 from pydantic import BaseModel, Field
-from .base_tool import BaseTool
+from ..base_tool import BaseTool
 
 
 class WebSearchToolArgs(BaseModel):

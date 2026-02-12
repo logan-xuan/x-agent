@@ -6,7 +6,7 @@ from pathlib import Path
 # Add src to path to import modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.gateway.messaging.chat_endpoint import chat_message_handler
+from src.gateway.messaging.message_handler import message_handler
 from src.gateway.messaging.message_handler import MessageHandler
 from src.db.models.message import Message  # Assuming this exists
 
@@ -24,11 +24,15 @@ async def test_basic_text_message_handling():
     }
 
     # Mock message handler
-    with patch('src.gateway.messaging.message_handler.MessageHandler.process_message') as mock_process:
+    with patch.object(message_handler, 'process_message') as mock_process:
         mock_process.return_value = {"response": "I'm doing well, thank you for asking!"}
 
-        # Call the chat endpoint handler
-        result = await chat_message_handler(mock_message_data)
+        # Call the message handler process_message method
+        result = await message_handler.process_message(
+            mock_message_data["content"],
+            mock_message_data["session_id"],
+            mock_message_data["user_id"]
+        )
 
         # Verify the message was processed
         assert result is not None
@@ -48,10 +52,14 @@ async def test_empty_message_handling():
         "user_id": "test-user-123"
     }
 
-    with patch('src.gateway.messaging.message_handler.MessageHandler.process_message') as mock_process:
+    with patch.object(message_handler, 'process_message') as mock_process:
         mock_process.return_value = {"response": "Please provide a valid message."}
 
-        result = await chat_message_handler(mock_message_data)
+        result = await message_handler.process_message(
+            mock_message_data["content"],
+            mock_message_data["session_id"],
+            mock_message_data["user_id"]
+        )
 
         assert result is not None
         assert "response" in result
@@ -64,15 +72,17 @@ def test_message_model_creation():
     # Test message creation
     message = Message(
         session_id="test-session-123",
-        user_id="test-user-123",
+        sender_id="test-user-123",
         content="Test message content",
-        message_type="text"
+        sender_type="user",
+        content_type="text"
     )
 
     assert message.session_id == "test-session-123"
-    assert message.user_id == "test-user-123"
+    assert message.sender_id == "test-user-123"
     assert message.content == "Test message content"
-    assert message.message_type == "text"
+    assert message.sender_type == "user"
+    assert message.content_type == "text"
 
 
 @pytest.mark.asyncio
@@ -87,11 +97,15 @@ async def test_conversation_flow():
     ]
 
     responses = []
-    with patch('src.gateway.messaging.message_handler.MessageHandler.process_message') as mock_process:
+    with patch.object(message_handler, 'process_message') as mock_process:
         mock_process.return_value = {"response": "Thanks for your message!"}
 
         for msg in conversation_messages:
-            result = await chat_message_handler(msg)
+            result = await message_handler.process_message(
+                msg["content"],
+                msg["session_id"],
+                msg["user_id"]
+            )
             responses.append(result)
 
     assert len(responses) == len(conversation_messages)

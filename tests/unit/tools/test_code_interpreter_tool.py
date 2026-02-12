@@ -8,7 +8,7 @@ import contextlib
 # Add src to path to import modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.tools.code-interpreter.code_interpreter_tool import CodeInterpreterTool  # Adjust import based on actual implementation
+from src.tools.code_interpreter.code_interpreter_tool import CodeInterpreterTool  # Adjust import based on actual implementation
 
 
 @pytest.mark.asyncio

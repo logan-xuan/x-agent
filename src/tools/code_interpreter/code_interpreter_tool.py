@@ -3,7 +3,7 @@ import tempfile
 import os
 from typing import Dict, Any
 from pydantic import BaseModel, Field
-from .base_tool import BaseTool
+from ..base_tool import BaseTool
 
 
 class CodeInterpreterToolArgs(BaseModel):
@@ -165,7 +165,7 @@ class CodeInterpreterTool(BaseTool):
     def _execute_bash(self, code: str) -> str:
         """Execute bash script with security restrictions."""
         # Use the command execution tool with additional security checks
-        from .command_exec.command_exec_tool import CommandExecutionTool
+        from ..command_exec.command_exec_tool import CommandExecutionTool
 
         tool = CommandExecutionTool()
 

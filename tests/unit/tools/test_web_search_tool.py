@@ -6,7 +6,7 @@ from pathlib import Path
 # Add src to path to import modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.tools.web-search.web_search_tool import WebSearchTool  # Adjust import based on actual implementation
+from src.tools.web_search.web_search_tool import WebSearchTool  # Adjust import based on actual implementation
 
 
 @pytest.mark.asyncio
@@ -25,7 +25,7 @@ async def test_web_search_tool_basic():
         "query": "test query"
     }
 
-    with patch('src.tools.web-search.web_search_tool.perform_search') as mock_search:
+    with patch('src.tools.web_search.web_search_tool.perform_search') as mock_search:
         mock_search.return_value = mock_search_result
 
         tool = WebSearchTool()
@@ -52,7 +52,7 @@ async def test_web_search_tool_empty_query():
 async def test_web_search_tool_error_handling():
     """Test web search tool error handling"""
 
-    with patch('src.tools.web-search.web_search_tool.perform_search') as mock_search:
+    with patch('src.tools.web_search.web_search_tool.perform_search') as mock_search:
         mock_search.side_effect = Exception("Network error")
 
         tool = WebSearchTool()
@@ -91,7 +91,7 @@ async def test_web_search_tool_multiple_results():
         "query": "multi-result query"
     }
 
-    with patch('src.tools.web-search.web_search_tool.perform_search') as mock_search:
+    with patch('src.tools.web_search.web_search_tool.perform_search') as mock_search:
         mock_search.return_value = mock_search_result
 
         tool = WebSearchTool()
@@ -115,7 +115,7 @@ async def test_web_search_tool_long_query():
         "query": long_query
     }
 
-    with patch('src.tools.web-search.web_search_tool.perform_search') as mock_search:
+    with patch('src.tools.web_search.web_search_tool.perform_search') as mock_search:
         mock_search.return_value = mock_search_result
 
         tool = WebSearchTool()

@@ -7,7 +7,7 @@ from pathlib import Path
 # Add src to path to import modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.tools.command-exec.command_exec_tool import CommandExecutionTool  # Adjust import based on actual implementation
+from src.tools.command_exec.command_exec_tool import CommandExecutionTool  # Adjust import based on actual implementation
 
 
 @pytest.mark.asyncio
