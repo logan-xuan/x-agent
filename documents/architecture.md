@@ -13,7 +13,7 @@
 # 技术架构
 ## 技术栈
 采用模块化 + 插件式架构，便于扩展功能（skills）
-前后端分离架构（TypeScript + Python），后端（Python FastAPI）
+前后端分离架构（TypeScript + Python）
 
 
 ## 架构分层

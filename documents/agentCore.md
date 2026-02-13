@@ -1,282 +1,377 @@
-# 需求
-构建一个支持 LLM + Tools + MCP + SubAgent 协同工作的智能执行中枢
-让 AI Agent 不再是“单打独斗”，而是成为一个会调用工具、能分解任务、可协调子代理的智能指挥官。
+# —— 构建一个 **透明、自循环、可追溯** 的 AI Agent 执行系统
 
-# 一、设计目标
-能力
-实现方式
-✅ 任务自动规划与拆解
-使用 LLM 进行推理分解
-✅ 工具（Tools）动态调用
-白名单管理，安全执行 CLI / API
-✅ MCP（Model Control Protocol）集成
-支持结构化输出、函数调用、JSON mode
-✅ SubAgent 分工协作
-多专家并行处理不同子任务
-✅ 上下文共享与同步
-所有参与者共用压缩后上下文
-✅ 心跳监控存活状态
-长任务不卡死，用户看得见进度
-✅ 异常回滚与恢复机制
-出错时自动降级或请求人工干预
+> **文档目标**：  
+> 面向开发者与架构师，清晰描述从用户输入到最终输出的完整流程逻辑，涵盖 **LLM 决策、RAG 检索、工具调用、错误恢复、上下文管理与前端流式反馈**。
 
-# 二、整体架构图
-                     +------------------+
-                     |   用户输入        |
-                     | "帮我分析项目风险" |
-                     +--------+---------+
-                              ↓
-          +------------------v------------------+
-          |           Agent Core 执行引擎         |
-          |                                       |
-  +-------v--------+    +------------v-----------+ 
-  | 任务规划器       |    | 上下文管理器               |
-  | (Planner)      |    | (Context Manager)     |
-  +-------+--------+    +------------+-----------+
-          |                          |
-          v                          v
-+---------v-------------+    +-------v--------------+
-| 工具选择器               |    | 记忆系统                |
-| (Tool Selector)       |    | (Memory: md + sqlite-vss)|
-+---------+-------------+    +-------+--------------+
-          |                          |
-          v                          v
-+---------v-------------+    +-------v--------------+
-| MCP 控制层              |    | 子代理调度器              |
-| (Function Calling /    |    | (SubAgent Orchestrator) |
-|  JSON Mode)           |    +-----------+------------+
-+---------+-------------+                |
-          |                              |
-          v                              v
-+---------v-------------+    +-----------v------------+
-| 本地/远程工具执行         |    | 并行子代理：              |
-| • CLI                  |    | • Researcher           |
-| • Web Search           |    | • Coder                |
-| • File Ops             |    | • Reviewer             |
-+------------------------+    +------------------------+
+---
 
-          ↑_________________________________________↓
-                              共享：压缩上下文 + 心跳通信 + 审计日志
+## 📌 一、总体设计原则
+
+| 原则 | 说明 |
+|------|------|
+| 🔁 **大模型自循环** | LLM 不是一次性调用，而是驱动整个执行流程的核心控制器 |
+| 👀 **全程可见** | 所有中间状态实时返回 WebChat，用户清楚知道“AI 在做什么” |
+| 🧠 **意图驱动** | 先识别意图 → 再规划任务 → 最后执行 |
+| 💡 **智能容错** | 工具失败时自动修正参数并重试 |
+| 📦 **模块解耦** | LLM / RAG / Tools / Context 独立但协同工作 |
+
+---
+
+## 🖼️ 二、整体架构图
 
 
-# 三、核心模块详解
-## 1. 【任务规划器】Planner
-class Planner:
-    def plan(self, goal: str, context: str) -> List[Task]:
-        prompt = f"""
-        请将以下目标拆解为一系列可执行的子任务。要求：
-        - 每个任务必须明确、可验证
-        - 优先使用工具或子代理完成
-        - 输出格式为 JSON 列表
+                [用户通过 WebChat 发送指令]
+                          ↓
+            +-------------v--------------+
+            |        Agent Core Engine      |
+            |                               |
+    +-------v--------+    +----------v-----------+
+    | 意图识别器         |    | 上下文管理器               |
+    | (Intent Recognizer) |    | (Context Manager)     |
+    +-------+--------+    +----------+-----------+
+            |                          |
+            v                          v
+    +-------v--------+    +----------v-----------+
+    | 任务规划器       |    | 记忆系统                |
+    | (Planner)      |    | (Memory: md + sqlite-vss)|
+    +-------+--------+    +----------+-----------+
+            |                          |
+            +------------+-----------+
+                         ↓
+       +-----------------v------------------+
+       |         执行调度中心                   |
+       | (Orchestrator: LLM 自循环控制)        |
+       +-----------------+------------------+
+                         ↓
+         +---------------v---------------+
+         |          决策分支                 |
 
-        示例：
-        目标：写一篇关于AI伦理的文章
-        → [
-          {{"type": "research", "topic": "AI ethics principles"}},
-          {{"type": "tool", "name": "web-search", "query": "Asilomar AI Principles"}},
-          {{"type": "agent", "role": "writer", "task": "撰写初稿"}}
-        ]
++---------v----------+ +---------v----------+
+ | RAG 增强检索 | | 工具调用与执行 |
+ | • hybrid_search() | | • plugin_manager.call() |
+ +---------+----------+ +---------+----------+
+ | |
+ +------------+-----------+
+ ↓
+ +--------------v---------------+
+ | 状态判断 & 错误处理 |
+ | • 成功？→ 进入总结阶段 |
+ | • 失败？→ 参数修正 → 重新尝试 |
+ +--------------+---------------+
+ ↓
+ +--------------v---------------+
+ | LLM 总结生成自然语言回答 |
+ | • 注入身份 + 用户画像 + 上下文 |
+ +--------------+---------------+
+ ↓
+ [返回结果至 WebChat UI]
+ ↓
+ [记录到 MEMORY.md 和 DB]
 
-        当前目标：{goal}
-        上下文摘要：{context[:500]}
-        
-        拆解结果：
-        """
-        result = llm_json_mode(prompt)
-        return parse_tasks(result)
+---
 
-支持 type: tool | agent | mcp | human_confirm
+## 🔧 三、核心模块说明
 
-## 2. 【上下文管理器】ContextManager
-● 自动加载：
+### 1. 【意图识别器】`Intent Recognizer`
 
-    ○ SOUL.md, USER.md
-    ○ 最近两天日志
-    ○ MEMORY.md（长期记忆）
-● 触发压缩（>140轮）
-● 提供混合检索接口
-ctx = ContextManager()
-compressed = ctx.compress(session_id, full_history)
+- **功能**：将用户自然语言转换为结构化意图
+- **输入**：原始文本
+- **输出**：JSON 格式的意图对象
 
-
-## 3. 【工具选择器】ToolSelector
-class ToolSelector:
-    def select(self, task: Task) -> Optional[Tool]:
-        if task.type == "shell":
-            return trusted_cli_tool
-        elif "search" in task.topic:
-            return web_search_tool
-        elif "file" in task.name:
-            return file_tool
-        return None
-
-✅ 支持自动绑定参数、权限检查、审计记录
-
-## 4. 【MCP 层】Model Control Protocol 支持
-类似 Anthropic 的 tool use 或 OpenAI 的 function calling
-### 定义工具 schema
-tools_schemas = [
-  {
-    "name": "execute_local_command",
-    "description": "在安全范围内执行本地命令",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "command_id": {"type": "string"},
-        "params": {"type": "object"}
-      }
-    }
-  },
-  {
-    "name": "spawn_subagent",
-    "description": "启动特定角色的子代理",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "role": {"type": "string", "enum": ["researcher", "coder", "reviewer"]},
-        "task": {"type": "string"}
-      }
-    }
+```json
+{
+  "intent": "search",
+  "params": {
+    "type": "file",
+    "query": "项目计划书",
+    "location": "Documents"
   }
+}
+
+● 实现方式：
+
+    ○ 使用 LLM + JSON mode 解析
+    ○ 支持分类：search, remind, create, execute, ask_memory
+
+2. 【上下文管理器】Context Manager
+● 功能：构建精简、安全、高效的上下文传给 LLM
+● 组成：
+    SOUL.md：Agent 身份设定
+    USER.md：用户画像
+    tool.md: 工具注册表
+    压缩后的对话历史（最近 N 轮 + 摘要）
+    相关记忆片段（来自 RAG）
+    大模型再返回或工具返回的信息
+✅ 当会话超过 140 轮时，触发分段压缩机制：
+
+3. 【任务规划器】Planner
+● 功能：根据意图拆解成可执行子任务列表
+● 示例输入：
+
+“帮我找出上周写的项目计划书”
+● 输出任务序列：
+[
+  { "type": "rag", "action": "hybrid_search", "query": "项目计划书" },
+  { "type": "tool", "name": "list_files", "params": { "path": "~/Documents" } },
+  { "type": "tool", "name": "read_file", "params": { "path": "{{selected_path}}" } }
 ]
 
-### 调用 LLM 启用 MCP 模式
-response = llm.invoke(
-  prompt,
-  tools=tools_schemas,
-  tool_choice="auto"
+● 策略：
+
+    ○ 优先使用 RAG 查找已有知识
+    ○ 再调用工具获取实时数据或执行操作
+
+4. 【执行调度中心】Orchestrator（LLM 自循环引擎）
+这是整个系统的大脑，负责驱动每一步执行。
+工作流程：
+[开始]
+   ↓
+→ [LLM 决策]：“我需要先做 A”
+   ↓
+→ [发送 thinking 事件] → 前端显示“正在分析...”
+   ↓
+→ [执行动作]：调用 RAG 或 Tool
+   ↓
+→ [捕获结果/错误]
+   ↓
+→ [将结果 + 上下文 回传给 LLM]
+   ↓
+→ [LLM 再决策]：“下一步该做 B”
+   ↓
+→ ... 循环直到完成 ...
+   ↓
+→ [LLM 输出 final_answer]
+   ↓
+→ [结束]
+
+✅ 实现真正的“大模型自主推理与执行”。
+
+5. 【RAG 增强检索】
+● 功能：从长期记忆中召回相关信息
+● 技术栈：
+    ○ 向量数据库：sqlite-vss（轻量嵌入）
+    ○ 文本匹配：BM25 或关键词提取
+    ○ 混合搜索：score = 0.7 * vector + 0.3 * text
+● 流程：
+    a. 提取查询关键词
+    b. 在 MEMORY.md 和 memory.db 中搜索
+    c. 返回 top-k 结果作为上下文增强
+
+6. 【工具调用系统】Tools & Plugin System
+● 插件目录：plugins/xxx/main.py
+● 典型工具：
+    ○ web-search：联网搜索
+    ○ list_files：列出目录
+    ○ create_cron_job：创建定时提醒
+    ○ take_photo：拍照（Termux）
+    ○ notify：发送通知
+
+7. 【状态判断与错误处理】
+while not task_done and retries < MAX_RETRIES:
+    action = llm_decide_next_step(context)
+    
+    if action.type == "use_tool":
+        result = execute_tool(action.name, action.params)
+        
+        if not result.success:
+            # LLM 自主决定如何修正
+            new_params = llm_revise_params(action, result.error)
+            context += f"[系统提示：上次调用失败，原因是 {result.error}。请修正参数]"
+            retries += 1
+            continue
+            
+        else:
+            context += f"[工具返回] {result.output}"
+            
+    elif action.type == "finish":
+        break
+
+✅ 实现“失败 → 修正 → 重试”的闭环。
+
+🔄 四、完整执行流程（以案例说明）
+场景：用户输入
+“帮我找出上周写的项目计划书”
+
+Step 1️⃣ 接收输入 & 初始化
+session_id = "sess_abc123"
+user_input = "帮我找出上周写的项目计划书"
+
+
+Step 2️⃣ 意图识别
+{
+  "intent": "search",
+  "params": {
+    "type": "file",
+    "keywords": ["项目计划书"],
+    "time_range": "last_week"
+  }
+}
+
+➡️ WebSocket 发送：
+{
+  "event": "thinking",
+  "data": {
+    "content": "我需要查找你上周创建的‘项目计划书’相关文件"
+  }
+}
+
+
+Step 3️⃣ 任务规划
+[
+  { "type": "rag", "query": "项目计划书" },
+  { "type": "tool", "name": "list_files", "params": { "path": "~/Documents", "filter": "project.*plan.*" } }
+]
+
+➡️ 发送：
+{
+  "event": "planning",
+  "data": {
+    "steps": [...]
+  }
+}
+
+
+Step 4️⃣ 执行 RAG 检索
+results = hybrid_search("项目计划书")
+
+➡️ 发送：
+{ "event": "rag_query", "data": { "query": "项目计划书" } }
+
+➡️ 发送：
+{
+  "event": "rag_result",
+  "data": {
+    "results": [...],
+    "scores": [...]
+  }
+}
+
+
+Step 5️⃣ 调用工具：list_files
+tool_result = plugin_manager.call_plugin(
+  name="list_files",
+  data={"path": "~/Documents", "pattern": ".*(计划书|proposal).*"}
 )
 
- 解析调用
-for tool_call in response.tool_calls:
-    handle_tool_call(tool_call)
+➡️ 发送：
+{
+  "event": "tool_call",
+  "data": {
+    "name": "list_files",
+    "params": { ... }
+  }
+}
+
+➡️ 发送：
+{
+  "event": "tool_result",
+  "data": {
+    "success": true,
+    "output": ["plan_v1.md", "draft.docx"]
+  }
+}
 
 
-## 5. 【子代理调度器】SubAgentOrchestrator
-class SubAgentOrchestrator:
-    AGENTS = {
-        "researcher": ResearcherAgent(),
-        "coder": CodeAgent(),
-        "reviewer": ReviewerAgent(),
-        "executor": ExecutorAgent()
-    }
-
-    def run_parallel(self, tasks: List[Task]) -> Dict:
-        results = {}
-        heartbeat = HeartbeatEmitter(send_fn)
-
-        for task in tasks:
-            role = task.get("role", "general")
-            agent = self.AGENTS.get(role)
-
-            # 注入共享上下文
-            agent.context = self.shared_context
-
-            # 异步执行
-            def worker(t, a):
-                try:
-                    result = a.run(t.task)
-                    results[t.id] = result
-                except Exception as e:
-                    results[t.id] = {"error": str(e)}
-
-            thread = threading.Thread(target=worker, args=(task, agent))
-            thread.start()
-
-        # 等待完成或超时
-        wait_with_heartbeat(heartbeat, len(tasks))
-
-        return results
+Step 6️⃣ LLM 再决策 → 是否继续？
+LLM 判断是否已足够信息来回答：
+“我已经找到了两个候选文件：plan_v1.md 和 draft.docx，它们都在 Documents 目录下。”
+➡️ 发送：
+{
+  "event": "thinking",
+  "data": {
+    "content": "已找到两个可能的目标文件..."
+  }
+}
 
 
-## 6. 【执行流程主干】AgentCore.run()
-class AgentCore:
-    def run(self, user_input: str, session_id: str):
-        # Step 1: 加载并压缩上下文
-        history = load_session_history(session_id)
-        compressed_ctx = ContextManager().compress(history)
-
-        # Step 2: 规划任务
-        goal = user_input
-        tasks = Planner().plan(goal, compressed_ctx)
-
-        # Step 3: 初始化执行环境
-        executor = SubAgentOrchestrator()
-        executor.shared_context = compressed_ctx
-        heartbeat = HeartbeatEmitter(...).start(task_info)
-
-        final_result = ""
-
-        for task in tasks:
-            heartbeat.update(phase=f"processing-{task.type}")
-
-            if task.type == "tool":
-                tool = ToolSelector().select(task)
-                result = tool._run(task.params)
-            elif task.type == "agent":
-                result = executor.spawn(task.role, task)
-            elif task.type == "human_confirm":
-                show_confirmation_modal(task.preview)
-                wait_for_user()
-                result = "confirmed"
-            else:
-                # 默认由主 LLM 处理
-                result = llm.invoke(f"{compressed_ctx}\n继续处理：{task.desc}")
-
-            final_result += "\n" + result
-
-            # 更新上下文（用于后续任务）
-            compressed_ctx = update_context(compressed_ctx, result)
-
-        # Step 4: 返回结果 + 归档
-        heartbeat.done(final_result)
-        MemoryManager().log_final_result(session_id, final_result)
-
-        return final_result
+Step 7️⃣ 总结输出
+LLM 综合所有信息生成最终回答：
+“找到了！你在上周于 Documents 文件夹中保存了两个名为 ‘plan_v1.md’ 和 ‘draft.docx’ 的文件，可能是你要找的项目计划书。”
+➡️ 发送：
+{
+  "event": "final_answer",
+  "data": {
+    "content": "找到了！你在上周于 Documents 文件夹中保存了两个名为 ‘plan_v1.md’ 和 ‘draft.docx’ 的文件，可能是你要找的项目计划书。"
+  }
+}
 
 
-# 四、协作模式示例
-场景：用户提问：“帮我写一个 Python 脚本分析日志”
-执行流程：
-步骤
-参与者
-动作
-1
-Planner
-拆解为：① 查找日志格式 ② 编写脚本 ③ 添加错误处理
-2
-SubAgent.Orchestrator
-分派给 researcher 和 coder 并行执行
-3
-researcher
-使用 web-search 工具查找常见日志结构
-4
-coder
-使用 file-write 工具生成 analyze_log.py
-5
-reviewer
-调用 pylint 工具检查代码质量
-6
-main agent
-汇总结果返回用户，并归档到 MEMORY.md
- 实现了真正的“团队协作”。
+Step 8️⃣ 数据归档
+● 将本次交互写入 archives/sess_abc123.jsonl
+● 关键信息归档至 MEMORY.md 和 sqlite-vss
 
-# 五、优势总结
-特性
+📡 五、WebSocket 流式通信协议
+消息格式
+{
+  "event": "event_type",
+  "data": { ... },
+  "timestamp": "2025-04-06T10:30:00Z"
+}
+
+支持事件类型
+event 类型
+用途
+user_input
+用户发送了新消息
+thinking
+LLM 正在思考下一步
+planning
+任务拆解完成
+rag_query
+开始 RAG 搜索
+rag_result
+返回检索结果
+tool_call
+调用某个工具
+tool_result
+工具执行结果
+error
+出错（可恢复）
+correction
+参数修正
+final_answer
+最终回答
+
+🧩 六、前端 WebChat 渲染逻辑
+const ws = new WebSocket("/ws/chat");
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+
+  switch (msg.event) {
+    case "thinking":
+      showTypingIndicator();
+      appendBotMessage(msg.data.content, "thinking");
+      break;
+
+    case "planning":
+      renderTaskList(msg.data.steps);
+      break;
+
+    case "tool_call":
+      logToolCall(msg.data.name);
+      break;
+
+    case "final_answer":
+      hideTyping();
+      displayFinalAnswer(msg.data.content);
+      break;
+  }
+};
+
+
+✅ 七、优势总结
+维度
 效果
- 智能规划
-把复杂问题变成分步行动
- 工具联动
-CLI / 文件 / 搜索自动调用
- 多代理协同
-不同角色各司其职
- MCP 支持
-结构化输出，避免幻觉
- 心跳可见
-长任务不再失联
- 上下文压缩
-始终轻量高效
- 全程审计
-所有行为可追溯
-
-
+🔍 透明性
+用户看得见每一步进展
+🧠 智能性
+LLM 驱动全流程，非脚本化
+🛠️ 可靠性
+错误自动修复，不轻易失败
+📊 可追溯性
+所有事件可回放分析
+💬 交互友好
+回答更自然、更有温度
+⚙️ 扩展性强
+插件化支持新增能力
