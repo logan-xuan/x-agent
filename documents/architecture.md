@@ -4,7 +4,7 @@
 ● 自然语言聊天（对话）
 ● 扩展技能（如制作 PPT、处理文档，预留workspace文件夹由用户自定义扩展skill）
 ● Web 搜索
-● chrome浏览器自动化操作
+● 通过自然语言沟通对chrome浏览器自动化操作，可以购物，搜索网页，填写表单，截图，分析数据（基于Playwright）
 ● 执行本地 CLI 命令（能本地操作）
 ● 访问本地文件系统
 ● Cron 定时任务管理
@@ -14,45 +14,51 @@
 ## 技术栈
 采用模块化 + 插件式架构，便于扩展功能（skills）
 前后端分离架构（TypeScript + Python），后端（Python FastAPI）
-LangChain
+
 
 ## 架构分层
 核心链路：Expression（表达）->Gateway（网关接入）->Agent Core（智能体核心）-> tools（工具库和执行）->DBM（databese数据库存储和管理）
 基础能力：配置文件管理、上下文工程、记忆系统、心跳机制、插件设计、命令执行模块、Cron 定时任务管理
 
 ### Expression 表达层
+
 #### 用户界面
+
 ● Web UI (React + TS)  webchat  WebSocket / REST API  可以进行文字、图片、文件的方式进行沟通
 ● 实时日志流 
 ● 设置入口：大模型切换设置，skill，plugin、mcp、channel配置
 #### Channel 消息渠道扩展
+
 可以接入飞书、钉钉、微信消息渠道，能力与webchat一致用于与agent继续沟通的渠道。
 ### Gateway 网关接入层
+
 承上启下，接收上层消息传递至Agent。
 session 管理、消息队列流控、权限控制、日志统一、分类收集。
 http或WebSocket通信链路管理。
 心跳检测：主要检查agent与表达层的链接状态，确保agent在执行长任务活跃状态检测
 ### Agent Core 控制中心
+
 LLM 推理引擎
-LangChain
+LangChain 上下文控制 路由转发 调用大模型 工具技能调用
 Context engineering  (上下文工程管理：select subAgent、 压缩、外部记忆存储)
 Task Planner（任务规划）
 Skill Router（技能路由)
 Memory System（记忆系统）
 Security Guard（安全守卫）
+
 ### Tools 工具执行层
 
 1、系统级的tools和plugin，模块化可插拔，后续可迭代。
+  - Web Search 
+  - Code Interpreter 
+  - File System Access 
+  - Command Executor 
+  - Office Automation
+  - Cron 定时任务管理
+  - Browser Control 通过自然语言沟通对chrome浏览器自动化操作，可以购物，搜索网页，填写表单，截图，分析数据（基于Playwright）
+
 2、客户自定义技能存放在项目根目录 workspace
 
-| - Cron 定时任务管理 |
-
-| - Web Search |
-| - Code Interpreter |
-| - File System Access |
-| - Command Executor |
-| - Office Automation |
-| - Custom Plugins... |
 
 ### DBM 数据存储与管理
 ● Vector DB: sqlite-vss 
@@ -62,8 +68,8 @@ Security Guard（安全守卫）
 
 ## 特别技术设计
 ### 配置文件
-配置管理体系是一个结构清晰、灵活可扩展的 AI Agent 中枢系统，支持多模型统一配置（抽象厂商细节）、即插即用切换（如 OpenAI ↔ Qwen ↔ Ollama），通过环境变量安全管理密钥，提供插件化架构、多通信通道（WebSocket/HTTP/CLI）、网关控制（端口/CORS/限流）及多环境（dev/prod）配置覆盖，采用模块化 JSON 设计，实现高内聚、易维护、安全可控的运行环境。
-统一模型配置:抽象 provider/baseUrl/apiKey/modelId，不依赖厂商
+配置管理体系是一个结构清晰、灵活可扩展的 AI Agent 中枢系统，支持多模型统一配置（抽象厂商细节）、即插即用切换（如 OpenAI ↔ Qwen），通过环境变量安全管理密钥，提供插件化架构、多通信通道（WebSocket/HTTP/CLI）、网关控制（端口/CORS/限流）及多环境（dev/prod）配置覆盖，采用模块化 yaml 设计，实现高内聚、易维护的一套配置。
+统一模型配置:抽象 provider/baseUrl/apiKey/modelId，不依赖厂商，可以进行一主多备自动切换。
 详见: ./config.md
 
 ### 上下文工程

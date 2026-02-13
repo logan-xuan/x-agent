@@ -20,4 +20,4 @@ WebSocket / HTTP / CLI 等
  多环境支持
 dev / prod 配置覆盖机制
 结构清晰易读
-JSON 格式 + 模块化组织
+yaml 格式 + 模块化组织
