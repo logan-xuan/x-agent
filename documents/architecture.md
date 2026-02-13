@@ -37,14 +37,12 @@ session 管理、消息队列流控、权限控制、日志统一、分类收集
 http或WebSocket通信链路管理。
 心跳检测：主要检查agent与表达层的链接状态，确保agent在执行长任务活跃状态检测
 ### Agent Core 控制中心
-
+该系统通过意图识别、上下文压缩与模块化解耦，实现由LLM驱动的透明、自循环且可追溯的AI Agent执行流程。
 LLM 推理引擎
-LangChain 上下文控制 路由转发 调用大模型 工具技能调用
-Context engineering  (上下文工程管理：select subAgent、 压缩、外部记忆存储)
+Context engineering  (上下文压缩、记忆系统)
 Task Planner（任务规划）
 Skill Router（技能路由)
-Memory System（记忆系统）
-Security Guard（安全守卫）
+
 
 ### Tools 工具执行层
 

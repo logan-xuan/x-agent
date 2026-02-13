@@ -1,6 +1,5 @@
 from typing import Dict, Any, Optional, List
 from langchain_core.tools import BaseTool
-from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
 from .service import LLMEngineService
@@ -34,19 +33,31 @@ class ToolIntegrationService:
         ])
 
         try:
-            # Create a tool-calling agent
-            agent = create_tool_calling_agent(
-                llm=self.llm_service.primary_client,
-                tools=tools,
-                prompt=prompt
-            )
+            # Create the LLM client from the service
+            llm_client = self.llm_service.primary_client
 
-            # Create the agent executor
-            self.agent_executor = AgentExecutor(
-                agent=agent,
-                tools=tools,
-                verbose=True  # This will show the thought process
-            )
+            # Try to create the agent if we have the right components
+            try:
+                from langchain.agents import create_tool_calling_agent, AgentExecutor
+
+                # Create a tool-calling agent
+                agent = create_tool_calling_agent(
+                    llm=llm_client,
+                    tools=tools,
+                    prompt=prompt
+                )
+
+                # Create the agent executor
+                self.agent_executor = AgentExecutor(
+                    agent=agent,
+                    tools=tools,
+                    verbose=True  # This will show the thought process
+                )
+
+            except ImportError:
+                # If LangChain agent creation fails, set agent_executor to None to trigger fallback
+                print("LangChain agent creation not available, using manual tool processing")
+                self.agent_executor = None
         except Exception as e:
             print(f"Error setting up agent: {str(e)}")
             # Fallback to manual tool calling implementation
@@ -55,6 +66,7 @@ class ToolIntegrationService:
     def process_with_tools(self, user_input: str, context: Optional[str] = None) -> str:
         """
         Process user input using tools when appropriate.
+        Falls back to direct LLM response if tool integration fails.
 
         Args:
             user_input: The input from the user
@@ -63,21 +75,25 @@ class ToolIntegrationService:
         Returns:
             Processed response that may include tool results
         """
-        if self.agent_executor:
-            # Use the agent to decide whether to use tools
-            try:
-                response = self.agent_executor.invoke({
-                    "input": user_input
-                })
-                return response.get("output", "No response generated")
-            except Exception as e:
-                print(f"Agent execution failed: {str(e)}")
-                # Fall back to regular LLM response
-                return self.llm_service.generate_response(user_input, context)
-
-        else:
-            # Manual implementation: detect if tools should be used
-            return self._manual_tool_processing(user_input, context)
+        try:
+            if self.agent_executor:
+                # Use the agent to decide whether to use tools
+                try:
+                    response = self.agent_executor.invoke({
+                        "input": user_input
+                    })
+                    return response.get("output", "No response generated")
+                except Exception as e:
+                    print(f"Agent execution failed: {str(e)}")
+                    # Fall back to regular LLM response
+                    return self.llm_service.generate_response(user_input, context)
+            else:
+                # Manual implementation: detect if tools should be used
+                return self._manual_tool_processing(user_input, context)
+        except Exception as e:
+            print(f"Tool integration service completely failed: {str(e)}, falling back to direct LLM service")
+            # If the entire service fails, use the LLM service directly
+            return self.llm_service.generate_response(user_input, context)
 
     def _manual_tool_processing(self, user_input: str, context: Optional[str] = None) -> str:
         """

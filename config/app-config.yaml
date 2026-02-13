@@ -1,8 +1,8 @@
 models:
-  primary: "claude-3-5-sonnet-20241022"
-  fallback: "gpt-4o"
+  primary: "qwen-max"  # 阿里云通义千问最大模型
+  fallback: "qwen-plus"  # 通义千问增强版作为备选
   providers:
-    - anthropic
+    - qwen
     - openai
 
 langchain:
