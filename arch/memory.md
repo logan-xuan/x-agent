@@ -13,8 +13,10 @@
 ## 分层记忆管理
 每日日志 + 长期记忆 + 引导文件
 ## 自我认知机制
-SOUL.md, USER.md 初始化身份
+SPIRIT.md, OWNER.md 初始化身份，主人的个性化设置
 以上两个配置是在Agent第一次启动时，需要通过与用户交流来初始化设置
+## 常用工具加载
+TOOLS.md agent可以使用的tools 工具技能表
 ## 上下文加载流程
 启动时按规则自动读取多级文件
 ## sqlite-vss 存储向量
@@ -27,20 +29,24 @@ SOUL.md, USER.md 初始化身份
 (0.7 * 向量得分) + (0.3 * 文本相似度)
 
 # 二、目录结构设计
+
+用户记忆和工作目录 ./workspace
+
 ai-agent/
 │
-├── md/                          # 所有 Markdown 记忆
-│   ├── SOUL.md                  # AI 的“人格设定”
-│   ├── USER.md                  # 用户画像
+├── workspace/                     # 所有 Markdown 记忆
+│   ├── SPIRIT.md                  # AI 的“人格设定”
+│   ├── OWNER.md                  # 主人(拥有着用户)画像
 │   ├── MEMORY.md                # 长期记忆主文件（摘要/关键点）
-│   ├── AGENTS.md                # 工具与行为规范
+│   ├── AGENTS.md                # 常用工具与行为规范
+    ├── TOOLS.md                # AI agent可以使用的tools工具技能表
 │   │
 │   └── memory/                  # 每日日志
 │       ├── 2025-04-05.md
 │       └── 2025-04-06.md
 │
 ├── db/                          # 数据库
-│   └── memory.db                # SQLite + sqlite-vss 扩展
+│   └── memory.db                # sqlite-vss 扩展
 │
 ├── src/
 │   ├── soul_loader.py           # 加载 SOUL.md / USER.md
