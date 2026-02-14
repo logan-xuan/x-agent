@@ -3,6 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2026-02-14
 
 ## Active Technologies
+- Python 3.11+ (后端), TypeScript (前端) + FastAPI, SQLAlchemy, sentence-transformers, watchdog, sqlite-vss (002-agent-memory)
+- SQLite + sqlite-vss (向量扩展) (002-agent-memory)
 
 - Python 3.11+ (后端), TypeScript 5.x (前端) (001-x-agent-mvp)
 
@@ -22,6 +24,7 @@ cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLO
 Python 3.11+ (后端), TypeScript 5.x (前端): Follow standard conventions
 
 ## Recent Changes
+- 002-agent-memory: Added Python 3.11+ (后端), TypeScript (前端) + FastAPI, SQLAlchemy, sentence-transformers, watchdog, sqlite-vss
 
 - 001-x-agent-mvp: Added Python 3.11+ (后端), TypeScript 5.x (前端)
 
