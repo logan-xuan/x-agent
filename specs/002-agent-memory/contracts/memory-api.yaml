@@ -1,0 +1,640 @@
+openapi: 3.0.3
+info:
+  title: X-Agent Memory API
+  description: AI Agent 记忆系统 API 接口
+  version: 1.0.0
+  contact:
+    name: X-Agent Team
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: 本地开发服务器
+
+tags:
+  - name: Memory
+    description: 记忆管理接口
+  - name: Context
+    description: 上下文管理接口
+  - name: Search
+    description: 搜索接口
+  - name: Identity
+    description: 身份管理接口
+
+paths:
+  # ============ 身份管理 ============
+  /identity/spirit:
+    get:
+      tags: [Identity]
+      summary: 获取 AI 人格配置
+      description: 返回当前 SPIRIT.md 中定义的 AI 人格配置
+      operationId: getSpirit
+      responses:
+        '200':
+          description: 成功返回人格配置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpiritConfig'
+        '404':
+          description: 人格配置不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags: [Identity]
+      summary: 更新 AI 人格配置
+      description: 更新 SPIRIT.md 文件内容
+      operationId: updateSpirit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpiritConfigUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpiritConfig'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /identity/owner:
+    get:
+      tags: [Identity]
+      summary: 获取用户画像
+      description: 返回当前 OWNER.md 中定义的用户画像
+      operationId: getOwner
+      responses:
+        '200':
+          description: 成功返回用户画像
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerProfile'
+        '404':
+          description: 用户画像不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags: [Identity]
+      summary: 更新用户画像
+      description: 通过交互式对话或直接更新 OWNER.md
+      operationId: updateOwner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnerProfileUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerProfile'
+
+  /identity/init:
+    post:
+      tags: [Identity]
+      summary: 初始化身份
+      description: 首次启动时通过交互式对话完成身份初始化
+      operationId: initIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityInitRequest'
+      responses:
+        '200':
+          description: 初始化成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityInitResponse'
+        '400':
+          description: 已完成初始化
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /identity/status:
+    get:
+      tags: [Identity]
+      summary: 获取身份初始化状态
+      operationId: getIdentityStatus
+      responses:
+        '200':
+          description: 返回初始化状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityStatus'
+
+  # ============ 上下文管理 ============
+  /context/load:
+    post:
+      tags: [Context]
+      summary: 加载上下文
+      description: 按层级加载所有上下文文件
+      operationId: loadContext
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                include_long_term:
+                  type: boolean
+                  description: 是否包含长期记忆
+                  default: true
+                days:
+                  type: integer
+                  description: 加载最近N天的日志
+                  default: 2
+      responses:
+        '200':
+          description: 加载成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextBundle'
+
+  /context/reload:
+    post:
+      tags: [Context]
+      summary: 热加载上下文
+      description: 重新加载所有上下文文件（用于文件变更后）
+      operationId: reloadContext
+      responses:
+        '200':
+          description: 重载成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextBundle'
+
+  # ============ 记忆管理 ============
+  /memory/entries:
+    get:
+      tags: [Memory]
+      summary: 获取记忆条目列表
+      operationId: listMemoryEntries
+      parameters:
+        - name: content_type
+          in: query
+          schema:
+            type: string
+            enum: [conversation, decision, summary, manual]
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: 成功返回列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryEntryList'
+
+    post:
+      tags: [Memory]
+      summary: 创建记忆条目
+      description: 手动创建一条记忆记录
+      operationId: createMemoryEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryEntryCreate'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryEntry'
+
+  /memory/entries/{entry_id}:
+    get:
+      tags: [Memory]
+      summary: 获取单条记忆
+      operationId: getMemoryEntry
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 成功返回
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryEntry'
+        '404':
+          description: 记忆不存在
+
+    delete:
+      tags: [Memory]
+      summary: 删除记忆条目
+      operationId: deleteMemoryEntry
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: 删除成功
+        '404':
+          description: 记忆不存在
+
+  /memory/daily/{date}:
+    get:
+      tags: [Memory]
+      summary: 获取指定日期的日志
+      operationId: getDailyLog
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: 成功返回
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyLog'
+        '404':
+          description: 日志不存在
+
+  # ============ 搜索 ============
+  /search:
+    post:
+      tags: [Search]
+      summary: 混合搜索记忆
+      description: 使用向量搜索 + 文本相似度混合检索
+      operationId: searchMemory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: 搜索成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+
+  /search/similar/{entry_id}:
+    get:
+      tags: [Search]
+      summary: 查找相似记忆
+      description: 根据指定记忆条目查找相似内容
+      operationId: findSimilar
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: 搜索成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+
+components:
+  schemas:
+    # ===== 错误响应 =====
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: 错误码
+        message:
+          type: string
+          description: 用户友好的错误消息
+        details:
+          type: object
+          description: 错误详情
+        suggestion:
+          type: string
+          description: 修复建议
+
+    # ===== 身份相关 =====
+    SpiritConfig:
+      type: object
+      properties:
+        role:
+          type: string
+          description: 角色定位
+        personality:
+          type: string
+          description: 性格特征
+        values:
+          type: array
+          items:
+            type: string
+        behavior_rules:
+          type: array
+          items:
+            type: string
+        last_modified:
+          type: string
+          format: date-time
+
+    SpiritConfigUpdate:
+      type: object
+      properties:
+        role:
+          type: string
+        personality:
+          type: string
+        values:
+          type: array
+          items:
+            type: string
+        behavior_rules:
+          type: array
+          items:
+            type: string
+
+    OwnerProfile:
+      type: object
+      properties:
+        name:
+          type: string
+        age:
+          type: integer
+        occupation:
+          type: string
+        interests:
+          type: array
+          items:
+            type: string
+        goals:
+          type: array
+          items:
+            type: string
+        preferences:
+          type: object
+          additionalProperties:
+            type: string
+        last_modified:
+          type: string
+          format: date-time
+
+    OwnerProfileUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        age:
+          type: integer
+        occupation:
+          type: string
+        interests:
+          type: array
+          items:
+            type: string
+        goals:
+          type: array
+          items:
+            type: string
+        preferences:
+          type: object
+
+    IdentityInitRequest:
+      type: object
+      required: [owner_name]
+      properties:
+        owner_name:
+          type: string
+          description: 用户姓名
+        owner_occupation:
+          type: string
+          description: 用户职业
+        owner_interests:
+          type: array
+          items:
+            type: string
+        ai_role:
+          type: string
+          description: AI 角色定位
+        ai_personality:
+          type: string
+          description: AI 性格特征
+
+    IdentityInitResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        spirit:
+          $ref: '#/components/schemas/SpiritConfig'
+        owner:
+          $ref: '#/components/schemas/OwnerProfile'
+
+    IdentityStatus:
+      type: object
+      properties:
+        initialized:
+          type: boolean
+        has_spirit:
+          type: boolean
+        has_owner:
+          type: boolean
+
+    # ===== 上下文相关 =====
+    ContextBundle:
+      type: object
+      properties:
+        spirit:
+          $ref: '#/components/schemas/SpiritConfig'
+        owner:
+          $ref: '#/components/schemas/OwnerProfile'
+        tools:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+        recent_logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyLog'
+        long_term_memory:
+          type: string
+        loaded_at:
+          type: string
+          format: date-time
+
+    # ===== 记忆相关 =====
+    MemoryEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        content_type:
+          type: string
+          enum: [conversation, decision, summary, manual]
+        source_file:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+
+    MemoryEntryCreate:
+      type: object
+      required: [content, content_type]
+      properties:
+        content:
+          type: string
+          maxLength: 10000
+        content_type:
+          type: string
+          enum: [conversation, decision, summary, manual]
+        metadata:
+          type: object
+
+    MemoryEntryList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryEntry'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    DailyLog:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryEntry'
+        summary:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # ===== 搜索相关 =====
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: 搜索查询
+        content_type:
+          type: string
+          enum: [conversation, decision, summary, manual]
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        limit:
+          type: integer
+          default: 10
+
+    SearchResult:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              entry:
+                $ref: '#/components/schemas/MemoryEntry'
+              score:
+                type: number
+                format: float
+                description: 混合评分 (0-1)
+              vector_score:
+                type: number
+                format: float
+              text_score:
+                type: number
+                format: float
+        query:
+          type: string
+        total:
+          type: integer
