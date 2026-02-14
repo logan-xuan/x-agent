@@ -1,0 +1,51 @@
+# X-Agent 配置文件
+# 所有配置集中管理，无需环境变量
+# 复制此文件为 x-agent.yaml 并填写实际值
+
+models:
+  # 主模型配置
+  - name: primary
+    provider: openai
+    base_url: https://api.openai.com/v1
+    api_key: sk-your-openai-api-key-here
+    model_id: gpt-3.5-turbo
+    is_primary: true
+    timeout: 30.0
+    max_retries: 2
+  
+  # 备用模型配置 (阿里云百炼)
+  - name: backup-bailian
+    provider: bailian
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key: sk-your-bailian-api-key-here
+    model_id: qwen-turbo
+    is_primary: false
+    timeout: 45.0
+    max_retries: 3
+    priority: 1  # 备用模型优先级，数值越小优先级越高
+  
+  # 备用模型配置 (其他 OpenAI 兼容提供商)
+  # - name: backup-custom
+  #   provider: custom
+  #   base_url: https://your-custom-api.com/v1
+  #   api_key: sk-your-custom-key-here
+  #   model_id: your-model-id
+  #   is_primary: false
+  #   timeout: 60.0
+  #   priority: 2
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+  reload: false  # 开发模式设为 true
+
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR
+  format: json  # json 或 text
+  file: logs/x-agent.log
+  max_size: "10MB"
+  backup_count: 5
+  console: true
