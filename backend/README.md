@@ -28,6 +28,22 @@ cp x-agent.yaml.example x-agent.yaml
 python -m src.main
 ```
 
+The backend server will start on **http://localhost:8000** (as configured in `x-agent.yaml`).
+
+## Server Configuration
+
+The server configuration is defined in `x-agent.yaml`:
+
+- **Backend Port**: 8000 (configured in `server.port`)
+- **Frontend Port**: 5173 (for CORS configuration)
+- **Host**: 0.0.0.0 (accessible from all network interfaces)
+
+API endpoints are available at:
+- Health Check: http://localhost:8000/api/v1/health
+- Chat API: http://localhost:8000/api/v1/chat
+- WebSocket: http://localhost:8000/ws/chat
+- Developer Mode: http://localhost:8000/api/v1/dev/prompt-logs
+
 ## Project Structure
 
 ```

@@ -17,6 +17,8 @@ SPIRIT.md, OWNER.md 初始化身份，主人的个性化设置
 以上两个配置是在Agent第一次启动时，需要通过与用户交流来初始化设置
 ## 常用工具加载
 TOOLS.md agent可以使用的tools 工具技能表
+## AI的行为引导规范引导文件
+AGENTS.md 行为规范总指导流程文件，包含其他文件使用指南。
 ## 上下文加载流程
 启动时按规则自动读取多级文件
 ## sqlite-vss 存储向量
@@ -32,13 +34,15 @@ TOOLS.md agent可以使用的tools 工具技能表
 
 用户记忆和工作目录 ./workspace
 
+## 以下作为参考工程目录
+
 ai-agent/
 │
 ├── workspace/                     # 所有 Markdown 记忆
+    ├── AGENTS.md                # 行为规范总指导流程文件，包含agent整个工作流程。
 │   ├── SPIRIT.md                  # AI 的“人格设定”
 │   ├── OWNER.md                  # 主人(拥有着用户)画像
 │   ├── MEMORY.md                # 长期记忆主文件（摘要/关键点）
-│   ├── AGENTS.md                # 常用工具与行为规范
     ├── TOOLS.md                # AI agent可以使用的tools工具技能表
 │   │
 │   └── memory/                  # 每日日志
@@ -48,8 +52,8 @@ ai-agent/
 ├── db/                          # 数据库
 │   └── memory.db                # sqlite-vss 扩展
 │
-├── src/
-│   ├── soul_loader.py           # 加载 SOUL.md / USER.md
+├── src/memory/
+│   ├── SPIRIT_loader.py           # 加载 SPIRIT.md / OWNER.md
 │   ├── context_builder.py       # 构建上下文（按层级加载）
 │   ├── vector_store.py          # sqlite-vss 操作封装
 │   ├── md_sync.py               # .md ↔ sqlite-vss 双向同步
@@ -61,8 +65,8 @@ ai-agent/
 
 
 # 三、核心组件详解
-## 1. 【灵魂文件】SOUL.md —— “这是你是谁”
- SOUL.md - 我是谁
+## 1. 【灵魂文件】SPIRIT.md —— “这是你是谁”
+ SPIRIT.md - 我是谁
 
 - 我是一个专注型 AI 助手，服务于个人知识管理。
 - 我的性格：温和、理性、主动但不过度打扰。
@@ -78,8 +82,8 @@ ai-agent/
 > 启动时必须加载此文件作为 prompt 的一部分。
 
 
-## 2. 【用户画像】USER.md —— “这是你在帮助谁”
- USER.md - 我的主人
+## 2. 【主人画像】OWNER.md —— “这是你在帮助谁”
+ OWNER.md - 我的主人
 
 - 姓名：张三
 - 年龄：32
@@ -97,10 +101,11 @@ ai-agent/
 
 在做其他事情之前，请遵循以下步骤：
 
-1. 阅读 `SOUL.md` - 这是你是谁  
-2. 阅读 `USER.md` - 这是你在帮助谁  
-3. 阅读 `memory/YYYY-MM-DD.md`（今天和昨天）获取近期上下文  
-4. 如果是在主会话中（与你的主人直接聊天），还要阅读 `MEMORY.md`  
+1. 阅读 `SPIRIT.md` - 这是你是谁  
+2. 阅读 `OWNER.md` - 这是你在帮助谁
+3. 阅读 `TOOLS.md` - 你可以使用的工具  
+4. 阅读 `memory/YYYY-MM-DD.md`（今天和昨天）获取近期上下文  
+5. 如果是在主会话中（与你的主人直接聊天），还要阅读 `MEMORY.md`  
 
 只有完成以上加载后，才能开始响应。
 
@@ -124,7 +129,7 @@ if __name__ == "__main__":
 特性
 实现效果
   自我认知清晰
-通过 SOUL.md 和 USER.md 定义角色
+通过 SPIRIT.md 和 OWNER.md 定义角色
   上下文完整
 多层加载确保不遗漏
  人机双友好

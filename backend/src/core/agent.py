@@ -1,11 +1,17 @@
 """Agent core logic with streaming support."""
 
+from pathlib import Path
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from ..config.manager import ConfigManager
+from ..memory.context_builder import ContextBuilder
+from ..memory.importance_detector import get_importance_detector
+from ..memory.md_sync import get_md_sync
+from ..memory.models import MemoryEntry, MemoryContentType
 from ..services.llm.router import LLMRouter
 from ..services.storage import StorageService
-from ..utils.logger import get_logger
+from ..utils.logger import get_logger, log_execution
 from .session import SessionManager
 
 logger = get_logger(__name__)
@@ -19,22 +25,46 @@ class Agent:
     - LLM routing with failover
     - Streaming responses
     - Message persistence
+    - Context loading from memory system
+    - Automatic memory recording for important content
     """
     
     def __init__(
         self,
         session_manager: SessionManager | None = None,
         llm_router: LLMRouter | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         """Initialize agent.
         
         Args:
             session_manager: Session manager instance
             llm_router: LLM router instance
+            context_builder: Context builder for memory system
         """
         self._session_manager = session_manager or SessionManager()
         self._llm_router = llm_router or LLMRouter()
+        
+        # Get workspace path from config
+        if context_builder:
+            self._context_builder = context_builder
+        else:
+            config_manager = ConfigManager()
+            workspace_path = config_manager.config.workspace.path
+            # Resolve relative path from backend directory
+            backend_dir = Path(__file__).parent.parent.parent
+            resolved_path = (backend_dir / workspace_path).resolve()
+            self._context_builder = ContextBuilder(str(resolved_path))
+            logger.info(
+                "Agent initialized with workspace",
+                extra={"workspace_path": str(resolved_path)}
+            )
+        
+        # Initialize memory components
+        self._importance_detector = get_importance_detector()
+        self._md_sync = get_md_sync(str(resolved_path))
     
+    @log_execution
     async def chat(
         self,
         session_id: str,
@@ -61,6 +91,25 @@ class Agent:
         # Get conversation history
         messages = await self._session_manager.get_messages_as_dict(session_id)
         
+        # Load context from memory system and inject as system message
+        context = self._context_builder.build_context()
+        system_prompt = self._context_builder.get_system_prompt(context)
+        
+        # Prepend system prompt if we have identity context
+        if context.spirit or context.owner:
+            messages = [
+                {"role": "system", "content": system_prompt}
+            ] + messages
+            logger.info(
+                "Context injected into conversation",
+                extra={
+                    "session_id": session_id,
+                    "has_spirit": context.spirit is not None,
+                    "has_owner": context.owner is not None,
+                    "message_count": len(messages),
+                }
+            )
+        
         if stream:
             return self._chat_streaming(session_id, messages)
         else:
@@ -73,6 +122,13 @@ class Agent:
     ) -> dict[str, Any]:
         """Non-streaming chat completion."""
         try:
+            # Get user message from the last user message in messages
+            user_message = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    user_message = msg.get("content", "")
+                    break
+            
             # Get response from LLM (with session_id for stats)
             response = await self._llm_router.chat(messages, stream=False, session_id=session_id)
             
@@ -86,6 +142,9 @@ class Agent:
                     "usage": response.usage,
                 }
             )
+            
+            # Check for important content and record memory
+            self._record_if_important(user_message, response.content)
             
             return {
                 "type": "message",
@@ -119,6 +178,13 @@ class Agent:
         full_content = ""
         model = "unknown"
         
+        # Get user message from the last user message in messages
+        user_message = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                user_message = msg.get("content", "")
+                break
+        
         try:
             # Get streaming response from LLM (with session_id for stats)
             stream = await self._llm_router.chat(messages, stream=True, session_id=session_id)
@@ -142,6 +208,9 @@ class Agent:
                 content=full_content,
                 metadata={"model": model}
             )
+            
+            # Check for important content and record memory
+            self._record_if_important(user_message, full_content)
             
             # Send final message
             yield {
@@ -191,3 +260,67 @@ class Agent:
         """
         messages = await self._session_manager.get_messages(session_id)
         return [msg.to_dict() for msg in messages]
+    
+    def _record_if_important(self, user_message: str, assistant_message: str) -> None:
+        """Check if conversation contains important content and record to memory.
+        
+        Args:
+            user_message: User's message
+            assistant_message: Assistant's response
+        """
+        try:
+            # Analyze the conversation turn
+            analysis = self._importance_detector.analyze_conversation_turn(
+                user_message=user_message,
+                assistant_message=assistant_message,
+            )
+            
+            if analysis["is_important"]:
+                # Determine what to record
+                content_to_record = user_message
+                
+                # Extract specific info if available
+                user_analysis = analysis.get("user_analysis", {})
+                entities = user_analysis.get("extracted_entities", [])
+                
+                if entities:
+                    # Record extracted entity
+                    for entity in entities[:1]:  # Take first entity
+                        content_to_record = entity.get("content", user_message)
+                
+                # Create memory entry
+                content_type_str = analysis.get("content_type", "conversation")
+                try:
+                    content_type = MemoryContentType(content_type_str)
+                except ValueError:
+                    content_type = MemoryContentType.CONVERSATION
+                
+                entry = MemoryEntry(
+                    content=content_to_record,
+                    content_type=content_type,
+                )
+                
+                # Save to markdown
+                self._md_sync.append_memory_entry(entry)
+                
+                logger.info(
+                    "Important content recorded to memory",
+                    extra={
+                        "content_preview": content_to_record[:50],
+                        "content_type": content_type.value,
+                        "matched_keywords": user_analysis.get("matched_keywords", []),
+                        "matched_patterns": user_analysis.get("matched_patterns", []),
+                    }
+                )
+            else:
+                logger.debug(
+                    "Content not important, skipping memory recording",
+                    extra={"user_message_preview": user_message[:50]}
+                )
+                
+        except Exception as e:
+            # Don't fail the chat if memory recording fails
+            logger.error(
+                "Failed to record memory",
+                extra={"error": str(e)}
+            )

@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from ...config.manager import ConfigManager
-from ...utils.logger import get_logger
+from ...utils.logger import get_logger, log_execution
 from .bailian_provider import BailianProvider
 from .circuit_breaker import circuit_breaker_manager
 from .openai_provider import OpenAIProvider
@@ -181,6 +181,7 @@ class LLMRouter:
             }
         )
     
+    @log_execution
     async def chat(
         self,
         messages: list[dict[str, str]],
@@ -261,6 +262,42 @@ class LLMRouter:
                     }
                 )
                 
+                # Log LLM interaction to dedicated prompt log
+                try:
+                    from ...core.context import get_current_context
+                    from ...utils.logger import get_llm_prompt_logger
+                    
+                    ctx = get_current_context()
+                    prompt_logger = get_llm_prompt_logger()
+                    
+                    if stream:
+                        # For streaming, wrap to capture response
+                        return self._wrap_streaming_with_prompt_log(
+                            result, provider, session_id, messages, latency_ms,
+                            ctx.trace_id if ctx else None, prompt_logger,
+                        )
+                    else:
+                        # For non-streaming, log immediately
+                        prompt_logger.log_interaction(
+                            session_id=session_id,
+                            trace_id=ctx.trace_id if ctx else None,
+                            provider=provider.name,
+                            model=provider.model_id,
+                            messages=messages,
+                            response=result.content,
+                            latency_ms=latency_ms,
+                            token_usage=result.usage,
+                            success=True,
+                        )
+                except Exception as prompt_log_error:
+                    logger.warning(
+                        "Failed to log prompt interaction",
+                        extra={
+                            "provider_name": provider.name,
+                            "error": str(prompt_log_error),
+                        }
+                    )
+                
                 # Record statistics
                 try:
                     from ..stat_service import get_stat_service
@@ -305,6 +342,34 @@ class LLMRouter:
                         "session_id": session_id,
                     }
                 )
+                
+                # Log failed prompt interaction
+                try:
+                    from ...core.context import get_current_context
+                    from ...utils.logger import get_llm_prompt_logger
+                    
+                    ctx = get_current_context()
+                    prompt_logger = get_llm_prompt_logger()
+                    prompt_logger.log_interaction(
+                        session_id=session_id,
+                        trace_id=ctx.trace_id if ctx else None,
+                        provider=provider.name,
+                        model=provider.model_id,
+                        messages=messages,
+                        response="",
+                        latency_ms=0,
+                        success=False,
+                        error=str(e),
+                    )
+                except Exception as prompt_log_error:
+                    logger.warning(
+                        "Failed to log failed prompt interaction",
+                        extra={
+                            "provider_name": provider.name,
+                            "error": str(prompt_log_error),
+                        }
+                    )
+                
                 # Record failure
                 await breaker.record_failure(e)
                 
@@ -426,6 +491,81 @@ class LLMRouter:
                         "provider_name": provider.name,
                         "error": str(stat_error),
                         "error_type": type(stat_error).__name__,
+                    }
+                )
+    
+    async def _wrap_streaming_with_prompt_log(
+        self,
+        stream: AsyncGenerator[StreamingLLMResponse, None],
+        provider: LLMProvider,
+        session_id: str | None,
+        prompt_messages: list[dict[str, str]],
+        initial_latency_ms: int,
+        trace_id: str | None,
+        prompt_logger: Any,
+    ) -> AsyncGenerator[StreamingLLMResponse, None]:
+        """Wrap streaming response to log prompt interaction.
+        
+        Args:
+            stream: Original streaming response
+            provider: Provider that generated the response
+            session_id: Optional session ID
+            prompt_messages: Original prompt messages
+            initial_latency_ms: Initial latency before streaming started
+            trace_id: Request trace ID
+            prompt_logger: LLMPromptLogger instance
+            
+        Yields:
+            Streaming response chunks
+        """
+        total_content = ""
+        total_latency_ms = initial_latency_ms
+        has_error = False
+        error_message = None
+        
+        try:
+            start_time = time.time()
+            async for chunk in stream:
+                total_content += chunk.content
+                yield chunk
+            total_latency_ms = int((time.time() - start_time) * 1000) + initial_latency_ms
+            
+        except Exception as e:
+            has_error = True
+            error_message = str(e)
+            raise
+        
+        finally:
+            # Log prompt interaction after streaming completes
+            try:
+                # Estimate tokens for streaming response
+                prompt_tokens = 0
+                for msg in prompt_messages:
+                    prompt_tokens += self._estimate_tokens(msg.get("content", ""))
+                completion_tokens = self._estimate_tokens(total_content)
+                
+                prompt_logger.log_interaction(
+                    session_id=session_id,
+                    trace_id=trace_id,
+                    provider=provider.name,
+                    model=provider.model_id,
+                    messages=prompt_messages,
+                    response=total_content,
+                    latency_ms=total_latency_ms,
+                    token_usage={
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens,
+                    },
+                    success=not has_error,
+                    error=error_message,
+                )
+            except Exception as log_error:
+                logger.warning(
+                    "Failed to log streaming prompt interaction",
+                    extra={
+                        "provider_name": provider.name,
+                        "error": str(log_error),
                     }
                 )
     
