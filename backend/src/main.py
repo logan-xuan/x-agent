@@ -248,8 +248,10 @@ def create_app() -> FastAPI:
     # === ROUTES ===
     from .api.v1.chat import router as chat_router
     from .api.v1.config import router as config_router
+    from .api.v1.context import router as context_router
     from .api.v1.dev import router as dev_router
     from .api.v1.health import router as health_router
+    from .api.v1.session import router as session_router
     from .api.v1.stats import router as stats_router
     from .api.v1.memory import router as memory_router
     from .api.v1.trace import router as trace_router
@@ -258,6 +260,8 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
     app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
     app.include_router(config_router, prefix="/api/v1", tags=["Config"])
+    app.include_router(context_router, prefix="/api/v1", tags=["Context"])
+    app.include_router(session_router, prefix="/api/v1", tags=["Session"])
     app.include_router(stats_router, prefix="/api/v1", tags=["Stats"])
     app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
     app.include_router(dev_router, prefix="/api/v1", tags=["Developer"])
