@@ -264,6 +264,8 @@ class Agent:
     def _record_if_important(self, user_message: str, assistant_message: str) -> None:
         """Check if conversation contains important content and record to memory.
         
+        Only records extracted important content, not the full message.
+        
         Args:
             user_message: User's message
             assistant_message: Assistant's response
@@ -276,17 +278,33 @@ class Agent:
             )
             
             if analysis["is_important"]:
-                # Determine what to record
-                content_to_record = user_message
-                
-                # Extract specific info if available
                 user_analysis = analysis.get("user_analysis", {})
-                entities = user_analysis.get("extracted_entities", [])
+                assistant_analysis = analysis.get("assistant_analysis", {})
                 
-                if entities:
-                    # Record extracted entity
-                    for entity in entities[:1]:  # Take first entity
-                        content_to_record = entity.get("content", user_message)
+                # Extract important content - NOT the full message
+                content_to_record = None
+                
+                # Check user message for extracted entities
+                user_entities = user_analysis.get("extracted_entities", [])
+                if user_entities:
+                    content_to_record = user_entities[0].get("content", "")
+                
+                # Check assistant message for extracted entities
+                if not content_to_record:
+                    assistant_entities = assistant_analysis.get("extracted_entities", [])
+                    if assistant_entities:
+                        content_to_record = assistant_entities[0].get("content", "")
+                
+                # Skip if no extractable content
+                if not content_to_record or len(content_to_record.strip()) < 2:
+                    logger.debug(
+                        "Important detected but no extractable content, skipping",
+                        extra={
+                            "matched_keywords": user_analysis.get("matched_keywords", []),
+                            "user_message_preview": user_message[:50],
+                        }
+                    )
+                    return
                 
                 # Create memory entry
                 content_type_str = analysis.get("content_type", "conversation")
@@ -304,11 +322,10 @@ class Agent:
                 self._md_sync.append_memory_entry(entry)
                 
                 logger.info(
-                    "Important content recorded to memory",
+                    "Important content extracted and recorded",
                     extra={
-                        "content_preview": content_to_record[:50],
+                        "recorded_content": content_to_record[:50],
                         "content_type": content_type.value,
-                        "matched_keywords": user_analysis.get("matched_keywords", []),
                         "matched_patterns": user_analysis.get("matched_patterns", []),
                     }
                 )

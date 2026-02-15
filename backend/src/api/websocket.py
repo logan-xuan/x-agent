@@ -35,6 +35,8 @@ async def record_if_important(
 ) -> bool:
     """Record conversation turn if it contains important information.
     
+    Only records extracted important content, not the full message.
+    
     Args:
         user_message: User's message
         assistant_message: Assistant's response
@@ -50,19 +52,58 @@ async def record_if_important(
         if analysis["is_important"]:
             md_sync = get_md_sync()
             
-            # Create memory entry with the important content
+            # Determine content type
             content_type = detector.detect_content_type(user_message)
             if content_type.value == "conversation":
                 content_type = detector.detect_content_type(assistant_message)
             
-            # Use user message as primary content
+            # Extract important content - NOT the full message
+            user_analysis = analysis["user_analysis"]
+            assistant_analysis = analysis["assistant_analysis"]
+            
+            # Prefer extracted entities over full message
+            content_to_record = None
+            extracted_from = "user"
+            
+            # Check user message for extracted entities
+            if user_analysis.get("extracted_entities"):
+                entity = user_analysis["extracted_entities"][0]
+                content_to_record = entity.get("content", "")
+                matched_pattern = entity.get("type", "")
+            # Check assistant message for extracted entities
+            elif assistant_analysis.get("extracted_entities"):
+                entity = assistant_analysis["extracted_entities"][0]
+                content_to_record = entity.get("content", "")
+                extracted_from = "assistant"
+                matched_pattern = entity.get("type", "")
+            else:
+                # No extracted entities - skip recording to avoid noise
+                logger.debug(
+                    "Important detected but no extractable content, skipping",
+                    extra={
+                        "session_id": session_id,
+                        "matched_keywords": user_analysis.get("matched_keywords", []),
+                    }
+                )
+                return False
+            
+            # Skip if content is too short or looks like noise
+            if not content_to_record or len(content_to_record.strip()) < 2:
+                logger.debug(
+                    "Extracted content too short, skipping",
+                    extra={"content": content_to_record, "session_id": session_id}
+                )
+                return False
+            
             entry = MemoryEntry(
-                content=user_message,
+                content=content_to_record,
                 content_type=content_type,
                 metadata={
                     "session_id": session_id,
+                    "extracted_from": extracted_from,
+                    "pattern_type": matched_pattern if 'matched_pattern' in dir() else "",
+                    "user_message_preview": user_message[:50] if user_message else "",
                     "assistant_preview": assistant_message[:100] if assistant_message else "",
-                    "matched_patterns": analysis["user_analysis"].get("matched_patterns", []),
                 }
             )
             
@@ -70,11 +111,12 @@ async def record_if_important(
             
             if result:
                 logger.info(
-                    "Important conversation recorded",
+                    "Important content extracted and recorded",
                     extra={
                         "session_id": session_id,
                         "content_type": content_type.value,
-                        "patterns": analysis["user_analysis"].get("matched_patterns", []),
+                        "recorded_content": content_to_record[:50],
+                        "pattern": matched_pattern if 'matched_pattern' in dir() else "",
                     }
                 )
             return result

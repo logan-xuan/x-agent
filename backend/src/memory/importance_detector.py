@@ -20,14 +20,15 @@ logger = get_logger(__name__)
 
 
 # Importance indicators - keywords and phrases that suggest important content
+# NOTE: Keep keywords specific to avoid false positives
 IMPORTANCE_KEYWORDS = [
-    # Explicit importance markers
+    # Explicit importance markers - most reliable
     "重要", "记得", "记住", "别忘了", "关键", "核心",
     "important", "remember", "don't forget", "key", "critical",
     
     # Decision markers
-    "决定", "选定", "选择", "确认", "定下来",
-    "decided", "selected", "chosen", "confirmed", "agreed",
+    "决定", "选定", "确认", "定下来",
+    "decided", "selected", "confirmed", "agreed",
     
     # Commitment markers
     "承诺", "保证", "约定", "计划", "目标", "deadline",
@@ -37,9 +38,8 @@ IMPORTANCE_KEYWORDS = [
     "喜欢", "不喜欢", "偏好", "习惯",
     "prefer", "like", "dislike", "habit",
     
-    # Identity markers
-    "我是", "我叫", "我的职业", "我从事",
-    "I am", "my name is", "I work as", "my job is",
+    # NOTE: "我是" removed - too broad, use IDENTITY_PATTERNS instead
+    # for more precise matching
 ]
 
 # Patterns that indicate important decisions
@@ -80,13 +80,14 @@ PREFERENCE_PATTERNS = [
 ]
 
 # Patterns that indicate identity information
+# NOTE: More specific patterns to avoid false positives
 IDENTITY_PATTERNS = [
-    r"我叫(.+)",
-    r"我是(.+)",
-    r"我的职业是(.+)",
-    r"我从事(.+)",
+    r"我叫(.+)",           # "我叫张三"
+    r"我的名字是(.+)",     # "我的名字是张三"
+    r"我的职业是(.+)",     # "我的职业是工程师"
+    r"我从事(.+)工作?",    # "我从事软件开发"
     r"my name is (.+)",
-    r"I am a (.+)",
+    r"I am a (.+)",        # "I am a developer"
     r"I work as a (.+)",
     r"my job is (.+)",
 ]
