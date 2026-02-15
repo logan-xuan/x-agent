@@ -6,6 +6,9 @@ This module defines the data structures for the memory system:
 - ToolDefinition: Tool and capability definitions
 - MemoryEntry: Individual memory records
 - DailyLog: Daily log organization
+- SessionType: Session type enumeration (main vs shared)
+- FileLoadResult: File loading result
+- ContextFile: Context file definition
 """
 
 from datetime import datetime
@@ -22,6 +25,17 @@ class MemoryContentType(str, Enum):
     DECISION = "decision"
     SUMMARY = "summary"
     MANUAL = "manual"
+
+
+class SessionType(str, Enum):
+    """Session type enumeration for context loading.
+    
+    Determines which context files are loaded:
+    - MAIN: Single user conversation, can load MEMORY.md
+    - SHARED: Group chat/multi-user context, blocks MEMORY.md for privacy
+    """
+    MAIN = "main"          # 主会话：单用户对话，可加载 MEMORY.md
+    SHARED = "shared"      # 共享上下文：群聊/多用户，禁止加载 MEMORY.md
 
 
 class SpiritConfig(BaseModel):
@@ -122,6 +136,7 @@ class ContextBundle(BaseModel):
     """Bundled context for AI response.
     
     Contains all loaded context information for generating AI responses.
+    Extended with session type for privacy-aware context loading.
     """
     spirit: SpiritConfig | None = Field(default=None, description="AI 人格配置")
     owner: OwnerProfile | None = Field(default=None, description="用户画像")
@@ -129,6 +144,12 @@ class ContextBundle(BaseModel):
     recent_logs: list[DailyLog] = Field(default_factory=list, description="近期日志")
     long_term_memory: str = Field(default="", description="长期记忆")
     loaded_at: datetime = Field(default_factory=datetime.now, description="加载时间")
+    
+    # New fields for agent guidance
+    session_type: SessionType = Field(default=SessionType.MAIN, description="会话类型")
+    session_id: str | None = Field(default=None, description="会话标识")
+    loaded_files: list[str] = Field(default_factory=list, description="已加载文件列表")
+    load_time_ms: int = Field(default=0, description="加载耗时（毫秒）")
 
     model_config = {
         "extra": "ignore",
@@ -156,3 +177,79 @@ class IdentityInitResponse(BaseModel):
     success: bool = Field(description="是否成功")
     spirit: SpiritConfig | None = Field(default=None, description="AI 人格配置")
     owner: OwnerProfile | None = Field(default=None, description="用户画像")
+
+
+class FileLoadResult(BaseModel):
+    """Result of a file loading operation.
+    
+    Used to track the status and details of each file loaded during context building.
+    """
+    file_path: str = Field(description="文件路径")
+    success: bool = Field(description="是否成功")
+    content: str | None = Field(default=None, description="文件内容（成功时）")
+    error: str | None = Field(default=None, description="错误信息（失败时）")
+    loaded_at: datetime = Field(default_factory=datetime.now, description="加载时间")
+    from_cache: bool = Field(default=False, description="是否来自缓存")
+    is_default: bool = Field(default=False, description="是否使用默认模板创建")
+    content_length: int = Field(default=0, description="内容长度")
+
+    model_config = {
+        "extra": "ignore",
+    }
+
+
+class ContextFile(BaseModel):
+    """Definition of a context file.
+    
+    Describes a file that can be loaded as part of the agent's context.
+    """
+    name: str = Field(description="文件名（如 AGENTS.md）")
+    path: str = Field(description="相对路径（如 workspace/AGENTS.md）")
+    required: bool = Field(default=False, description="是否必需")
+    main_session_only: bool = Field(default=False, description="是否仅在主会话加载")
+    load_order: int = Field(default=0, description="加载顺序（越小越先加载）")
+    default_template: str | None = Field(default=None, description="默认模板内容")
+
+    model_config = {
+        "extra": "ignore",
+    }
+
+
+# Predefined context files configuration
+CONTEXT_FILES: list[ContextFile] = [
+    ContextFile(
+        name="AGENTS.md",
+        path="workspace/AGENTS.md",
+        required=True,
+        main_session_only=False,
+        load_order=1,
+    ),
+    ContextFile(
+        name="SPIRIT.md",
+        path="workspace/SPIRIT.md",
+        required=True,
+        main_session_only=False,
+        load_order=2,
+    ),
+    ContextFile(
+        name="OWNER.md",
+        path="workspace/OWNER.md",
+        required=True,
+        main_session_only=False,
+        load_order=3,
+    ),
+    ContextFile(
+        name="TOOLS.md",
+        path="workspace/TOOLS.md",
+        required=False,
+        main_session_only=False,
+        load_order=4,
+    ),
+    ContextFile(
+        name="MEMORY.md",
+        path="workspace/MEMORY.md",
+        required=False,
+        main_session_only=True,  # Only load in main session
+        load_order=7,
+    ),
+]
