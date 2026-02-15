@@ -13,7 +13,12 @@ from typing import Optional
 
 import aiofiles
 import aiofiles.os
-from filelock import FileLock, Timeout
+
+try:
+    from filelock import FileLock, Timeout as FileLockTimeout
+except ImportError:
+    FileLock = None  # type: ignore
+    FileLockTimeout = None  # type: ignore
 
 from ..utils.logger import get_logger
 
@@ -25,7 +30,7 @@ class PathValidationError(Exception):
     pass
 
 
-class FileLockTimeout(Exception):
+class LockAcquireTimeout(Exception):
     """Raised when file lock acquisition times out."""
     pass
 
@@ -207,15 +212,22 @@ class AsyncFileLock:
     
     def __enter__(self) -> "AsyncFileLock":
         """Acquire lock synchronously."""
+        if FileLock is None:
+            logger.warning("filelock not available, skipping lock")
+            return self
+        
         self._lock = FileLock(self.lock_path)
         try:
             self._lock.acquire(timeout=self.timeout)
             logger.debug(f"Lock acquired: {self.lock_path}")
             return self
-        except Timeout:
-            raise FileLockTimeout(
-                f"Failed to acquire lock: {self.lock_path} (timeout: {self.timeout}s)"
-            )
+        except Exception as e:
+            # Handle both filelock.Timeout and general exceptions
+            if "timeout" in str(e).lower() or FileLockTimeout is not None and isinstance(e, type(FileLockTimeout)):
+                raise LockAcquireTimeout(
+                    f"Failed to acquire lock: {self.lock_path} (timeout: {self.timeout}s)"
+                )
+            raise
     
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Release lock."""
