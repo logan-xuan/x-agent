@@ -10,9 +10,8 @@ This module provides:
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from ..memory.context_builder import ContextBuilder, get_context_builder
 from ..memory.models import (
     ContextBundle,
     ContextFile,
@@ -29,6 +28,9 @@ from ..utils.file_utils import (
     validate_path_in_workspace,
 )
 from ..utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from ..memory.context_builder import ContextBuilder
 
 logger = get_logger(__name__)
 
@@ -63,7 +65,8 @@ class ContextLoader:
             workspace_path: Path to workspace directory
         """
         self.workspace_path = Path(workspace_path)
-        self._context_builder = ContextBuilder(str(self.workspace_path))
+        # Lazy initialization to avoid circular import
+        self._context_builder: "ContextBuilder | None" = None
         self._spirit_loader = SpiritLoader(str(self.workspace_path))
         self._template_service = TemplateService(str(self.workspace_path))
         
@@ -76,6 +79,13 @@ class ContextLoader:
             "ContextLoader initialized",
             extra={"workspace_path": str(self.workspace_path)}
         )
+    
+    def _get_context_builder(self) -> "ContextBuilder":
+        """Get or create ContextBuilder instance (lazy initialization)."""
+        if self._context_builder is None:
+            from ..memory.context_builder import ContextBuilder
+            self._context_builder = ContextBuilder(str(self.workspace_path))
+        return self._context_builder
     
     # ============ Bootstrap Detection & Execution ============
     
@@ -194,10 +204,10 @@ class ContextLoader:
         
         # Clear cache if force reload
         if force_reload:
-            self._context_builder.clear_cache()
+            self._get_context_builder().clear_cache()
         
         # Build base context using existing ContextBuilder
-        context = self._context_builder.build_context()
+        context = self._get_context_builder().build_context()
         
         # Add session-specific fields
         context.session_id = session_id
@@ -394,7 +404,8 @@ class ContextLoader:
     
     def clear_all_cache(self) -> None:
         """Clear all cached data."""
-        self._context_builder.clear_cache()
+        if self._context_builder is not None:
+            self._context_builder.clear_cache()
         self._spirit_loader.clear_cache()
         self._agents_content = None
         self._agents_mtime = None
