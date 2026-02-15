@@ -43,6 +43,10 @@ dependencies = [
     "openai>=1.10.0",
     "httpx>=0.26.0",
     
+    # Memory System
+    "sentence-transformers>=2.2.0",
+    "python-frontmatter>=1.0.0",
+    
     # Logging & Utils
     "structlog>=24.1.0",
     "python-json-logger>=2.0.7",

@@ -116,6 +116,53 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.config_manager = _config_manager
     app.state.llm_router = _llm_router
     
+    # 6. Start file watcher for memory sync (Phase 7)
+    from .memory.file_watcher import get_file_watcher
+    from .memory.md_sync import get_md_sync
+    from .memory.vector_store import get_vector_store
+    from .memory.embedder import get_embedder
+    
+    workspace_path = config.workspace.path
+    _file_watcher = get_file_watcher(workspace_path)
+    
+    # Get dependencies for sync
+    md_sync = get_md_sync(workspace_path)
+    vector_store = get_vector_store()
+    embedder = get_embedder()
+    
+    # Define sync callback for memory file changes
+    def on_memory_file_changed(file_path: str) -> None:
+        """Handle memory file changes and sync to vector store."""
+        try:
+            md_sync.sync_on_file_change(file_path, vector_store, embedder)
+        except Exception as e:
+            logger.error(
+                "Failed to sync memory file change",
+                extra={"file_path": file_path, "error": str(e)}
+            )
+    
+    # Start file watcher with callbacks
+    _file_watcher.start(
+        on_spirit_changed=lambda: logger.info("SPIRIT.md changed, hot-reload triggered"),
+        on_owner_changed=lambda: logger.info("OWNER.md changed, hot-reload triggered"),
+        on_tools_changed=lambda: logger.info("TOOLS.md changed, hot-reload triggered"),
+        on_memory_changed=on_memory_file_changed,
+    )
+    logger.info("File watcher started for memory sync")
+    
+    # 7. Initial sync: Markdown -> Vector Store
+    try:
+        synced_count = md_sync.sync_all_entries_to_vector_store(vector_store, embedder)
+        logger.info(
+            "Initial memory sync completed",
+            extra={"synced_entries": synced_count}
+        )
+    except Exception as e:
+        logger.warning(
+            "Initial memory sync failed (non-fatal)",
+            extra={"error": str(e)}
+        )
+    
     logger.info("X-Agent started successfully")
     
     yield
@@ -123,17 +170,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # === SHUTDOWN ===
     logger.info("Shutting down X-Agent...")
     
-    # 1. Stop config watcher
+    # 1. Stop file watcher
+    if _file_watcher:
+        _file_watcher.stop()
+        logger.info("File watcher stopped")
+    
+    # 2. Stop config watcher
     if _config_manager:
         _config_manager.stop_watcher()
         logger.info("Configuration watcher stopped")
     
-    # 2. Close LLM connections
+    # 3. Close LLM connections
     if _llm_router:
         await _llm_router.close()
         logger.info("LLM router closed")
     
-    # 3. Close database connections
+    # 4. Close database connections
     await close_storage()
     logger.info("Database connections closed")
     
@@ -196,14 +248,20 @@ def create_app() -> FastAPI:
     # === ROUTES ===
     from .api.v1.chat import router as chat_router
     from .api.v1.config import router as config_router
+    from .api.v1.dev import router as dev_router
     from .api.v1.health import router as health_router
     from .api.v1.stats import router as stats_router
+    from .api.v1.memory import router as memory_router
+    from .api.v1.trace import router as trace_router
     from .api.websocket import router as websocket_router
     
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
     app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
     app.include_router(config_router, prefix="/api/v1", tags=["Config"])
     app.include_router(stats_router, prefix="/api/v1", tags=["Stats"])
+    app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
+    app.include_router(dev_router, prefix="/api/v1", tags=["Developer"])
+    app.include_router(trace_router, prefix="/api/v1", tags=["Trace"])
     app.include_router(websocket_router, prefix="/ws", tags=["WebSocket"])
     
     return app

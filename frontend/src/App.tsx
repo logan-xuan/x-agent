@@ -82,6 +82,14 @@ function App() {
       onSendMessage={sendMessage}
       connectionStatus={connectionStatus}
       onOpenSettings={() => setView('settings')}
+      onNewSession={async () => {
+        try {
+          const session = await createSession('新对话');
+          localStorage.setItem(SESSION_STORAGE_KEY, session.id);
+        } catch (error) {
+          console.error('Failed to create new session:', error);
+        }
+      }}
     />
   );
 }

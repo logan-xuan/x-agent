@@ -24,10 +24,10 @@
 
 **Purpose**: 创建记忆系统基础结构和依赖
 
-- [ ] T001 Create workspace directory structure: `workspace/`, `workspace/memory/`
-- [ ] T002 [P] Add dependencies to `backend/pyproject.toml`: sentence-transformers, watchdog, pyyaml, python-frontmatter
-- [ ] T003 [P] Create `backend/src/memory/__init__.py` module init with exports
-- [ ] T004 [P] Create workspace template files: `workspace/SPIRIT.md`, `workspace/OWNER.md`, `workspace/MEMORY.md`, `workspace/TOOLS.md`
+- [x] T001 Create workspace directory structure: `workspace/`, `workspace/memory/`
+- [x] T002 [P] Add dependencies to `backend/pyproject.toml`: sentence-transformers, watchdog, pyyaml, python-frontmatter
+- [x] T003 [P] Create `backend/src/memory/__init__.py` module init with exports
+- [x] T004 [P] Create workspace template files: `workspace/SPIRIT.md`, `workspace/OWNER.md`, `workspace/MEMORY.md`, `workspace/TOOLS.md`
 
 ---
 
@@ -39,19 +39,19 @@
 
 ### Database & Models
 
-- [ ] T005 Create memory ORM models in `backend/src/models/memory.py`: MemoryEntry, SpiritCache, OwnerCache, DailyLog, ToolDefinition
-- [ ] T006 [P] Create vector store schema extension in `backend/src/memory/vector_store.py`: sqlite-vss 初始化和连接管理
-- [ ] T007 [P] Create embedding service in `backend/src/services/embedder.py`: sentence-transformers 加载和推理
+- [x] T005 Create memory ORM models in `backend/src/memory/models.py`: MemoryEntry, SpiritCache, OwnerCache, DailyLog, ToolDefinition
+- [x] T006 [P] Create vector store schema extension in `backend/src/memory/vector_store.py`: sqlite-vss 初始化和连接管理
+- [x] T007 [P] Create embedding service in `backend/src/services/embedder.py`: sentence-transformers 加载和推理
 
 ### File Infrastructure
 
-- [ ] T008 Create file watcher in `backend/src/memory/file_watcher.py`: watchdog 事件处理器基类
-- [ ] T009 Create Markdown sync base in `backend/src/memory/md_sync.py`: frontmatter 解析和文件读写
+- [x] T008 Create file watcher in `backend/src/memory/file_watcher.py`: watchdog 事件处理器基类
+- [x] T009 Create Markdown sync base in `backend/src/memory/md_sync.py`: frontmatter 解析和文件读写
 
 ### API Infrastructure
 
-- [ ] T010 [P] Create memory router stub in `backend/src/api/v1/memory.py`: FastAPI router 注册
-- [ ] T011 Register memory router in `backend/src/main.py`: 添加 /api/v1/memory 路由
+- [x] T010 [P] Create memory router stub in `backend/src/api/v1/memory.py`: FastAPI router 注册
+- [x] T011 Register memory router in `backend/src/main.py`: 添加 /api/v1/memory 路由
 
 **Checkpoint**: 基础架构就绪，可开始用户故事实现
 
@@ -65,20 +65,20 @@
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Unit test for SpiritLoader in `backend/tests/unit/test_spirit_loader.py`
-- [ ] T013 [P] [US1] Unit test for identity API in `backend/tests/unit/test_identity_api.py`
+- [x] T012 [P] [US1] Unit test for SpiritLoader in `backend/tests/unit/test_spirit_loader.py`
+- [x] T013 [P] [US1] Unit test for identity API in `backend/tests/unit/test_identity_api.py`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [P] [US1] Create SpiritConfig model in `backend/src/memory/models.py`: SPIRIT.md 数据结构
-- [ ] T015 [P] [US1] Create OwnerProfile model in `backend/src/memory/models.py`: OWNER.md 数据结构
-- [ ] T016 [US1] Implement SpiritLoader in `backend/src/memory/spirit_loader.py`: 加载/解析 SPIRIT.md 和 OWNER.md
-- [ ] T017 [US1] Implement identity initialization logic in `backend/src/memory/spirit_loader.py`: 首次启动检测和引导流程
-- [ ] T018 [US1] Implement identity status API in `backend/src/api/v1/memory.py`: GET /identity/status
-- [ ] T019 [US1] Implement identity init API in `backend/src/api/v1/memory.py`: POST /identity/init
-- [ ] T020 [US1] Implement spirit CRUD APIs in `backend/src/api/v1/memory.py`: GET/PUT /identity/spirit
-- [ ] T021 [US1] Implement owner CRUD APIs in `backend/src/api/v1/memory.py`: GET/PUT /identity/owner
-- [ ] T022 [US1] Add hot-reload support for identity files in `backend/src/memory/file_watcher.py`
+- [x] T014 [P] [US1] Create SpiritConfig model in `backend/src/memory/models.py`: SPIRIT.md 数据结构
+- [x] T015 [P] [US1] Create OwnerProfile model in `backend/src/memory/models.py`: OWNER.md 数据结构
+- [x] T016 [US1] Implement SpiritLoader in `backend/src/memory/spirit_loader.py`: 加载/解析 SPIRIT.md 和 OWNER.md
+- [x] T017 [US1] Implement identity initialization logic in `backend/src/memory/spirit_loader.py`: 首次启动检测和引导流程
+- [x] T018 [US1] Implement identity status API in `backend/src/api/v1/memory.py`: GET /identity/status
+- [x] T019 [US1] Implement identity init API in `backend/src/api/v1/memory.py`: POST /identity/init
+- [x] T020 [US1] Implement spirit CRUD APIs in `backend/src/api/v1/memory.py`: GET/PUT /identity/spirit
+- [x] T021 [US1] Implement owner CRUD APIs in `backend/src/api/v1/memory.py`: GET/PUT /identity/owner
+- [x] T022 [US1] Add hot-reload support for identity files in `backend/src/memory/file_watcher.py`
 
 **Checkpoint**: US1 完成，身份初始化可独立测试
 
@@ -92,23 +92,23 @@
 
 ### Tests for User Story 2
 
-- [ ] T023 [P] [US2] Unit test for ContextBuilder in `backend/tests/unit/test_context_builder.py`
-- [ ] T024 [P] [US2] Integration test for context loading in `backend/tests/integration/test_context_flow.py`
+- [x] T023 [P] [US2] Unit test for ContextBuilder in `backend/tests/unit/test_context_builder.py`
+- [x] T024 [P] [US2] Integration test for context loading in `backend/tests/integration/test_context_flow.py`
 
 ### Implementation for User Story 2
 
-- [ ] T025 [P] [US2] Create ToolDefinition model in `backend/src/memory/models.py`: TOOLS.md 数据结构
-- [ ] T026 [US2] Implement ContextBuilder in `backend/src/memory/context_builder.py`: 多级上下文加载逻辑
-- [ ] T027 [US2] Implement context load API in `backend/src/api/v1/memory.py`: POST /context/load
-- [ ] T028 [US2] Implement context reload API in `backend/src/api/v1/memory.py`: POST /context/reload
-- [ ] T029 [US2] Integrate ContextBuilder with Agent core in `backend/src/core/agent.py`: 响应前自动加载
-- [ ] T030 [US2] Add logging for context loading in `backend/src/memory/context_builder.py`
+- [x] T025 [P] [US2] Create ToolDefinition model in `backend/src/memory/models.py`: TOOLS.md 数据结构
+- [x] T026 [US2] Implement ContextBuilder in `backend/src/memory/context_builder.py`: 多级上下文加载逻辑
+- [x] T027 [US2] Implement context load API in `backend/src/api/v1/memory.py`: POST /context/load
+- [x] T028 [US2] Implement context reload API in `backend/src/api/v1/memory.py`: POST /context/reload
+- [x] T029 [US2] Integrate ContextBuilder with Agent core in `backend/src/core/agent.py`: 响应前自动加载
+- [x] T030 [US2] Add logging for context loading in `backend/src/memory/context_builder.py`
 
 **Checkpoint**: US2 完成，上下文加载可独立测试
 
 ---
 
-## Phase 5: User Story 3 - 每日记忆记录 (Priority: P2)
+## Phase 5: User Story 3 - 每日记记记录 (Priority: P2)
 
 **Goal**: 自动记录每天的重要对话和决策
 
@@ -116,19 +116,19 @@
 
 ### Tests for User Story 3
 
-- [ ] T031 [P] [US3] Unit test for daily log in `backend/tests/unit/test_daily_log.py`
-- [ ] T032 [P] [US3] Integration test for memory recording in `backend/tests/integration/test_memory_flow.py`
+- [x] T031 [P] [US3] Unit test for daily log in `backend/tests/unit/test_daily_log.py`
+- [x] T032 [P] [US3] Integration test for memory recording in `backend/tests/integration/test_memory_flow.py`
 
 ### Implementation for User Story 3
 
-- [ ] T033 [P] [US3] Create DailyLog model in `backend/src/memory/models.py`: 每日日志数据结构
-- [ ] T034 [P] [US3] Create MemoryEntry model in `backend/src/memory/models.py`: 记忆条目数据结构
-- [ ] T035 [US3] Implement daily log manager in `backend/src/memory/md_sync.py`: 创建/追加日志条目
-- [ ] T036 [US3] Implement importance detection in `backend/src/memory/spirit_loader.py`: AI 自动识别重要内容
-- [ ] T037 [US3] Implement memory entries API in `backend/src/api/v1/memory.py`: GET/POST /memory/entries
-- [ ] T038 [US3] Implement single entry API in `backend/src/api/v1/memory.py`: GET/DELETE /memory/entries/{id}
-- [ ] T039 [US3] Implement daily log API in `backend/src/api/v1/memory.py`: GET /memory/daily/{date}
-- [ ] T040 [US3] Integrate memory recording with WebSocket handler in `backend/src/api/websocket.py`
+- [x] T033 [P] [US3] Create DailyLog model in `backend/src/memory/models.py`: 每日日志数据结构
+- [x] T034 [P] [US3] Create MemoryEntry model in `backend/src/memory/models.py`: 记忆条目数据结构
+- [x] T035 [US3] Implement daily log manager in `backend/src/memory/md_sync.py`: 创建/追加日志条目
+- [x] T036 [US3] Implement importance detection in `backend/src/memory/importance_detector.py`: AI 自动识别重要内容
+- [x] T037 [US3] Implement memory entries API in `backend/src/api/v1/memory.py`: GET/POST /memory/entries
+- [x] T038 [US3] Implement single entry API in `backend/src/api/v1/memory.py`: GET/DELETE /memory/entries/{id}
+- [x] T039 [US3] Implement daily log API in `backend/src/api/v1/memory.py`: GET /memory/daily/{date}
+- [x] T040 [US3] Integrate memory recording with WebSocket handler in `backend/src/api/websocket.py`
 
 **Checkpoint**: US3 完成，每日记忆可独立测试
 
@@ -142,23 +142,23 @@
 
 ### Tests for User Story 4
 
-- [ ] T041 [P] [US4] Unit test for hybrid search in `backend/tests/unit/test_hybrid_search.py`
-- [ ] T042 [P] [US4] Unit test for vector store in `backend/tests/unit/test_vector_store.py`
+- [x] T041 [P] [US4] Unit test for hybrid search in `backend/tests/unit/test_hybrid_search.py`
+- [x] T042 [P] [US4] Unit test for vector store in `backend/tests/unit/test_vector_store.py`
 
 ### Implementation for User Story 4
 
-- [ ] T043 [US4] Implement vector store operations in `backend/src/memory/vector_store.py`: 插入/搜索/删除向量
-- [ ] T044 [US4] Implement text similarity search in `backend/src/memory/hybrid_search.py`: BM25/TF-IDF 实现
-- [ ] T045 [US4] Implement hybrid search in `backend/src/memory/hybrid_search.py`: 0.7 向量 + 0.3 文本 评分
-- [ ] T046 [US4] Implement search API in `backend/src/api/v1/memory.py`: POST /search
-- [ ] T047 [US4] Implement similar search API in `backend/src/api/v1/memory.py`: GET /search/similar/{id}
-- [ ] T048 [US4] Add search result ranking and pagination in `backend/src/memory/hybrid_search.py`
+- [x] T043 [US4] Implement vector store operations in `backend/src/memory/vector_store.py`: 插入/搜索/删除向量
+- [x] T044 [US4] Implement text similarity search in `backend/src/memory/hybrid_search.py`: BM25/TF-IDF 实现
+- [x] T045 [US4] Implement hybrid search in `backend/src/memory/hybrid_search.py`: 0.7 向量 + 0.3 文本 评分
+- [x] T046 [US4] Implement search API in `backend/src/api/v1/memory.py`: POST /search
+- [x] T047 [US4] Implement similar search API in `backend/src/api/v1/memory.py`: GET /search/similar/{id}
+- [x] T048 [US4] Add search result ranking and pagination in `backend/src/memory/hybrid_search.py`
 
 **Checkpoint**: US4 完成，混合搜索可独立测试
 
 ---
 
-## Phase 7: User Story 5 - 记忆双写同步 (Priority: P3)
+## Phase 7: User Story 5 - 记忆双写同步 (Priority: P3) ✅
 
 **Goal**: 记忆文件变更时自动同步到向量数据库
 
@@ -166,18 +166,18 @@
 
 ### Tests for User Story 5
 
-- [ ] T049 [P] [US5] Unit test for file watcher in `backend/tests/unit/test_file_watcher.py`
-- [ ] T050 [P] [US5] Integration test for sync in `backend/tests/integration/test_sync_flow.py`
+- [x] T049 [P] [US5] Unit test for file watcher in `backend/tests/unit/test_file_watcher.py`
+- [x] T050 [P] [US5] Integration test for sync in `backend/tests/integration/test_sync_flow.py`
 
 ### Implementation for User Story 5
 
-- [ ] T051 [US5] Implement file event handler in `backend/src/memory/file_watcher.py`: 处理 .md 文件变更事件
-- [ ] T052 [US5] Implement bidirectional sync in `backend/src/memory/md_sync.py`: Markdown ↔ 向量存储同步
-- [ ] T053 [US5] Implement sync error handling in `backend/src/memory/md_sync.py`: 错误日志和重试机制
-- [ ] T054 [US5] Implement file recovery from vector store in `backend/src/memory/md_sync.py`: 损坏文件重建
-- [ ] T055 [US5] Start file watcher in `backend/src/main.py`: 启动时初始化监听
+- [x] T051 [US5] Implement file event handler in `backend/src/memory/file_watcher.py`: 处理 .md 文件变更事件
+- [x] T052 [US5] Implement bidirectional sync in `backend/src/memory/md_sync.py`: Markdown ↔ 向量存储同步
+- [x] T053 [US5] Implement sync error handling in `backend/src/memory/md_sync.py`: 错误日志和重试机制
+- [x] T054 [US5] Implement file recovery from vector store in `backend/src/memory/md_sync.py`: 损坏文件重建
+- [x] T055 [US5] Start file watcher in `backend/src/main.py`: 启动时初始化监听
 
-**Checkpoint**: US5 完成，双写同步可独立测试
+**Checkpoint**: US5 完成，双写同步可独立测试 ✅
 
 ---
 

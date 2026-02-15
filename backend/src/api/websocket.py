@@ -8,6 +8,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..core.agent import Agent
 from ..core.context import AgentContext, ContextSource, set_current_context, clear_current_context, get_current_context
+from ..memory.importance_detector import get_importance_detector
+from ..memory.md_sync import get_md_sync
+from ..memory.models import MemoryEntry
 from ..utils.logger import get_logger
 
 router = APIRouter()
@@ -23,6 +26,67 @@ def get_agent() -> Agent:
     if _agent is None:
         _agent = Agent()
     return _agent
+
+
+async def record_if_important(
+    user_message: str,
+    assistant_message: str,
+    session_id: str,
+) -> bool:
+    """Record conversation turn if it contains important information.
+    
+    Args:
+        user_message: User's message
+        assistant_message: Assistant's response
+        session_id: Session ID for metadata
+        
+    Returns:
+        True if recorded, False otherwise
+    """
+    try:
+        detector = get_importance_detector()
+        analysis = detector.analyze_conversation_turn(user_message, assistant_message)
+        
+        if analysis["is_important"]:
+            md_sync = get_md_sync()
+            
+            # Create memory entry with the important content
+            content_type = detector.detect_content_type(user_message)
+            if content_type.value == "conversation":
+                content_type = detector.detect_content_type(assistant_message)
+            
+            # Use user message as primary content
+            entry = MemoryEntry(
+                content=user_message,
+                content_type=content_type,
+                metadata={
+                    "session_id": session_id,
+                    "assistant_preview": assistant_message[:100] if assistant_message else "",
+                    "matched_patterns": analysis["user_analysis"].get("matched_patterns", []),
+                }
+            )
+            
+            result = md_sync.append_memory_entry(entry)
+            
+            if result:
+                logger.info(
+                    "Important conversation recorded",
+                    extra={
+                        "session_id": session_id,
+                        "content_type": content_type.value,
+                        "patterns": analysis["user_analysis"].get("matched_patterns", []),
+                    }
+                )
+            return result
+            
+        return False
+        
+    except Exception as e:
+        logger.warning(
+            "Failed to record important content",
+            extra={"error": str(e), "session_id": session_id}
+        )
+        return False
 
 
 @router.websocket("/chat/{session_id}")
@@ -132,14 +196,26 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                     stream=True
                 )
                 
+                # Collect assistant response for memory recording
+                assistant_response = ""
+                
                 async for chunk in stream:
                     # Add trace_id to each chunk
                     if isinstance(chunk, dict):
                         chunk["trace_id"] = message_context.trace_id
+                        # Collect response content (type is "chunk" or "message")
+                        if chunk.get("type") in ("chunk", "message") and "content" in chunk:
+                            assistant_response += chunk.get("content", "")
                     await websocket.send_json(chunk)
                     
                     # Small delay to prevent overwhelming the client
                     await asyncio.sleep(0.01)
+                
+                # Record important conversation (async, non-blocking)
+                if assistant_response:
+                    asyncio.create_task(
+                        record_if_important(user_content, assistant_response, session_id)
+                    )
                     
             except Exception as e:
                 logger.error(

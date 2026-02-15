@@ -56,12 +56,19 @@ class LoggingConfig(BaseModel):
     console: bool = Field(default=True, description="Output to console")
 
 
+class WorkspaceConfig(BaseModel):
+    """Workspace configuration."""
+    
+    path: str = Field(default="workspace", description="Path to workspace directory")
+
+
 class Config(BaseModel):
     """Root configuration model."""
     
     models: list[ModelConfig] = Field(..., min_length=1, description="Model configurations")
     server: ServerConfig = Field(default_factory=ServerConfig, description="Server config")
     logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging config")
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig, description="Workspace config")
     
     @field_validator("models")
     @classmethod

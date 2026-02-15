@@ -45,7 +45,7 @@
 
 **Acceptance Scenarios**:
 
-1. **Given** AI Agent 启动，**When** 系统初始化完成，**Then** 自动按层级加载 SPIRIT.md、OWNER.md、TOOLS.md、最近两日的日志文件
+1. **Given** AI Agent 启动，**When** 系统初始化完成，**Then** 按AGENTS.md 引导文件自动按层级加载 SPIRIT.md、OWNER.md、TOOLS.md、最近两日的日志文件
 2. **Given** 用户与 AI 进行主会话对话，**When** AI 准备响应，**Then** AI 同时加载长期记忆文件 MEMORY.md
 3. **Given** 上下文加载完成，**When** 用户提问，**Then** AI 的回答反映已加载的身份信息和历史上下文
 
