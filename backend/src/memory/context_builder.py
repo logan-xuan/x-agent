@@ -4,6 +4,7 @@ This module provides:
 - Multi-level context loading (identity, tools, memory)
 - Context formatting for AI prompts
 - Caching for performance
+- Integration with ContextLoader for AGENTS.md and Bootstrap
 """
 
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ from .models import (
     ToolDefinition,
 )
 from .spirit_loader import SpiritLoader
+from ..core.context_loader import ContextLoader, get_context_loader
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,6 +30,7 @@ class ContextBuilder:
     """Builder for AI response context.
     
     Loads and bundles context from multiple sources:
+    - Level 0: AGENTS.md (main guidance from ContextLoader)
     - Level 1: Identity (SPIRIT.md, OWNER.md)
     - Level 2: Tools (TOOLS.md)
     - Level 3: Recent memory (memory/*.md)
@@ -44,11 +47,17 @@ class ContextBuilder:
         self._spirit_loader = SpiritLoader(self.workspace_path)
         self._md_sync = MarkdownSync(self.workspace_path)
         
+        # Use the new ContextLoader for AGENTS.md and Bootstrap
+        self._context_loader = get_context_loader(self.workspace_path)
+        
         # Cache
         self._tools: list[ToolDefinition] | None = None
         self._last_load_time: datetime | None = None
         self._cached_context: ContextBundle | None = None
         self._cache_ttl_seconds = 60  # Cache for 60 seconds
+        
+        # Track bootstrap status
+        self._bootstrap_checked = False
         
         logger.info(
             "ContextBuilder initialized",
@@ -59,11 +68,31 @@ class ContextBuilder:
         """Build context bundle for AI response.
         
         Loads all context levels and bundles them together.
+        Now includes:
+        - Bootstrap detection and execution
+        - AGENTS.md hot-reload
         
         Returns:
             ContextBundle with all loaded context
         """
         logger.info("Building context")
+        
+        # ===== Bootstrap Detection (First-time startup) =====
+        if not self._bootstrap_checked:
+            bootstrap_status = self._context_loader.check_bootstrap()
+            if bootstrap_status.exists:
+                logger.info(
+                    "BOOTSTRAP.md detected, executing initialization",
+                    extra={"has_content": bool(bootstrap_status.content)}
+                )
+                self._context_loader.execute_bootstrap()
+            self._bootstrap_checked = True
+        
+        # ===== AGENTS.md Hot-Reload =====
+        # Always check for AGENTS.md changes (hot-reload on every user query)
+        agents_content, agents_reloaded = self._context_loader.load_agents_content()
+        if agents_reloaded:
+            logger.info("AGENTS.md reloaded with fresh content")
         
         # Check cache validity
         if self._is_cache_valid() and self._cached_context is not None:
@@ -97,6 +126,7 @@ class ContextBuilder:
                 "has_owner": owner is not None,
                 "tools_count": len(tools),
                 "logs_count": len(recent_logs),
+                "agents_reloaded": agents_reloaded,
             }
         )
         
@@ -246,6 +276,7 @@ class ContextBuilder:
         """Generate system prompt from context.
         
         This method generates a complete system prompt that includes:
+        - AGENTS.md: Main guidance and behavior rules (from ContextLoader)
         - AI identity (SPIRIT.md): role, personality, values, behavior rules
         - User profile (OWNER.md): name, occupation, interests, goals
         - Available tools (TOOLS.md)
@@ -259,6 +290,14 @@ class ContextBuilder:
             System prompt string with full context
         """
         parts: list[str] = []
+        
+        # ===== AGENTS.md (Main Guidance - Level 0) =====
+        # Load AGENTS.md content via ContextLoader (hot-reload support)
+        agents_content, _ = self._context_loader.load_agents_content()
+        if agents_content:
+            parts.append("# 行为规范指导")
+            parts.append(agents_content)
+            parts.append("")  # Add spacing
         
         # ===== AI Identity (SPIRIT.md) =====
         if context.spirit:
@@ -344,6 +383,10 @@ class ContextBuilder:
         self._tools = None
         self._cached_context = None
         self._last_load_time = None
+        
+        # Also clear ContextLoader cache
+        self._context_loader.clear_all_cache()
+        self._bootstrap_checked = False  # Re-check bootstrap on next build
         
         logger.info("Context cache cleared")
     
