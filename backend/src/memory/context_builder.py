@@ -56,9 +56,6 @@ class ContextBuilder:
         self._cached_context: ContextBundle | None = None
         self._cache_ttl_seconds = 60  # Cache for 60 seconds
         
-        # Track bootstrap status
-        self._bootstrap_checked = False
-        
         logger.info(
             "ContextBuilder initialized",
             extra={"workspace_path": self.workspace_path}
@@ -69,7 +66,7 @@ class ContextBuilder:
         
         Loads all context levels and bundles them together.
         Now includes:
-        - Bootstrap detection and execution
+        - Bootstrap content injection (NOT auto-deletion)
         - AGENTS.md hot-reload
         
         Returns:
@@ -78,15 +75,14 @@ class ContextBuilder:
         logger.info("Building context")
         
         # ===== Bootstrap Detection (First-time startup) =====
-        if not self._bootstrap_checked:
-            bootstrap_status = self._context_loader.check_bootstrap()
-            if bootstrap_status.exists:
-                logger.info(
-                    "BOOTSTRAP.md detected, executing initialization",
-                    extra={"has_content": bool(bootstrap_status.content)}
-                )
-                self._context_loader.execute_bootstrap()
-            self._bootstrap_checked = True
+        # Check if BOOTSTRAP.md exists and get its content
+        bootstrap_status = self._context_loader.check_bootstrap()
+        if bootstrap_status.exists:
+            logger.info(
+                "BOOTSTRAP.md detected, content will be injected for Agent to process",
+                extra={"has_content": bool(bootstrap_status.content)}
+            )
+            # DO NOT auto-delete - let Agent process it and decide when to delete
         
         # ===== AGENTS.md Hot-Reload =====
         # Always check for AGENTS.md changes (hot-reload on every user query)
@@ -127,6 +123,7 @@ class ContextBuilder:
                 "tools_count": len(tools),
                 "logs_count": len(recent_logs),
                 "agents_reloaded": agents_reloaded,
+                "has_bootstrap": bootstrap_status.exists,
             }
         )
         
@@ -276,6 +273,7 @@ class ContextBuilder:
         """Generate system prompt from context.
         
         This method generates a complete system prompt that includes:
+        - BOOTSTRAP.md: First-time initialization guide (if exists)
         - AGENTS.md: Main guidance and behavior rules (from ContextLoader)
         - AI identity (SPIRIT.md): role, personality, values, behavior rules
         - User profile (OWNER.md): name, occupation, interests, goals
@@ -290,6 +288,16 @@ class ContextBuilder:
             System prompt string with full context
         """
         parts: list[str] = []
+        
+        # ===== BOOTSTRAP.md (First-time initialization) =====
+        # If BOOTSTRAP.md exists, inject its content at the TOP
+        # This is the highest priority - Agent should process it first
+        bootstrap_status = self._context_loader.check_bootstrap()
+        if bootstrap_status.exists and bootstrap_status.content:
+            parts.append("# 🌟 首次启动初始化")
+            parts.append(bootstrap_status.content)
+            parts.append("\n---\n")  # Separator
+            parts.append("**重要**: 请按照上述指引与用户对话，完成身份设定后，用户会删除此文件。\n")
         
         # ===== AGENTS.md (Main Guidance - Level 0) =====
         # Load AGENTS.md content via ContextLoader (hot-reload support)
@@ -386,7 +394,6 @@ class ContextBuilder:
         
         # Also clear ContextLoader cache
         self._context_loader.clear_all_cache()
-        self._bootstrap_checked = False  # Re-check bootstrap on next build
         
         logger.info("Context cache cleared")
     
