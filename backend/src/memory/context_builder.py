@@ -374,12 +374,26 @@ class ContextBuilder:
             parts.append("**重要**: 请按照上述指引与用户对话，完成身份设定后，用户会删除此文件。\n")
         
         # ===== AGENTS.md (Main Guidance - Level 0) =====
-        # Load AGENTS.md content via ContextLoader (hot-reload support)
-        agents_content, _ = self._context_loader.load_agents_content()
-        if agents_content:
-            parts.append("# 行为规范指导")
-            parts.append(agents_content)
-            parts.append("")  # Add spacing
+        # Load AGENTS.md soft guidelines via PolicyEngine (hot-reload support)
+        # Only include soft guidelines relevant for LLM prompts, not hard constraints
+        from ..orchestrator.policy_engine import get_policy_engine
+        try:
+            policy_engine = get_policy_engine(self.workspace_path)
+            guidelines = policy_engine.build_system_prompt_guidelines()
+            if guidelines:
+                parts.append(guidelines)
+                parts.append("")  # Add spacing
+        except Exception as e:
+            logger.warning(
+                "Failed to load guidelines from PolicyEngine, falling back to direct content",
+                extra={"error": str(e)}
+            )
+            # Fallback to direct content loading if PolicyEngine fails
+            agents_content, _ = self._context_loader.load_agents_content()
+            if agents_content:
+                parts.append("# 行为规范指导")
+                parts.append(agents_content)
+                parts.append("")  # Add spacing
         
         # ===== AI Identity (SPIRIT.md + IDENTITY.md) =====
         # First, add AI name from IDENTITY.md

@@ -356,42 +356,43 @@ class Orchestrator:
         relevant_memories: list[str] | None = None,
     ) -> list:
         """Build message list for LLM.
-        
+
         Args:
             context: Loaded context bundle
             user_message: User's message
             policy: Policy bundle
             relevant_memories: Retrieved relevant memories (from hybrid search)
-            
+
         Returns:
             List of messages for LLM
         """
         messages = []
         system_parts = []
-        
-        # Add soft guidelines
+
+        # Add soft guidelines from PolicyEngine (optimized version)
+        # This avoids loading the entire AGENTS.md file in system prompt
         guidelines = self.policy_engine.build_system_prompt_guidelines()
         if guidelines:
             system_parts.append(guidelines)
-        
+
         # Add identity
         if context.identity and context.identity.name:
             system_parts.append(f"\n# 你的身份\n你的名字是「{context.identity.name}」。")
-        
+
         # Add spirit
         if context.spirit:
             system_parts.append(f"\n# 角色定位\n你是{context.spirit.role}。")
-        
+
         # Add owner
         if context.owner:
             system_parts.append(f"\n# 用户画像\n姓名: {context.owner.name}")
-        
+
         # Add tools
         tools = self._tool_manager.get_all_tools()
         if tools:
             tool_names = [t.name for t in tools]
             system_parts.append(f"\n# 可用工具\n你可以使用以下工具: {', '.join(tool_names)}")
-        
+
         # Add relevant memories (from hybrid search) - more precise than loading all
         if relevant_memories:
             memory_text = "\n".join(relevant_memories)
@@ -399,10 +400,10 @@ class Orchestrator:
         # Fallback to long-term memory if no relevant memories found
         elif context.long_term_memory:
             system_parts.append(f"\n# 长期记忆\n{context.long_term_memory[:800]}")
-        
+
         if system_parts:
             messages.append({"role": "system", "content": "\n".join(system_parts)})
-        
+
         messages.append({"role": "user", "content": user_message})
         return messages
     
