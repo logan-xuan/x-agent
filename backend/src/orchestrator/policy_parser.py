@@ -263,23 +263,38 @@ class PolicyParser:
     
     def _determine_rule_type(self, section_name: str) -> RuleType:
         """Determine the rule type for a section.
-        
+
         Args:
             section_name: The section header text
-            
+
         Returns:
             The appropriate RuleType
         """
         # Direct match
         if section_name in SECTION_TYPE_MAP:
             return SECTION_TYPE_MAP[section_name]
-        
+
+        # For optimization, classify certain sections as hard constraints
+        # that should NOT be injected into system prompt
+        optimization_exclusions = [
+            "每次会话开始时",
+            "记忆系统",
+            "MEMORY.md - 你的长期记忆",
+            "动手写下来",
+            "记忆维护",
+            "工具"
+        ]
+
+        for exclusion in optimization_exclusions:
+            if exclusion in section_name:
+                return RuleType.HARD_CONSTRAINT  # These won't be prompt-injected
+
         # Partial match (section name contains key)
         for key, rule_type in SECTION_TYPE_MAP.items():
             if key in section_name or section_name in key:
                 return rule_type
-        
-        # Default to soft guideline
+
+        # Default to soft guideline for remaining content
         return RuleType.SOFT_GUIDELINE
     
     def _compile_action(self, section: str, content: str) -> Callable[[Any], Any] | None:

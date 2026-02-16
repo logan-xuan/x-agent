@@ -223,8 +223,11 @@ class PolicyEngine:
         parts.append("以下是你需要遵循的行为规范：")
 
         # Add each soft guideline with optimization
+        # Only include specific sections that are essential for LLM behavior
+        essential_sections = ["首次启动"]
+
         for rule in self.policy.soft_guidelines:
-            if rule.prompt_text:
+            if rule.prompt_text and any(essential in rule.source_section for essential in essential_sections):
                 # Only include essential guidelines for LLM
                 parts.append(f"\n{rule.prompt_text}")
 
@@ -236,8 +239,8 @@ class PolicyEngine:
         guidelines = "\n".join(parts)
 
         # Further optimize by limiting length if too large
-        if len(guidelines) > 1000:  # Limit to approximately 1000 characters
-            guidelines = guidelines[:1000] + "\n... (内容截断以优化性能)"
+        if len(guidelines) > 500:  # Further reduced limit to ~500 characters
+            guidelines = guidelines[:500] + "\n... (内容截断以优化性能)"
 
         logger.debug(
             "System prompt guidelines built",
