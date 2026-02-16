@@ -4,9 +4,10 @@ import { useState, useEffect, useRef } from 'react';
 import { PromptLogList } from './PromptLogList';
 import { PromptTester } from './PromptTester';
 import { TraceViewer } from '../trace';
+import { MemorySearchDebugger } from './MemorySearchDebugger';
 import { Button } from '../ui/Button';
 
-type TabType = 'logs' | 'tester' | 'trace';
+type TabType = 'logs' | 'tester' | 'trace' | 'search';
 
 interface DevModeWindowProps {
   isOpen: boolean;
@@ -199,6 +200,16 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
               >
                 Trace
               </button>
+              <button
+                onClick={() => handleTabChange('search')}
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                  activeTab === 'search'
+                    ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                搜索调试
+              </button>
             </div>
 
             {/* Close Button */}
@@ -241,8 +252,10 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
             <PromptLogList onError={setError} onViewTrace={handleViewTrace} />
           ) : activeTab === 'tester' ? (
             <PromptTester onError={setError} />
-          ) : (
+          ) : activeTab === 'trace' ? (
             <TraceViewer initialTraceId={traceId} />
+          ) : (
+            <MemorySearchDebugger onError={setError} />
           )}
         </div>
 
