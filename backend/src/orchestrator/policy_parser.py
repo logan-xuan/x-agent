@@ -326,19 +326,20 @@ class PolicyParser:
     
     def _extract_prompt_text(self, section: str, content: str) -> str | None:
         """Extract text suitable for System Prompt injection.
-        
-        For soft guidelines, extracts bullet points and key instructions.
-        
+
+        For soft guidelines, extracts bullet points and key instructions
+        while optimizing for token usage by focusing on the most essential elements.
+
         Args:
             section: Section name
             content: Section content
-            
+
         Returns:
             Formatted text for prompt injection, or None
         """
         lines = content.split("\n")
-        
-        # Extract bullet points
+
+        # Extract bullet points (most important for LLM behavior)
         bullets = []
         for line in lines:
             line = line.strip()
@@ -348,19 +349,20 @@ class PolicyParser:
                 bullets.append(line[2:])  # Remove "* " prefix
             elif line.startswith("> "):
                 bullets.append(line[2:])  # Remove "> " prefix
-        
+
         if bullets:
-            # Format as bullet list, limit to 5 items
-            formatted = "\n".join(f"- {b}" for b in bullets[:5])
-            return f"**{section}**\n{formatted}"
-        
-        # If no bullets, return first 200 chars
+            # Format as bullet list, limit to 3-5 items to save tokens
+            formatted = "\n".join(f"- {b}" for b in bullets[:3])  # Reduced from 5 to 3
+            return f"{section}\n{formatted}"
+
+        # If no bullets, return only essential info from the content (first 100 chars)
         if content:
-            preview = content[:200]
-            if len(content) > 200:
+            # Take first 100 chars instead of 200 to save tokens
+            preview = content[:100]
+            if len(content) > 100:
                 preview += "..."
-            return f"**{section}**: {preview}"
-        
+            return f"{section}: {preview}"
+
         return None
     
     def clear_cache(self) -> None:

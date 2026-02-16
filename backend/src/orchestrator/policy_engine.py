@@ -207,36 +207,46 @@ class PolicyEngine:
     
     def build_system_prompt_guidelines(self) -> str:
         """Build soft guidelines for System Prompt injection.
-        
+
         Formats all soft guidelines from AGENTS.md into a single
         prompt section that can be injected into the LLM's system prompt.
-        
+        Only includes essential guidelines that are beneficial for LLM
+        understanding while minimizing token usage.
+
         Returns:
             Formatted string with all soft guidelines
         """
         parts: list[str] = []
-        
+
         # Add header
-        parts.append("# 行为准则\n")
-        parts.append("以下是你需要遵循的行为规范：\n")
-        
-        # Add each soft guideline
+        parts.append("# 行为准则")
+        parts.append("以下是你需要遵循的行为规范：")
+
+        # Add each soft guideline with optimization
         for rule in self.policy.soft_guidelines:
             if rule.prompt_text:
+                # Only include essential guidelines for LLM
                 parts.append(f"\n{rule.prompt_text}")
-        
+
         # Add identity rules (these are also prompt-injected)
         for rule in self.policy.identity_rules:
             if rule.prompt_text:
                 parts.append(f"\n{rule.prompt_text}")
-        
+
         guidelines = "\n".join(parts)
-        
+
+        # Further optimize by limiting length if too large
+        if len(guidelines) > 1000:  # Limit to approximately 1000 characters
+            guidelines = guidelines[:1000] + "\n... (内容截断以优化性能)"
+
         logger.debug(
             "System prompt guidelines built",
-            extra={"length": len(guidelines)}
+            extra={
+                "length": len(guidelines),
+                "guidelines_summary": guidelines[:200] + ("..." if len(guidelines) > 200 else "")
+            }
         )
-        
+
         return guidelines
     
     def get_context_load_order(self) -> list[str]:
