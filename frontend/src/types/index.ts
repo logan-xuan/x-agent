@@ -259,6 +259,43 @@ export interface TraceRawDataResponse {
   total_duration_ms: number;
 }
 
+/** Memory entry interface */
+export interface MemoryEntry {
+  id: string;
+  title: string;
+  content: string;
+  content_type: string;
+  created_at: string;
+  updated_at: string;
+  tags: string[];
+  importance: number;
+  source_session_id?: string;
+}
+
+/** Search result item interface */
+export interface SearchResultItem {
+  entry: MemoryEntry;
+  score: number;
+  vector_score: number;
+  text_score: number;
+}
+
+/** Search response interface */
+export interface SearchResponse {
+  items: SearchResultItem[];
+  query: string;
+  total: number;
+}
+
+/** Search request parameters */
+export interface SearchParams {
+  query: string;
+  limit: number;
+  offset: number;
+  content_type?: string;
+  min_score: number;
+}
+
 /** Analysis insight */
 export interface AnalysisInsight {
   type: string;  // performance, error, optimization

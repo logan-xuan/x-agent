@@ -246,3 +246,48 @@ export async function analyzeTrace(
 
   return response.json();
 }
+
+/** Memory search API */
+
+/** Search memory entries */
+export async function searchMemory(params: {
+  query: string;
+  limit?: number;
+  offset?: number;
+  content_type?: string;
+  min_score?: number;
+}): Promise<SearchResponse> {
+  const { query, limit = 10, offset = 0, content_type, min_score = 0.0 } = params;
+
+  const searchParams = new URLSearchParams({
+    query,
+    limit: limit.toString(),
+    offset: offset.toString(),
+    min_score: min_score.toString(),
+  });
+
+  if (content_type) {
+    searchParams.append('content_type', content_type);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/memory/search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query,
+      limit,
+      offset,
+      content_type,
+      min_score,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to search memory');
+  }
+
+  return response.json();
+}
