@@ -210,11 +210,12 @@ class PolicyEngine:
 
         Formats all soft guidelines from AGENTS.md into a single
         prompt section that can be injected into the LLM's system prompt.
+        Also includes P0 hard constraints that should be explicitly known to the LLM.
         Only includes essential guidelines that are beneficial for LLM
         understanding while minimizing token usage.
 
         Returns:
-            Formatted string with all soft guidelines
+            Formatted string with all soft guidelines and P0 hard constraints
         """
         parts: list[str] = []
 
@@ -235,6 +236,15 @@ class PolicyEngine:
         # Only include "首次启动" related identity rules
         for rule in self.policy.identity_rules:
             if rule.prompt_text and "首次启动" in rule.source_section:
+                parts.append(f"\n{rule.prompt_text}")
+
+        # Add P0 hard constraints that should be explicitly known to LLM
+        # These are critical safety/security constraints that need dual protection:
+        # 1. Known to LLM in system prompt (first line of defense)
+        # 2. Enforced by PolicyEngine at runtime (fallback protection)
+        p0_hard_constraint_sections = ["安全准则"]
+        for rule in self.policy.hard_constraints:
+            if rule.prompt_text and any(p0_section in rule.source_section for p0_section in p0_hard_constraint_sections):
                 parts.append(f"\n{rule.prompt_text}")
 
         guidelines = "\n".join(parts)
