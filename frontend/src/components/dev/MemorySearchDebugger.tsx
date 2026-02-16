@@ -1,5 +1,5 @@
 /** Memory search debugger component for developer mode */
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { searchMemory } from '../../services/api';
 import type { SearchResponse, SearchParams } from '../../types';
 
@@ -78,7 +78,7 @@ export function MemorySearchDebugger({ onError }: MemorySearchDebuggerProps) {
             </label>
             <select
               value={searchParams.content_type || ''}
-              onChange={(e) => handleInputChange('content_type', e.target.value || undefined)}
+              onChange={(e) => handleInputChange('content_type', e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
               disabled={isLoading}
             >

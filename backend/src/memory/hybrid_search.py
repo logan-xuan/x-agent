@@ -509,32 +509,82 @@ _hybrid_search: HybridSearch | None = None
 def get_hybrid_search(
     vector_store: Any = None,
     embedder: Any = None,
+    vector_weight: float | None = None,
+    text_weight: float | None = None,
 ) -> HybridSearch:
     """Get or create global hybrid search instance.
     
     Args:
         vector_store: Optional vector store instance
         embedder: Optional embedder instance
+        vector_weight: Optional weight for vector score (overrides config)
+        text_weight: Optional weight for text score (overrides config)
         
     Returns:
         HybridSearch instance
     """
     global _hybrid_search
     if _hybrid_search is None:
-        _hybrid_search = HybridSearch(vector_store=vector_store, embedder=embedder)
+        # Try to load weights from config
+        if vector_weight is None or text_weight is None:
+            try:
+                from ..config import get_config
+                config = get_config()
+                if vector_weight is None:
+                    vector_weight = config.search.vector_weight
+                if text_weight is None:
+                    text_weight = config.search.text_weight
+            except Exception:
+                # Fallback to defaults
+                vector_weight = vector_weight or 0.7
+                text_weight = text_weight or 0.3
+        
+        _hybrid_search = HybridSearch(
+            vector_store=vector_store,
+            embedder=embedder,
+            vector_weight=vector_weight,
+            text_weight=text_weight,
+        )
     return _hybrid_search
 
 
-def init_hybrid_search(vector_store: Any, embedder: Any) -> HybridSearch:
+def init_hybrid_search(
+    vector_store: Any,
+    embedder: Any,
+    vector_weight: float | None = None,
+    text_weight: float | None = None,
+) -> HybridSearch:
     """Initialize hybrid search with dependencies.
     
     Args:
         vector_store: Vector store instance
         embedder: Embedder instance
+        vector_weight: Optional weight for vector score (overrides config)
+        text_weight: Optional weight for text score (overrides config)
         
     Returns:
         Initialized HybridSearch instance
     """
     global _hybrid_search
-    _hybrid_search = HybridSearch(vector_store=vector_store, embedder=embedder)
+    
+    # Try to load weights from config
+    if vector_weight is None or text_weight is None:
+        try:
+            from ..config import get_config
+            config = get_config()
+            if vector_weight is None:
+                vector_weight = config.search.vector_weight
+            if text_weight is None:
+                text_weight = config.search.text_weight
+        except Exception:
+            # Fallback to defaults
+            vector_weight = vector_weight or 0.7
+            text_weight = text_weight or 0.3
+    
+    _hybrid_search = HybridSearch(
+        vector_store=vector_store,
+        embedder=embedder,
+        vector_weight=vector_weight,
+        text_weight=text_weight,
+    )
     return _hybrid_search

@@ -21,13 +21,10 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Prompt for analyzing if content should be recorded to memory
-MEMORY_ANALYSIS_PROMPT = """你是一个内容分析专家。分析以下对话内容，判断是否需要记录到记忆系统。
+MEMORY_ANALYSIS_PROMPT = """你是一个内容分析专家。分析以下用户消息，判断是否需要记录到记忆系统。
 
 ## 用户消息
 {user_message}
-
-## AI回复
-{assistant_message}
 
 ## 判断标准
 只有以下情况才需要记录：
@@ -42,16 +39,20 @@ MEMORY_ANALYSIS_PROMPT = """你是一个内容分析专家。分析以下对话�
 - 临时性的内容
 - 已经重复记录过的信息
 - 无实际意义的对话
+- AI/助手说的话（不要记录AI的回复内容）
 
 ## 输出格式（JSON）
 {{
   "should_record": true/false,
   "record_type": "memory|identity|skip",
-  "extracted_content": "提取的关键内容（简洁，不超过50字）",
+  "extracted_content": "提取的关键内容（简洁，不超过50字，只提取用户表达的信息）",
   "reason": "判断理由"
 }}
 
-注意：只输出JSON，不要有其他内容。"""
+注意：
+1. 只输出JSON，不要有其他内容
+2. 只分析用户消息，不要参考AI的回复内容
+3. extracted_content 必须只包含用户表达的信息，不能包含AI说的话"""
 
 
 # Prompt for extracting identity information
@@ -268,11 +269,14 @@ class SmartMemoryService:
         user_message: str,
         assistant_message: str
     ) -> dict[str, Any]:
-        """Use LLM to analyze if content should be recorded."""
+        """Use LLM to analyze if content should be recorded.
+        
+        Note: Only user_message is used for analysis to avoid AI's response
+        influencing the decision of what to record.
+        """
         try:
             prompt = MEMORY_ANALYSIS_PROMPT.format(
-                user_message=user_message,
-                assistant_message=assistant_message[:500] if assistant_message else ""
+                user_message=user_message
             )
             
             response = await self._llm_router.chat(

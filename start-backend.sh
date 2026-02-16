@@ -29,23 +29,30 @@ fi
 
 cd "$BACKEND_DIR"
 
+# Detect Python interpreter
+if [ -f "$BACKEND_DIR/.venv/bin/python" ]; then
+    PYTHON="$BACKEND_DIR/.venv/bin/python"
+    PIP="$BACKEND_DIR/.venv/bin/pip"
+elif [ -f "$BACKEND_DIR/venv/bin/python" ]; then
+    PYTHON="$BACKEND_DIR/venv/bin/python"
+    PIP="$BACKEND_DIR/venv/bin/pip"
+else
+    PYTHON="python"
+    PIP="pip"
+fi
+
 # Check if virtual environment exists
 if [ ! -d "venv" ] && [ ! -d ".venv" ]; then
     echo -e "${YELLOW}Virtual environment not found, creating one...${NC}"
-    python3 -m venv venv
-fi
-
-# Activate virtual environment
-if [ -d "venv" ]; then
-    source venv/bin/activate
-elif [ -d ".venv" ]; then
-    source .venv/bin/activate
+    python3 -m venv .venv
+    PYTHON="$BACKEND_DIR/.venv/bin/python"
+    PIP="$BACKEND_DIR/.venv/bin/pip"
 fi
 
 # Install dependencies if needed
 if [ ! -f ".dependencies_installed" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
-    pip install -e ".[dev]" --quiet
+    $PIP install -e ".[dev]" --quiet
     touch .dependencies_installed
     echo -e "${GREEN}Dependencies installed.${NC}"
 fi
@@ -62,10 +69,12 @@ if [ ! -f "x-agent.yaml" ]; then
     fi
 fi
 
+echo "Using Python: $PYTHON"
+
 # Start the server
 echo -e "${GREEN}Starting server on http://localhost:8000${NC}"
 if [ "$MODE" = "prod" ]; then
-    python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+    $PYTHON -m uvicorn src.main:app --host 0.0.0.0 --port 8000
 else
-    python -m src.main
+    $PYTHON -m src.main
 fi

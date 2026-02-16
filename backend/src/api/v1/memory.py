@@ -372,10 +372,30 @@ from typing import Any
 class SearchRequestModel(BaseModel):
     """Search request model."""
     query: str = Field(..., description="Search query string")
-    limit: int = Field(default=10, ge=1, le=100, description="Maximum number of results")
+    limit: int | None = Field(default=None, ge=1, le=100, description="Maximum number of results (default from config)")
     offset: int = Field(default=0, ge=0, description="Pagination offset")
     content_type: str | None = Field(default=None, description="Filter by content type")
-    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum relevance score")
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0, description="Minimum relevance score (default from config)")
+    
+    def get_limit(self) -> int:
+        """Get limit, using config default if not specified."""
+        if self.limit is not None:
+            return self.limit
+        try:
+            from ...config import get_config
+            return get_config().search.limit
+        except Exception:
+            return 10
+    
+    def get_min_score(self) -> float:
+        """Get min_score, using config default if not specified."""
+        if self.min_score is not None:
+            return self.min_score
+        try:
+            from ...config import get_config
+            return get_config().search.min_score
+        except Exception:
+            return 0.0
 
 
 class SearchResultItem(BaseModel):
@@ -397,7 +417,7 @@ class SearchResponse(BaseModel):
 async def search_memory(request: SearchRequestModel) -> SearchResponse:
     """Search memory using hybrid search (vector + text).
     
-    Uses 0.7 vector + 0.3 text similarity scoring as per research decision.
+    Uses configurable vector + text similarity scoring (default: 0.7 + 0.3).
     
     Args:
         request: Search request with query and options
@@ -408,13 +428,18 @@ async def search_memory(request: SearchRequestModel) -> SearchResponse:
     from ...memory.hybrid_search import get_hybrid_search
     from ...memory.md_sync import get_md_sync
     from ...memory.vector_store import get_vector_store
-    from ...services.embedder import get_embedder
+    from ...memory.embedder import get_embedder
+    
+    # Get effective values from request (using config defaults if not specified)
+    limit = request.get_limit()
+    min_score = request.get_min_score()
     
     logger.info(
         "Searching memory",
         extra={
             "query": request.query[:50] if request.query else "",
-            "limit": request.limit,
+            "limit": limit,
+            "min_score": min_score,
             "content_type": request.content_type,
         }
     )
@@ -455,10 +480,10 @@ async def search_memory(request: SearchRequestModel) -> SearchResponse:
     results = hybrid_search.search(
         query=request.query,
         entries=entries,
-        limit=request.limit,
+        limit=limit,
         offset=request.offset,
         content_type=content_type_enum,
-        min_score=request.min_score,
+        min_score=min_score,
     )
     
     # Convert to response format
@@ -503,7 +528,7 @@ async def find_similar(entry_id: str, limit: int = 5) -> SearchResponse:
     from ...memory.hybrid_search import get_hybrid_search
     from ...memory.md_sync import get_md_sync
     from ...memory.vector_store import get_vector_store
-    from ...services.embedder import get_embedder
+    from ...memory.embedder import get_embedder
     
     logger.info(
         "Finding similar entries",

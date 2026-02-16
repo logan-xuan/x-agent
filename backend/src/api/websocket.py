@@ -1,4 +1,14 @@
-"""WebSocket endpoint for real-time chat with distributed tracing."""
+"""WebSocket endpoint for real-time chat with distributed tracing.
+
+Supports event types:
+- chunk: Streaming text chunk
+- message: Complete message
+- thinking: LLM reasoning step (new)
+- tool_call: Tool being called (new)
+- tool_result: Tool execution result (new)
+- error: Error occurred
+- pong: Heartbeat response
+"""
 
 import asyncio
 import json
@@ -194,20 +204,53 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                     # Add trace_id to each chunk
                     if isinstance(chunk, dict):
                         chunk["trace_id"] = message_context.trace_id
-                        # Collect response content (type is "chunk" or "message")
-                        if chunk.get("type") in ("chunk", "message") and "content" in chunk:
+                        
+                        # Handle different event types
+                        chunk_type = chunk.get("type")
+                        
+                        if chunk_type in ("chunk", "message") and "content" in chunk:
+                            # Standard text response
                             assistant_response += chunk.get("content", "")
+                        
+                        elif chunk_type == "thinking":
+                            # LLM reasoning - log and forward
+                            logger.debug(
+                                "LLM thinking",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "content": chunk.get("content", "")[:100],
+                                }
+                            )
+                        
+                        elif chunk_type == "tool_call":
+                            # Tool call - log and forward
+                            logger.info(
+                                "Tool call",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "tool_name": chunk.get("name"),
+                                    "arguments": chunk.get("arguments"),
+                                }
+                            )
+                        
+                        elif chunk_type == "tool_result":
+                            # Tool result - log and forward
+                            logger.info(
+                                "Tool result",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "tool_name": chunk.get("tool_name"),
+                                    "success": chunk.get("success"),
+                                }
+                            )
+                        
+                        # Note: Memory recording is now handled by Orchestrator
+                        # to avoid duplicate writes
+                    
                     await websocket.send_json(chunk)
                     
                     # Small delay to prevent overwhelming the client
                     await asyncio.sleep(0.01)
-                
-                # Record important conversation (async, non-blocking)
-                # Use SmartMemoryService with LLM-based analysis
-                if assistant_response:
-                    asyncio.create_task(
-                        smart_record_conversation(user_content, assistant_response, session_id)
-                    )
                     
             except Exception as e:
                 logger.error(

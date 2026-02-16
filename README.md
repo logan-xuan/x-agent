@@ -18,6 +18,18 @@ Personal AI Agent with modular architecture and long-term memory system.
 
 This will start both backend and frontend services with the correct ports.
 
+### Restart Services (Recommended)
+
+```bash
+./restart.sh
+```
+
+This script will:
+1. Clean up existing processes on ports 8000 and 5173
+2. Install/update backend dependencies
+3. Start backend and frontend services
+4. Verify both services are running
+
 ### Start Services Separately
 
 Backend:
@@ -29,6 +41,34 @@ Frontend:
 ```bash
 ./start-frontend.sh
 ```
+
+## Python Environment
+
+The startup scripts automatically detect the Python interpreter in the following order:
+1. `backend/.venv/bin/python` (preferred)
+2. `backend/venv/bin/python`
+3. System `python` (fallback)
+
+To use a specific Python interpreter, ensure it exists at one of the above paths.
+
+### Manual Dependency Installation
+
+If you encounter `ModuleNotFoundError` errors, manually install dependencies:
+
+```bash
+cd backend
+pip install -e .
+# Or with conda:
+conda install numpy structlog
+```
+
+Common required packages:
+- `fastapi`, `uvicorn` - Web framework
+- `sqlalchemy`, `aiosqlite` - Database
+- `structlog` - Structured logging
+- `numpy` - Required by transformers
+- `httpx` - HTTP client
+- `pydantic`, `pyyaml` - Data handling
 
 ## Port Configuration
 

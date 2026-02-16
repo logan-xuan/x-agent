@@ -146,12 +146,21 @@ class VectorStore:
                 ON memory_entries(content_type)
             """)
             
+            # Create embeddings table (used when vss is not available)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    entry_id TEXT PRIMARY KEY,
+                    embedding TEXT NOT NULL,
+                    FOREIGN KEY (entry_id) REFERENCES memory_entries(id)
+                )
+            """)
+            
             # Try to create virtual table for vector search
             # Only attempt if vss extension was loaded successfully
             if self._vss_available:
                 try:
                     cursor.execute(f"""
-                        CREATE VIRTUAL TABLE IF NOT EXISTS memory_embeddings 
+                        CREATE VIRTUAL TABLE IF NOT EXISTS memory_embeddings_vss 
                         USING vss0(embedding({self.embedding_dim}))
                     """)
                     self._vss_table_exists = True
@@ -214,18 +223,34 @@ class VectorStore:
                 json.dumps(metadata) if metadata else None
             ))
             
-            # Insert into vector table if available
+            # Insert into vector table (regular table, always available)
             try:
                 embedding_json = json.dumps(embedding)
                 cursor.execute("""
-                    INSERT OR REPLACE INTO memory_embeddings (rowid, embedding)
+                    INSERT OR REPLACE INTO memory_embeddings (entry_id, embedding)
                     VALUES (?, ?)
-                """, (hash(entry_id) % (2**31), embedding_json))
+                """, (entry_id, embedding_json))
             except Exception as e:
                 logger.debug(
                     "Could not insert vector embedding",
                     extra={"entry_id": entry_id, "error": str(e)}
                 )
+            
+            # Also insert into vss table if available
+            if self._vss_available and self._vss_table_exists:
+                try:
+                    import struct
+                    # Convert embedding to bytes for vss
+                    embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO memory_embeddings_vss (rowid, embedding)
+                        VALUES (?, ?)
+                    """, (abs(hash(entry_id)) % (2**31), embedding_bytes))
+                except Exception as e:
+                    logger.debug(
+                        "Could not insert into vss table",
+                        extra={"entry_id": entry_id, "error": str(e)}
+                    )
             
             conn.commit()
             logger.debug(
@@ -239,6 +264,30 @@ class VectorStore:
                 extra={"entry_id": entry_id, "error": str(e)}
             )
             raise
+    
+    def _cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
+        """Calculate cosine similarity between two vectors.
+        
+        Args:
+            vec1: First vector
+            vec2: Second vector
+            
+        Returns:
+            Cosine similarity score (0.0 to 1.0)
+        """
+        import math
+        
+        if len(vec1) != len(vec2):
+            return 0.0
+        
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = math.sqrt(sum(x * x for x in vec1))
+        norm2 = math.sqrt(sum(x * x for x in vec2))
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        
+        return dot_product / (norm1 * norm2)
     
     def search(self, query_embedding: list[float], limit: int = 10) -> list[dict[str, Any]]:
         """Search for similar vectors.
@@ -257,48 +306,65 @@ class VectorStore:
         cursor = conn.cursor()
         
         try:
-            # Try vector search if vss is available
-            try:
-                query_json = json.dumps(query_embedding)
-                cursor.execute("""
-                    SELECT m.id, m.content, m.content_type, m.metadata, v.distance
-                    FROM memory_entries m
-                    JOIN memory_embeddings v ON m.id = ? 
-                    ORDER BY v.distance
-                    LIMIT ?
-                """, (query_json, limit))
-                
-                results = []
-                for row in cursor.fetchall():
-                    results.append({
-                        "id": row["id"],
-                        "content": row["content"],
-                        "content_type": row["content_type"],
-                        "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
-                        "score": 1.0 - row["distance"] if row["distance"] else 0.0
-                    })
-                return results
-                
-            except Exception:
-                # Fallback to basic text search
-                logger.debug("Falling back to basic search (vss not available)")
-                cursor.execute("""
-                    SELECT id, content, content_type, metadata
-                    FROM memory_entries
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                """, (limit,))
-                
-                results = []
-                for row in cursor.fetchall():
-                    results.append({
-                        "id": row["id"],
-                        "content": row["content"],
-                        "content_type": row["content_type"],
-                        "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
-                        "score": 0.0
-                    })
-                return results
+            # If vss is available, use it
+            if self._vss_available and self._vss_table_exists:
+                try:
+                    # Convert query to blob format for vss
+                    import struct
+                    query_bytes = struct.pack(f'{len(query_embedding)}f', *query_embedding)
+                    
+                    cursor.execute("""
+                        SELECT rowid, distance
+                        FROM memory_embeddings_vss
+                        WHERE embedding MATCH vss_search_params(?, ?)
+                        ORDER BY distance
+                        LIMIT ?
+                    """, (query_bytes, limit, limit))
+                    
+                    results = []
+                    for row in cursor.fetchall():
+                        # Get entry by hash lookup
+                        entry_id_hash = row["rowid"]
+                        # We need to find the entry_id from the hash
+                        # For now, skip vss and use Python fallback
+                        pass
+                    
+                    if results:
+                        return results
+                except Exception as e:
+                    logger.debug(f"VSS search failed: {e}, falling back to Python")
+            
+            # Fallback: Use Python to calculate cosine similarity
+            logger.debug("Using Python cosine similarity (vss not available)")
+            
+            # Get all entries with embeddings using proper join
+            cursor.execute("""
+                SELECT m.id, m.content, m.content_type, m.metadata, e.embedding
+                FROM memory_entries m
+                JOIN memory_embeddings e ON m.id = e.entry_id
+            """)
+            
+            results = []
+            for row in cursor.fetchall():
+                entry_embedding_json = row["embedding"]
+                if entry_embedding_json:
+                    try:
+                        entry_embedding = json.loads(entry_embedding_json)
+                        similarity = self._cosine_similarity(query_embedding, entry_embedding)
+                        if similarity > 0.0:  # Only include if there's some similarity
+                            results.append({
+                                "id": row["id"],
+                                "content": row["content"],
+                                "content_type": row["content_type"],
+                                "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+                                "score": similarity
+                            })
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+            
+            # Sort by similarity and limit results
+            results.sort(key=lambda x: x["score"], reverse=True)
+            return results[:limit]
                 
         except Exception as e:
             logger.error(

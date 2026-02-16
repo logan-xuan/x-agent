@@ -16,6 +16,7 @@ import type {
   TraceAnalysisRequest,
   TraceAnalysisResponse,
   TraceDetailLevel,
+  SearchResponse,
 } from '@/types';
 
 const API_BASE_URL = '/api/v1';

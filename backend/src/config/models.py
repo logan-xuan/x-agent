@@ -62,6 +62,46 @@ class WorkspaceConfig(BaseModel):
     path: str = Field(default="workspace", description="Path to workspace directory")
 
 
+class SearchConfig(BaseModel):
+    """Hybrid search configuration.
+    
+    Controls the behavior of memory search combining vector and text similarity.
+    """
+    
+    vector_weight: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Weight for vector similarity score (0.0-1.0)"
+    )
+    text_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight for text similarity score (0.0-1.0)"
+    )
+    min_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum relevance score threshold for search results"
+    )
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of search results to return"
+    )
+    
+    @model_validator(mode="after")
+    def validate_weights(self) -> "SearchConfig":
+        """Ensure weights sum to approximately 1.0."""
+        total = self.vector_weight + self.text_weight
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(f"vector_weight + text_weight must equal 1.0, got {total}")
+        return self
+
+
 class Config(BaseModel):
     """Root configuration model."""
     
@@ -69,6 +109,7 @@ class Config(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig, description="Server config")
     logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging config")
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig, description="Workspace config")
+    search: SearchConfig = Field(default_factory=SearchConfig, description="Hybrid search config")
     
     @field_validator("models")
     @classmethod
