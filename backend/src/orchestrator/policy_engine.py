@@ -232,8 +232,9 @@ class PolicyEngine:
                 parts.append(f"\n{rule.prompt_text}")
 
         # Add identity rules (these are also prompt-injected)
+        # Only include "首次启动" related identity rules
         for rule in self.policy.identity_rules:
-            if rule.prompt_text:
+            if rule.prompt_text and "首次启动" in rule.source_section:
                 parts.append(f"\n{rule.prompt_text}")
 
         guidelines = "\n".join(parts)
