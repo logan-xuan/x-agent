@@ -120,19 +120,19 @@
 
 ### Tests for User Story 3
 
-- [ ] T030 [P] [US3] Unit test for AGENTS.md reload detection in tests/unit/test_file_watcher.py
-- [ ] T031 [P] [US3] Unit test for reload performance (<1000ms) in tests/unit/test_file_watcher.py
+- [x] T030 [P] [US3] Unit test for AGENTS.md reload detection in tests/unit/test_file_watcher.py
+- [x] T031 [P] [US3] Unit test for reload performance (<1000ms) in tests/unit/test_file_watcher.py
 
 ### Implementation for User Story 3
 
-- [ ] T032 [US3] Implement FileWatcher with watchdog in backend/src/core/file_watcher.py
-- [ ] T033 [US3] Implement AGENTS.md change detection in backend/src/core/file_watcher.py
-- [ ] T034 [US3] Implement context reload with caching in backend/src/core/context_loader.py
-- [ ] T035 [US3] Implement reload performance optimization (<1000ms) in backend/src/core/context_loader.py
+- [x] T032 [US3] Implement FileWatcher with watchdog in backend/src/core/file_watcher.py
+- [x] T033 [US3] Implement AGENTS.md change detection in backend/src/core/file_watcher.py
+- [x] T034 [US3] Implement context reload with caching in backend/src/core/context_loader.py
+- [x] T035 [US3] Implement reload performance optimization (<1000ms) in backend/src/core/context_loader.py
 
 ### API for User Story 3
 
-- [ ] T036 [US3] Implement POST /context/reload endpoint in backend/src/api/v1/context.py
+- [x] T036 [US3] Implement POST /context/reload endpoint in backend/src/api/v1/context.py
 
 **Checkpoint**: 重载机制完整可用，性能符合要求
 
@@ -146,21 +146,21 @@
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] Unit test for important content detection in tests/unit/test_memory_maintenance.py
-- [ ] T038 [P] [US4] Unit test for MEMORY.md update in tests/unit/test_memory_maintenance.py
-- [ ] T039 [P] [US4] Unit test for outdated content cleanup in tests/unit/test_memory_maintenance.py
+- [x] T037 [P] [US4] Unit test for important content detection in tests/unit/test_memory_maintenance.py
+- [x] T038 [P] [US4] Unit test for MEMORY.md update in tests/unit/test_memory_maintenance.py
+- [x] T039 [P] [US4] Unit test for outdated content cleanup in tests/unit/test_memory_maintenance.py
 
 ### Implementation for User Story 4
 
-- [ ] T040 [US4] Implement MemoryEntry importance scoring in backend/src/services/memory_maintenance.py
-- [ ] T041 [US4] Implement daily memory parsing in backend/src/services/memory_maintenance.py
-- [ ] T042 [US4] Implement MEMORY.md update logic in backend/src/services/memory_maintenance.py
-- [ ] T043 [US4] Implement scheduled task with APScheduler in backend/src/services/memory_maintenance.py
-- [ ] T044 [US4] Add file lock for concurrent write safety in backend/src/services/memory_maintenance.py
+- [x] T040 [US4] Implement MemoryEntry importance scoring in backend/src/services/memory_maintenance.py
+- [x] T041 [US4] Implement daily memory parsing in backend/src/services/memory_maintenance.py
+- [x] T042 [US4] Implement MEMORY.md update logic in backend/src/services/memory_maintenance.py
+- [x] T043 [US4] Implement scheduled task with APScheduler in backend/src/services/memory_maintenance.py
+- [x] T044 [US4] Add file lock for concurrent write safety in backend/src/services/memory_maintenance.py
 
 ### API for User Story 4
 
-- [ ] T045 [US4] Implement POST /memory/maintenance endpoint in backend/src/api/v1/memory.py
+- [x] T045 [US4] Implement POST /memory/maintenance endpoint in backend/src/api/v1/memory.py
 
 **Checkpoint**: 记忆维护功能完整可用，定时任务配置正确
 
@@ -170,11 +170,11 @@
 
 **Purpose**: 跨场景优化和完善
 
-- [ ] T046 [P] Integration test for full guidance flow in tests/integration/test_guidance_flow.py
-- [ ] T047 [P] Add structured logging with context IDs in backend/src/core/context_loader.py
-- [ ] T048 [P] Configure workspace default files (AGENTS.md, SPIRIT.md, OWNER.md)
-- [ ] T049 Run quickstart.md validation scenarios
-- [ ] T050 Security hardening: path traversal prevention in backend/src/utils/file_utils.py
+- [x] T046 [P] Integration test for full guidance flow in tests/integration/test_guidance_flow.py
+- [x] T047 [P] Add structured logging with context IDs in backend/src/core/context_loader.py
+- [x] T048 [P] Configure workspace default files (AGENTS.md, SPIRIT.md, OWNER.md)
+- [x] T049 Run quickstart.md validation scenarios
+- [x] T050 Security hardening: path traversal prevention in backend/src/utils/file_utils.py
 
 ---
 

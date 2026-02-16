@@ -40,6 +40,17 @@ def get_llm_router() -> LLMRouter:
     return _llm_router
 
 
+def _clear_context_cache() -> None:
+    """Clear the context builder cache when IDENTITY.md changes."""
+    from .memory.context_builder import get_context_builder
+    try:
+        context_builder = get_context_builder()
+        context_builder.clear_cache()
+        logger.info("Context builder cache cleared")
+    except Exception as e:
+        logger.warning("Failed to clear context cache", extra={"error": str(e)})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager with proper startup/shutdown.
@@ -147,6 +158,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         on_owner_changed=lambda: logger.info("OWNER.md changed, hot-reload triggered"),
         on_tools_changed=lambda: logger.info("TOOLS.md changed, hot-reload triggered"),
         on_memory_changed=on_memory_file_changed,
+        on_identity_changed=lambda: (_clear_context_cache(), logger.info("IDENTITY.md changed, context cache cleared")),
     )
     logger.info("File watcher started for memory sync")
     

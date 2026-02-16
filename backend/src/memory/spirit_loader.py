@@ -103,6 +103,15 @@ class SpiritLoader:
         """
         owner_path = Path(self.workspace_path) / "OWNER.md"
         
+        logger.info(
+            "Loading OWNER.md",
+            extra={
+                "workspace_path": self.workspace_path,
+                "owner_path": str(owner_path),
+                "exists": owner_path.exists(),
+            }
+        )
+        
         if not owner_path.exists():
             logger.debug("OWNER.md not found")
             return None
@@ -120,7 +129,11 @@ class SpiritLoader:
         if self._owner_cache:
             logger.info(
                 "OWNER.md loaded",
-                extra={"name": self._owner_cache.name}
+                extra={
+                    "name": self._owner_cache.name,
+                    "interests": self._owner_cache.interests,
+                    "preferences": self._owner_cache.preferences,
+                }
             )
         
         return self._owner_cache

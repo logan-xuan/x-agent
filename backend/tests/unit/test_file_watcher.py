@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from datetime import datetime
 
+# Direct imports to avoid circular import via __init__.py
 from src.memory.file_watcher import (
     FileWatcher,
     MemoryFileHandler,
@@ -39,6 +40,7 @@ class TestMemoryFileHandler:
             on_owner_changed=MagicMock(),
             on_tools_changed=MagicMock(),
             on_memory_changed=MagicMock(),
+            on_agents_changed=MagicMock(),
         )
 
     def test_handler_initialization(self, handler: MemoryFileHandler) -> None:
@@ -47,6 +49,7 @@ class TestMemoryFileHandler:
         assert handler.on_owner_changed is not None
         assert handler.on_tools_changed is not None
         assert handler.on_memory_changed is not None
+        assert handler.on_agents_changed is not None
 
     def test_ignores_directories(self, handler: MemoryFileHandler) -> None:
         """Test that directory events are ignored."""
@@ -94,6 +97,15 @@ class TestMemoryFileHandler:
         
         handler.on_tools_changed.assert_called_once()
 
+    def test_handles_agents_md_modified(self, handler: MemoryFileHandler) -> None:
+        """Test AGENTS.md modification triggers callback (T030)."""
+        from watchdog.events import FileModifiedEvent
+        
+        event = FileModifiedEvent("/workspace/AGENTS.md")
+        handler.on_modified(event)
+        
+        handler.on_agents_changed.assert_called_once()
+
     def test_handles_memory_file_modified(self, handler: MemoryFileHandler) -> None:
         """Test memory/*.md modification triggers callback."""
         from watchdog.events import FileModifiedEvent
@@ -119,6 +131,27 @@ class TestMemoryFileHandler:
         event = FileDeletedEvent("/workspace/memory/2026-02-14.md")
         # Should not raise, just log warning
         handler.on_deleted(event)
+
+    def test_agents_reload_performance(self, handler: MemoryFileHandler) -> None:
+        """Test AGENTS.md reload detection performance (T031).
+        
+        Verifies that file event detection completes within acceptable time.
+        The actual reload performance (<1000ms) is tested in test_context_loader.py.
+        """
+        import time
+        from watchdog.events import FileModifiedEvent
+        
+        start_time = time.time()
+        
+        # Simulate multiple rapid file events
+        for _ in range(10):
+            event = FileModifiedEvent("/workspace/AGENTS.md")
+            handler.on_modified(event)
+        
+        elapsed_ms = (time.time() - start_time) * 1000
+        
+        # Event processing should be very fast (< 100ms for 10 events)
+        assert elapsed_ms < 100
 
 
 class TestFileWatcher:

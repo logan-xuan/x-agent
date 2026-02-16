@@ -7,6 +7,8 @@ This module provides REST API endpoints for:
 - Search functionality
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 
 from ...utils.logger import get_logger
@@ -558,3 +560,180 @@ async def find_similar(entry_id: str, limit: int = 5) -> SearchResponse:
         query=target_entry.content[:100],
         total=len(items),
     )
+
+
+# ============ Maintenance Endpoints ============
+
+from pydantic import BaseModel
+
+
+class MaintenanceRequest(BaseModel):
+    """Request model for maintenance operations."""
+    min_importance: int | None = Field(default=None, ge=1, le=5, description="Minimum importance threshold")
+    keep_days: int | None = Field(default=None, ge=1, le=365, description="Days to keep daily logs")
+    dry_run: bool = Field(default=False, description="Preview changes without applying")
+
+
+class MaintenanceResponse(BaseModel):
+    """Response model for maintenance operations."""
+    success: bool
+    processed_entries: int = 0
+    added_entries: int = 0
+    removed_logs: int = 0
+    archived_entries: int = 0
+    duration_ms: int = 0
+    error: str | None = None
+
+
+class SchedulerConfigResponse(BaseModel):
+    """Response model for scheduler configuration."""
+    schedule_time: str
+    min_importance: int
+    keep_days: int
+    timezone: str
+
+
+@router.post("/maintenance", response_model=MaintenanceResponse)
+async def run_memory_maintenance(request: MaintenanceRequest) -> MaintenanceResponse:
+    """Run memory maintenance cycle.
+    
+    T045: Executes maintenance tasks:
+    1. Process daily logs to MEMORY.md
+    2. Cleanup old daily logs
+    3. Archive old MEMORY.md entries
+    
+    Args:
+        request: Maintenance options
+        
+    Returns:
+        Maintenance results
+    """
+    from ...services.memory_maintenance import MemoryMaintenanceService
+    from ...config import get_config
+    
+    logger.info(
+        "Running memory maintenance",
+        extra={
+            "min_importance": request.min_importance,
+            "keep_days": request.keep_days,
+            "dry_run": request.dry_run,
+        }
+    )
+    
+    try:
+        # Get workspace path
+        config = get_config()
+        backend_dir = Path(__file__).parent.parent.parent.parent
+        workspace_path = (backend_dir / config.workspace.path).resolve()
+        
+        service = MemoryMaintenanceService(
+            workspace_path=str(workspace_path),
+            min_importance=request.min_importance or 4,
+            keep_days=request.keep_days or 30,
+        )
+        
+        if request.dry_run:
+            # Preview mode - just analyze without changes
+            result = await service.run_maintenance()
+            return MaintenanceResponse(
+                success=True,
+                processed_entries=result.get("processed_entries", 0),
+                added_entries=0,  # Dry run doesn't add
+                removed_logs=0,   # Dry run doesn't remove
+                archived_entries=0,  # Dry run doesn't archive
+                duration_ms=result.get("duration_ms", 0),
+            )
+        
+        # Run actual maintenance
+        result = await service.run_maintenance()
+        
+        logger.info(
+            "Memory maintenance completed",
+            extra=result
+        )
+        
+        return MaintenanceResponse(
+            success=result.get("success", False),
+            processed_entries=result.get("processed_entries", 0),
+            added_entries=result.get("added_entries", 0),
+            removed_logs=result.get("removed_logs", 0),
+            archived_entries=result.get("archived_entries", 0),
+            duration_ms=result.get("duration_ms", 0),
+            error=result.get("error"),
+        )
+        
+    except Exception as e:
+        logger.error(
+            "Memory maintenance failed",
+            extra={"error": str(e)}
+        )
+        return MaintenanceResponse(
+            success=False,
+            error=str(e),
+        )
+
+
+@router.get("/maintenance/config", response_model=SchedulerConfigResponse)
+async def get_maintenance_config() -> SchedulerConfigResponse:
+    """Get scheduler configuration for memory maintenance.
+    
+    Returns current configuration for the scheduled maintenance task.
+    """
+    from ...services.memory_maintenance import get_maintenance_service
+    from ...config import get_config
+    
+    config = get_config()
+    backend_dir = Path(__file__).parent.parent.parent.parent
+    workspace_path = (backend_dir / config.workspace.path).resolve()
+    
+    service = get_maintenance_service(str(workspace_path))
+    
+    if service is None:
+        service = MemoryMaintenanceService(str(workspace_path))
+    
+    scheduler_config = service.get_scheduler_config()
+    
+    return SchedulerConfigResponse(
+        schedule_time=scheduler_config["schedule_time"],
+        min_importance=scheduler_config["min_importance"],
+        keep_days=scheduler_config["keep_days"],
+        timezone=scheduler_config["timezone"],
+    )
+
+
+@router.post("/maintenance/scheduler/start")
+async def start_maintenance_scheduler() -> dict[str, str]:
+    """Start the scheduled maintenance task.
+    
+    Starts APScheduler for daily memory maintenance at configured time.
+    """
+    from ...services.memory_maintenance import setup_scheduled_maintenance, start_scheduler
+    from ...config import get_config
+    
+    config = get_config()
+    backend_dir = Path(__file__).parent.parent.parent.parent
+    workspace_path = (backend_dir / config.workspace.path).resolve()
+    
+    scheduler = setup_scheduled_maintenance(
+        workspace_path=str(workspace_path),
+        schedule_time="02:00",  # Default: 2 AM
+    )
+    
+    if scheduler is None:
+        return {"status": "error", "message": "APScheduler not installed"}
+    
+    start_scheduler()
+    
+    logger.info("Maintenance scheduler started")
+    return {"status": "started", "schedule": "02:00"}
+
+
+@router.post("/maintenance/scheduler/stop")
+async def stop_maintenance_scheduler() -> dict[str, str]:
+    """Stop the scheduled maintenance task."""
+    from ...services.memory_maintenance import stop_scheduler
+    
+    stop_scheduler()
+    
+    logger.info("Maintenance scheduler stopped")
+    return {"status": "stopped"}

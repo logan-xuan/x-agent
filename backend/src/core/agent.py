@@ -2,17 +2,16 @@
 
 from pathlib import Path
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from ..config.manager import ConfigManager
-from ..memory.context_builder import ContextBuilder
-from ..memory.importance_detector import get_importance_detector
-from ..memory.md_sync import get_md_sync
-from ..memory.models import MemoryEntry, MemoryContentType
 from ..services.llm.router import LLMRouter
 from ..services.storage import StorageService
 from ..utils.logger import get_logger, log_execution
 from .session import SessionManager
+
+if TYPE_CHECKING:
+    from ..memory.context_builder import ContextBuilder
 
 logger = get_logger(__name__)
 
@@ -26,14 +25,13 @@ class Agent:
     - Streaming responses
     - Message persistence
     - Context loading from memory system
-    - Automatic memory recording for important content
     """
     
     def __init__(
         self,
         session_manager: SessionManager | None = None,
         llm_router: LLMRouter | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: "ContextBuilder | None" = None,
     ) -> None:
         """Initialize agent.
         
@@ -49,20 +47,18 @@ class Agent:
         if context_builder:
             self._context_builder = context_builder
         else:
+            from ..memory.context_builder import get_context_builder
             config_manager = ConfigManager()
             workspace_path = config_manager.config.workspace.path
             # Resolve relative path from backend directory
             backend_dir = Path(__file__).parent.parent.parent
             resolved_path = (backend_dir / workspace_path).resolve()
-            self._context_builder = ContextBuilder(str(resolved_path))
+            # Use global singleton to ensure cache is shared and can be cleared
+            self._context_builder = get_context_builder(str(resolved_path))
             logger.info(
                 "Agent initialized with workspace",
                 extra={"workspace_path": str(resolved_path)}
             )
-        
-        # Initialize memory components
-        self._importance_detector = get_importance_detector()
-        self._md_sync = get_md_sync(str(resolved_path))
     
     @log_execution
     async def chat(
@@ -143,8 +139,7 @@ class Agent:
                 }
             )
             
-            # Check for important content and record memory
-            self._record_if_important(user_message, response.content)
+            # NOTE: Memory recording is handled by websocket.py smart_record_conversation
             
             return {
                 "type": "message",
@@ -209,8 +204,8 @@ class Agent:
                 metadata={"model": model}
             )
             
-            # Check for important content and record memory
-            self._record_if_important(user_message, full_content)
+            # NOTE: Memory recording is handled by websocket.py smart_record_conversation
+            # to avoid duplicate writes and use LLM-based analysis
             
             # Send final message
             yield {
@@ -260,84 +255,4 @@ class Agent:
         """
         messages = await self._session_manager.get_messages(session_id)
         return [msg.to_dict() for msg in messages]
-    
-    def _record_if_important(self, user_message: str, assistant_message: str) -> None:
-        """Check if conversation contains important content and record to memory.
-        
-        Only records extracted important content, not the full message.
-        
-        Args:
-            user_message: User's message
-            assistant_message: Assistant's response
-        """
-        try:
-            # Analyze the conversation turn
-            analysis = self._importance_detector.analyze_conversation_turn(
-                user_message=user_message,
-                assistant_message=assistant_message,
-            )
-            
-            if analysis["is_important"]:
-                user_analysis = analysis.get("user_analysis", {})
-                assistant_analysis = analysis.get("assistant_analysis", {})
-                
-                # Extract important content - NOT the full message
-                content_to_record = None
-                
-                # Check user message for extracted entities
-                user_entities = user_analysis.get("extracted_entities", [])
-                if user_entities:
-                    content_to_record = user_entities[0].get("content", "")
-                
-                # Check assistant message for extracted entities
-                if not content_to_record:
-                    assistant_entities = assistant_analysis.get("extracted_entities", [])
-                    if assistant_entities:
-                        content_to_record = assistant_entities[0].get("content", "")
-                
-                # Skip if no extractable content
-                if not content_to_record or len(content_to_record.strip()) < 2:
-                    logger.debug(
-                        "Important detected but no extractable content, skipping",
-                        extra={
-                            "matched_keywords": user_analysis.get("matched_keywords", []),
-                            "user_message_preview": user_message[:50],
-                        }
-                    )
-                    return
-                
-                # Create memory entry
-                content_type_str = analysis.get("content_type", "conversation")
-                try:
-                    content_type = MemoryContentType(content_type_str)
-                except ValueError:
-                    content_type = MemoryContentType.CONVERSATION
-                
-                entry = MemoryEntry(
-                    content=content_to_record,
-                    content_type=content_type,
-                )
-                
-                # Save to markdown
-                self._md_sync.append_memory_entry(entry)
-                
-                logger.info(
-                    "Important content extracted and recorded",
-                    extra={
-                        "recorded_content": content_to_record[:50],
-                        "content_type": content_type.value,
-                        "matched_patterns": user_analysis.get("matched_patterns", []),
-                    }
-                )
-            else:
-                logger.debug(
-                    "Content not important, skipping memory recording",
-                    extra={"user_message_preview": user_message[:50]}
-                )
-                
-        except Exception as e:
-            # Don't fail the chat if memory recording fails
-            logger.error(
-                "Failed to record memory",
-                extra={"error": str(e)}
-            )
+

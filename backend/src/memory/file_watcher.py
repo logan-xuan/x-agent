@@ -30,6 +30,8 @@ class MemoryFileHandler(FileSystemEventHandler):
         on_owner_changed: Callable[[], None] | None = None,
         on_tools_changed: Callable[[], None] | None = None,
         on_memory_changed: Callable[[str], None] | None = None,
+        on_agents_changed: Callable[[], None] | None = None,
+        on_identity_changed: Callable[[], None] | None = None,
     ) -> None:
         """Initialize file handler.
         
@@ -38,12 +40,16 @@ class MemoryFileHandler(FileSystemEventHandler):
             on_owner_changed: Callback for OWNER.md changes
             on_tools_changed: Callback for TOOLS.md changes
             on_memory_changed: Callback for memory/*.md changes (receives file path)
+            on_agents_changed: Callback for AGENTS.md changes (hot-reload)
+            on_identity_changed: Callback for IDENTITY.md changes (AI name changes)
         """
         super().__init__()
         self.on_spirit_changed = on_spirit_changed
         self.on_owner_changed = on_owner_changed
         self.on_tools_changed = on_tools_changed
         self.on_memory_changed = on_memory_changed
+        self.on_agents_changed = on_agents_changed
+        self.on_identity_changed = on_identity_changed
         
         logger.debug("MemoryFileHandler initialized")
     
@@ -73,9 +79,15 @@ class MemoryFileHandler(FileSystemEventHandler):
         elif path.name == "OWNER.md" and self.on_owner_changed:
             logger.info("OWNER.md changed, triggering reload")
             self.on_owner_changed()
+        elif path.name == "IDENTITY.md" and self.on_identity_changed:
+            logger.info("IDENTITY.md changed, triggering reload")
+            self.on_identity_changed()
         elif path.name == "TOOLS.md" and self.on_tools_changed:
             logger.info("TOOLS.md changed, triggering reload")
             self.on_tools_changed()
+        elif path.name == "AGENTS.md" and self.on_agents_changed:
+            logger.info("AGENTS.md changed, triggering hot-reload")
+            self.on_agents_changed()
         elif path.parent.name == "memory" and self.on_memory_changed:
             logger.info("Memory file changed, triggering sync", extra={"file_path": str(path)})
             self.on_memory_changed(str(path))
@@ -140,6 +152,8 @@ class FileWatcher:
         on_owner_changed: Callable[[], None] | None = None,
         on_tools_changed: Callable[[], None] | None = None,
         on_memory_changed: Callable[[str], None] | None = None,
+        on_agents_changed: Callable[[], None] | None = None,
+        on_identity_changed: Callable[[], None] | None = None,
     ) -> None:
         """Start watching for file changes.
         
@@ -148,6 +162,8 @@ class FileWatcher:
             on_owner_changed: Callback for OWNER.md changes
             on_tools_changed: Callback for TOOLS.md changes
             on_memory_changed: Callback for memory/*.md changes
+            on_agents_changed: Callback for AGENTS.md changes (hot-reload)
+            on_identity_changed: Callback for IDENTITY.md changes (AI name changes)
         """
         if self._running:
             logger.warning("FileWatcher already running")
@@ -158,6 +174,8 @@ class FileWatcher:
             on_owner_changed=on_owner_changed,
             on_tools_changed=on_tools_changed,
             on_memory_changed=on_memory_changed,
+            on_agents_changed=on_agents_changed,
+            on_identity_changed=on_identity_changed,
         )
         
         self._observer = Observer()

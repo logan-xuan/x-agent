@@ -74,6 +74,23 @@ class OwnerProfile(BaseModel):
     }
 
 
+class IdentityConfig(BaseModel):
+    """AI identity from IDENTITY.md.
+    
+    Defines who the AI is - its name, form, style, etc.
+    """
+    name: str = Field(default="", description="AI名字")
+    form: str = Field(default="", description="存在形式")
+    style: str = Field(default="", description="气质风格")
+    emoji: str = Field(default="", description="标志性emoji")
+    file_path: str | None = Field(default=None, description="源文件路径")
+    last_modified: datetime | None = Field(default=None, description="最后修改时间")
+
+    model_config = {
+        "extra": "ignore",
+    }
+
+
 class ToolDefinition(BaseModel):
     """Tool definition from TOOLS.md.
     
@@ -139,6 +156,7 @@ class ContextBundle(BaseModel):
     Extended with session type for privacy-aware context loading.
     """
     spirit: SpiritConfig | None = Field(default=None, description="AI 人格配置")
+    identity: IdentityConfig | None = Field(default=None, description="AI 身份（名字等）")
     owner: OwnerProfile | None = Field(default=None, description="用户画像")
     tools: list[ToolDefinition] = Field(default_factory=list, description="工具定义")
     recent_logs: list[DailyLog] = Field(default_factory=list, description="近期日志")
