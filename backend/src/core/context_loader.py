@@ -92,14 +92,27 @@ class ContextLoader:
     def check_bootstrap(self) -> BootstrapStatus:
         """Check if BOOTSTRAP.md exists and get its status.
         
+        Also checks if identity is already set up - if so, bootstrap is considered
+        completed even if BOOTSTRAP.md still exists.
+        
         Returns:
             BootstrapStatus with existence and content info
         """
         bootstrap_path = self.workspace_path / "BOOTSTRAP.md"
         
+        # Check if identity is already set up
+        identity_completed = self._check_identity_completed()
+        
         if not bootstrap_path.exists():
             logger.debug("BOOTSTRAP.md not found")
-            return BootstrapStatus(exists=False)
+            return BootstrapStatus(exists=False, completed=identity_completed)
+        
+        # If identity is already set up, bootstrap is considered completed
+        if identity_completed:
+            logger.info(
+                "BOOTSTRAP.md exists but identity already set up, skipping bootstrap"
+            )
+            return BootstrapStatus(exists=True, completed=True, content="")
         
         try:
             content = bootstrap_path.read_text(encoding="utf-8")
@@ -114,6 +127,42 @@ class ContextLoader:
                 extra={"error": str(e)}
             )
             return BootstrapStatus(exists=True, completed=False)
+    
+    def _check_identity_completed(self) -> bool:
+        """Check if identity is already set up in IDENTITY.md.
+        
+        Returns:
+            True if identity has a name set, False otherwise
+        """
+        identity_path = self.workspace_path / "IDENTITY.md"
+        
+        if not identity_path.exists():
+            return False
+        
+        try:
+            content = identity_path.read_text(encoding="utf-8")
+            # Check if Name field has a value
+            # Format: "- **Name:** xxx" or "- **Name:**"
+            for line in content.split("\n"):
+                if "**Name:**" in line:
+                    # Extract value after **Name:**
+                    parts = line.split("**Name:**")
+                    if len(parts) > 1:
+                        name_value = parts[1].strip()
+                        # Check if it's not empty
+                        if name_value and name_value != "":
+                            logger.info(
+                                "Identity already set up",
+                                extra={"name": name_value}
+                            )
+                            return True
+            return False
+        except Exception as e:
+            logger.warning(
+                "Failed to check identity completion",
+                extra={"error": str(e)}
+            )
+            return False
     
     def execute_bootstrap(self) -> bool:
         """Execute bootstrap initialization process.

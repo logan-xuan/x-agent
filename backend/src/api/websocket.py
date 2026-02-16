@@ -8,9 +8,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..core.agent import Agent
 from ..core.context import AgentContext, ContextSource, set_current_context, clear_current_context, get_current_context
-from ..memory.importance_detector import get_importance_detector
 from ..memory.md_sync import get_md_sync
-from ..memory.models import MemoryEntry
+from ..services.smart_memory import get_smart_memory_service
 from ..utils.logger import get_logger
 
 router = APIRouter()
@@ -28,107 +27,57 @@ def get_agent() -> Agent:
     return _agent
 
 
-async def record_if_important(
+async def smart_record_conversation(
     user_message: str,
     assistant_message: str,
     session_id: str,
-) -> bool:
-    """Record conversation turn if it contains important information.
+) -> dict:
+    """Use LLM to analyze and record conversation if important.
     
-    Only records extracted important content, not the full message.
+    This is the unified entry point for memory recording that:
+    - Uses LLM to determine if content should be recorded
+    - Extracts and updates identity information
+    - Avoids duplicate processing
     
     Args:
         user_message: User's message
         assistant_message: Assistant's response
-        session_id: Session ID for metadata
+        session_id: Session ID
         
     Returns:
-        True if recorded, False otherwise
+        Dict with recording results
     """
     try:
-        detector = get_importance_detector()
-        analysis = detector.analyze_conversation_turn(user_message, assistant_message)
+        from pathlib import Path
+        from ..services.llm.router import LLMRouter
+        from ..config.manager import ConfigManager
         
-        if analysis["is_important"]:
-            md_sync = get_md_sync()
-            
-            # Determine content type
-            content_type = detector.detect_content_type(user_message)
-            if content_type.value == "conversation":
-                content_type = detector.detect_content_type(assistant_message)
-            
-            # Extract important content - NOT the full message
-            user_analysis = analysis["user_analysis"]
-            assistant_analysis = analysis["assistant_analysis"]
-            
-            # Prefer extracted entities over full message
-            content_to_record = None
-            extracted_from = "user"
-            
-            # Check user message for extracted entities
-            if user_analysis.get("extracted_entities"):
-                entity = user_analysis["extracted_entities"][0]
-                content_to_record = entity.get("content", "")
-                matched_pattern = entity.get("type", "")
-            # Check assistant message for extracted entities
-            elif assistant_analysis.get("extracted_entities"):
-                entity = assistant_analysis["extracted_entities"][0]
-                content_to_record = entity.get("content", "")
-                extracted_from = "assistant"
-                matched_pattern = entity.get("type", "")
-            else:
-                # No extracted entities - skip recording to avoid noise
-                logger.debug(
-                    "Important detected but no extractable content, skipping",
-                    extra={
-                        "session_id": session_id,
-                        "matched_keywords": user_analysis.get("matched_keywords", []),
-                    }
-                )
-                return False
-            
-            # Skip if content is too short or looks like noise
-            if not content_to_record or len(content_to_record.strip()) < 2:
-                logger.debug(
-                    "Extracted content too short, skipping",
-                    extra={"content": content_to_record, "session_id": session_id}
-                )
-                return False
-            
-            entry = MemoryEntry(
-                content=content_to_record,
-                content_type=content_type,
-                metadata={
-                    "session_id": session_id,
-                    "extracted_from": extracted_from,
-                    "pattern_type": matched_pattern if 'matched_pattern' in dir() else "",
-                    "user_message_preview": user_message[:50] if user_message else "",
-                    "assistant_preview": assistant_message[:100] if assistant_message else "",
-                }
-            )
-            
-            result = md_sync.append_memory_entry(entry)
-            
-            if result:
-                logger.info(
-                    "Important content extracted and recorded",
-                    extra={
-                        "session_id": session_id,
-                        "content_type": content_type.value,
-                        "recorded_content": content_to_record[:50],
-                        "pattern": matched_pattern if 'matched_pattern' in dir() else "",
-                    }
-                )
-            return result
-            
-        return False
+        config = ConfigManager().config
+        
+        # Resolve workspace path to absolute path
+        backend_dir = Path(__file__).parent.parent.parent
+        workspace_path = (backend_dir / config.workspace.path).resolve()
+        
+        llm_router = LLMRouter(config.models)
+        md_sync = get_md_sync(str(workspace_path))
+        
+        service = get_smart_memory_service(llm_router, str(workspace_path))
+        
+        result = await service.analyze_and_record(
+            user_message=user_message,
+            assistant_message=assistant_message,
+            session_id=session_id,
+            md_sync=md_sync
+        )
+        
+        return result
         
     except Exception as e:
         logger.warning(
-            "Failed to record important content",
+            "Failed to smart record conversation",
             extra={"error": str(e), "session_id": session_id}
         )
-        return False
+        return {"recorded": False, "skip_reason": str(e)}
 
 
 @router.websocket("/chat/{session_id}")
@@ -254,9 +203,10 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                     await asyncio.sleep(0.01)
                 
                 # Record important conversation (async, non-blocking)
+                # Use SmartMemoryService with LLM-based analysis
                 if assistant_response:
                     asyncio.create_task(
-                        record_if_important(user_content, assistant_response, session_id)
+                        smart_record_conversation(user_content, assistant_response, session_id)
                     )
                     
             except Exception as e:

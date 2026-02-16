@@ -133,6 +133,13 @@ export function PromptLogList({ onError, onViewTrace }: PromptLogListProps) {
                         <span className="text-gray-400">({log.token_usage.total_tokens})</span>
                       </div>
                     )}
+
+                    {/* Trace ID */}
+                    {log.trace_id && (
+                      <div className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0 hidden md:block">
+                        <span className="font-mono">ID: {log.trace_id.substring(0, 8)}...</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Expand Icon */}

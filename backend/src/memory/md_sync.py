@@ -353,13 +353,19 @@ class MarkdownSync:
             )
             
             # Parse entries from content
-            # Entry format: ### HH:MM - [type]\ncontent
+            # Entry format: ### HH:MM:SS - [type]\ncontent (supports both HH:MM and HH:MM:SS)
             for match in re.finditer(
-                r"###\s*(\d{2}:\d{2})\s*-\s*(\w+)\s*\n(.+?)(?=###|$)",
+                r"###\s*(\d{2}:\d{2}(?::\d{2})?)\s*-\s*(\w+)\s*\n(.+?)(?=###|$)",
                 content,
                 re.DOTALL
             ):
-                log.entries.append(f"{date}-{match.group(1)}")
+                entry_time = match.group(1)
+                entry_type = match.group(2)
+                entry_content = match.group(3).strip()
+                log.entries.append(f"{date}-{entry_time}")
+                # Also set summary from first entry if not set
+                if not log.summary and entry_content:
+                    log.summary = entry_content[:200]
             
             return log
             

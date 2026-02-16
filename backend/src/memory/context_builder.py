@@ -15,6 +15,7 @@ from .md_sync import MarkdownSync
 from .models import (
     ContextBundle,
     DailyLog,
+    IdentityConfig,
     OwnerProfile,
     SpiritConfig,
     ToolDefinition,
@@ -97,6 +98,7 @@ class ContextBuilder:
         
         # Load all components
         spirit = self._spirit_loader.load_spirit()
+        identity = self._load_identity()
         owner = self._spirit_loader.load_owner()
         tools = self._load_tools()
         recent_logs = self._load_recent_logs()
@@ -104,6 +106,7 @@ class ContextBuilder:
         
         context = ContextBundle(
             spirit=spirit,
+            identity=identity,
             owner=owner,
             tools=tools,
             recent_logs=recent_logs,
@@ -119,6 +122,8 @@ class ContextBuilder:
             "Context built",
             extra={
                 "has_spirit": spirit is not None,
+                "has_identity": identity is not None,
+                "identity_name": identity.name if identity else None,
                 "has_owner": owner is not None,
                 "tools_count": len(tools),
                 "logs_count": len(recent_logs),
@@ -195,6 +200,66 @@ class ContextBuilder:
         
         return logs
     
+    def _load_identity(self) -> IdentityConfig | None:
+        """Load AI identity from IDENTITY.md.
+        
+        Returns:
+            IdentityConfig if file exists, None otherwise
+        """
+        import re
+        
+        identity_path = Path(self.workspace_path) / "IDENTITY.md"
+        
+        if not identity_path.exists():
+            logger.debug("IDENTITY.md not found")
+            return None
+        
+        try:
+            content = identity_path.read_text(encoding="utf-8")
+            
+            # Parse identity fields from markdown
+            config = IdentityConfig()
+            
+            # Parse name: - **Name:** value
+            name_match = re.search(r"\*\*Name:\*\*\s*(.+)", content)
+            if name_match:
+                config.name = name_match.group(1).strip()
+            
+            # Parse form/creature
+            form_match = re.search(r"\*\*Creature:\*\*\s*(.+)", content)
+            if form_match:
+                config.form = form_match.group(1).strip()
+            
+            # Parse style/vibe
+            style_match = re.search(r"\*\*Vibe:\*\*\s*(.+)", content)
+            if style_match:
+                config.style = style_match.group(1).strip()
+            
+            # Parse emoji
+            emoji_match = re.search(r"\*\*Emoji:\*\*\s*(.+)", content)
+            if emoji_match:
+                config.emoji = emoji_match.group(1).strip()
+            
+            config.file_path = str(identity_path)
+            
+            logger.info(
+                "IDENTITY.md loaded",
+                extra={
+                    "name": config.name,
+                    "form": config.form,
+                    "style": config.style,
+                }
+            )
+            
+            return config
+            
+        except Exception as e:
+            logger.error(
+                "Failed to load IDENTITY.md",
+                extra={"error": str(e)}
+            )
+            return None
+    
     def _load_long_term_memory(self) -> str:
         """Load long-term memory from MEMORY.md.
         
@@ -203,12 +268,21 @@ class ContextBuilder:
         """
         memory_path = Path(self.workspace_path) / "MEMORY.md"
         
+        logger.info(
+            "Loading MEMORY.md",
+            extra={
+                "workspace_path": self.workspace_path,
+                "memory_path": str(memory_path),
+                "exists": memory_path.exists(),
+            }
+        )
+        
         if not memory_path.exists():
             return ""
         
         try:
             content = memory_path.read_text(encoding="utf-8")
-            logger.debug("Long-term memory loaded")
+            logger.info("Long-term memory loaded", extra={"content_length": len(content)})
             return content
         except Exception as e:
             logger.error(
@@ -290,10 +364,10 @@ class ContextBuilder:
         parts: list[str] = []
         
         # ===== BOOTSTRAP.md (First-time initialization) =====
-        # If BOOTSTRAP.md exists, inject its content at the TOP
-        # This is the highest priority - Agent should process it first
+        # Only load BOOTSTRAP.md if it exists AND identity is not yet set up
+        # Once identity is set up, the main guidance comes from AGENTS.md
         bootstrap_status = self._context_loader.check_bootstrap()
-        if bootstrap_status.exists and bootstrap_status.content:
+        if bootstrap_status.exists and bootstrap_status.content and not bootstrap_status.completed:
             parts.append("# 🌟 首次启动初始化")
             parts.append(bootstrap_status.content)
             parts.append("\n---\n")  # Separator
@@ -307,9 +381,28 @@ class ContextBuilder:
             parts.append(agents_content)
             parts.append("")  # Add spacing
         
-        # ===== AI Identity (SPIRIT.md) =====
-        if context.spirit:
+        # ===== AI Identity (SPIRIT.md + IDENTITY.md) =====
+        # First, add AI name from IDENTITY.md
+        if context.identity and context.identity.name:
             parts.append("# AI 身份设定")
+            parts.append(f"你的名字是「{context.identity.name}」。")
+            
+            if context.identity.form:
+                parts.append(f"存在形式: {context.identity.form}")
+            
+            if context.identity.style:
+                parts.append(f"气质风格: {context.identity.style}")
+            
+            if context.identity.emoji:
+                parts.append(f"标志性表情: {context.identity.emoji}")
+            
+            parts.append("")  # Spacing
+        
+        # Then add role/personality from SPIRIT.md
+        if context.spirit:
+            if not (context.identity and context.identity.name):
+                parts.append("# AI 身份设定")
+            
             parts.append(f"你是{context.spirit.role}。")
             
             if context.spirit.personality:
@@ -338,6 +431,11 @@ class ContextBuilder:
             
             if context.owner.goals:
                 parts.append(f"目标: {', '.join(context.owner.goals)}")
+            
+            if context.owner.preferences:
+                parts.append("偏好:")
+                for key, value in context.owner.preferences.items():
+                    parts.append(f"  - {key}: {value}")
         
         # ===== Available Tools (TOOLS.md) =====
         if context.tools:

@@ -18,7 +18,13 @@ from .models import (
     MemoryContentType,
 )
 from .spirit_loader import SpiritLoader
-from .context_builder import ContextBuilder
+# ContextBuilder imported lazily to avoid circular imports
+# from .context_builder import ContextBuilder
+
+def get_context_builder(*args, **kwargs):
+    """Lazy import to avoid circular imports."""
+    from .context_builder import ContextBuilder
+    return ContextBuilder(*args, **kwargs)
 
 __all__ = [
     "SpiritConfig",
@@ -27,5 +33,5 @@ __all__ = [
     "MemoryEntry",
     "MemoryContentType",
     "SpiritLoader",
-    "ContextBuilder",
+    "get_context_builder",
 ]
