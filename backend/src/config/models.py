@@ -102,6 +102,52 @@ class SearchConfig(BaseModel):
         return self
 
 
+class ToolsConfig(BaseModel):
+    """Tools configuration.
+    
+    Controls the behavior and security settings for agent tools.
+    """
+    
+    # Terminal tool configuration
+    terminal_blacklist: list[str] = Field(
+        default_factory=lambda: [
+            "rm",
+            "dd",
+            "mkfs",
+            "fdisk",
+            "format",
+            "shutdown",
+            "reboot",
+            "poweroff",
+            "halt",
+            "init",
+            "systemctl",
+            "service",
+            "sudo",
+            "su",
+            "passwd",
+            "chpasswd",
+        ],
+        description="List of blocked commands for terminal tool"
+    )
+    terminal_timeout: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        description="Default timeout for terminal commands in seconds"
+    )
+    terminal_max_output: int = Field(
+        default=10000,
+        ge=1000,
+        le=100000,
+        description="Maximum output length before truncation"
+    )
+    terminal_allowed_dirs: list[str] = Field(
+        default_factory=list,
+        description="List of allowed working directories (empty = any directory)"
+    )
+
+
 class Config(BaseModel):
     """Root configuration model."""
     
@@ -110,6 +156,7 @@ class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging config")
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig, description="Workspace config")
     search: SearchConfig = Field(default_factory=SearchConfig, description="Hybrid search config")
+    tools: ToolsConfig = Field(default_factory=ToolsConfig, description="Tools config")
     
     @field_validator("models")
     @classmethod

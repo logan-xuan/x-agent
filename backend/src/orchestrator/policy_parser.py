@@ -340,32 +340,7 @@ class PolicyParser:
         return None
     
     def _extract_prompt_text(self, section: str, content: str) -> str | None:
-        """Extract text suitable for System Prompt injection.
 
-        For soft guidelines, extracts bullet points and key instructions
-        while optimizing for token usage by focusing on the most essential elements.
-
-        Args:
-            section: Section name
-            content: Section content
-
-        Returns:
-            Formatted text for prompt injection, or None
-        """
-        lines = content.split("\n")
-
-        # Extract bullet points (most important for LLM behavior)
-        bullets = []
-        for line in lines:
-            line = line.strip()
-            if line.startswith("- "):
-                bullets.append(line[2:])  # Remove "- " prefix
-            elif line.startswith("* "):
-                bullets.append(line[2:])  # Remove "* " prefix
-            elif line.startswith("> "):
-                bullets.append(line[2:])  # Remove "> " prefix
-
-    def _extract_prompt_text(self, section: str, content: str) -> str | None:
         """Extract text suitable for System Prompt injection.
 
         For soft guidelines, extracts bullet points and key instructions
