@@ -365,6 +365,61 @@ class PolicyParser:
             elif line.startswith("> "):
                 bullets.append(line[2:])  # Remove "> " prefix
 
+    def _extract_prompt_text(self, section: str, content: str) -> str | None:
+        """Extract text suitable for System Prompt injection.
+
+        For soft guidelines, extracts bullet points and key instructions
+        while optimizing for token usage by focusing on the most essential elements.
+        Additionally, some P0 hard constraints should also be included in the prompt.
+
+        Args:
+            section: Section name
+            content: Section content
+
+        Returns:
+            Formatted text for prompt injection, or None
+        """
+        lines = content.split("\n")
+
+        # Define P0 hard constraint sections that should be included in system prompt
+        p0_hard_constraints = ["安全准则"]
+
+        # For P0 hard constraints, we want to extract their essential information
+        if any(p0_section in section for p0_section in p0_hard_constraints):
+            # Extract bullet points from P0 hard constraints
+            bullets = []
+            for line in lines:
+                line = line.strip()
+                if line.startswith("- "):
+                    bullets.append(line[2:])  # Remove "- " prefix
+                elif line.startswith("* "):
+                    bullets.append(line[2:])  # Remove "* " prefix
+                elif line.startswith("> "):
+                    bullets.append(line[2:])  # Remove "> " prefix
+
+            if bullets:
+                # Format as bullet list
+                formatted = "\n".join(f"- {b}" for b in bullets[:3])  # Limit to 3 items
+                return f"【P0安全准则】{section}\n{formatted}"
+
+            # If no bullets, return first 100 chars
+            if content:
+                preview = content[:100]
+                if len(content) > 100:
+                    preview += "..."
+                return f"【P0安全准则】{section}: {preview}"
+
+        # Extract bullet points for soft guidelines (most important for LLM behavior)
+        bullets = []
+        for line in lines:
+            line = line.strip()
+            if line.startswith("- "):
+                bullets.append(line[2:])  # Remove "- " prefix
+            elif line.startswith("* "):
+                bullets.append(line[2:])  # Remove "* " prefix
+            elif line.startswith("> "):
+                bullets.append(line[2:])  # Remove "> " prefix
+
         if bullets:
             # Format as bullet list, limit to 3-5 items to save tokens
             formatted = "\n".join(f"- {b}" for b in bullets[:3])  # Reduced from 5 to 3
