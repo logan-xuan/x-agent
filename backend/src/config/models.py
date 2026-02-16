@@ -146,6 +146,29 @@ class ToolsConfig(BaseModel):
         default_factory=list,
         description="List of allowed working directories (empty = any directory)"
     )
+    terminal_high_risk: list[str] = Field(
+        default_factory=lambda: [
+            "kill",
+            "pkill",
+            "killall",
+            "docker",
+            "kubectl",
+            "helm",
+            "terraform",
+            "ansible-playbook",
+            "pip",
+            "npm",
+            "yarn",
+            "pnpm",
+            "apt",
+            "apt-get",
+            "yum",
+            "dnf",
+            "pacman",
+            "brew",
+        ],
+        description="List of high-risk commands requiring user confirmation"
+    )
 
 
 class Config(BaseModel):

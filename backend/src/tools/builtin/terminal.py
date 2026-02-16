@@ -8,6 +8,7 @@ Provides tools for:
 
 Security features:
 - Command blacklist to block dangerous commands (configurable via x-agent.yaml)
+- High-risk command list requiring user confirmation
 - Audit logging for all executed commands
 - Working directory restriction
 - Timeout protection
@@ -62,32 +63,103 @@ class RunInTerminalTool(BaseTool):
     def __init__(
         self,
         blacklist: set[str] | None = None,
-        default_timeout: int = 60,
+        default_timeout: int | None = None,
         allowed_working_dirs: list[str] | None = None,
+        max_output_length: int | None = None,
     ) -> None:
         """Initialize the terminal tool.
         
         Args:
-            blacklist: Set of forbidden commands (uses DEFAULT_BLACKLIST if None)
-            default_timeout: Default command timeout in seconds
+            blacklist: Set of forbidden commands (uses config or default if None)
+            default_timeout: Default command timeout in seconds (uses config if None)
             allowed_working_dirs: List of allowed working directories (None = any)
+            max_output_length: Maximum output length before truncation (uses config if None)
         """
-        # Get blacklist from config, fallback to provided value or default
-        config = _get_tools_config()
-        if config and hasattr(config, 'terminal_blacklist'):
-            config_blacklist = set(config.terminal_blacklist)
-        else:
-            # Default dangerous commands
-            config_blacklist = {
-                "rm", "dd", "mkfs", "fdisk", "format", "shutdown",
-                "reboot", "poweroff", "halt", "init", "systemctl",
-                "service", "sudo", "su", "passwd", "chpasswd"
-            }
-
-        self.blacklist = blacklist or config_blacklist
-        self.default_timeout = default_timeout
-        self.allowed_working_dirs = allowed_working_dirs
+        # Store override values (these take precedence over config)
+        self._override_blacklist = blacklist
+        self._override_timeout = default_timeout
+        self._override_dirs = allowed_working_dirs
+        self._override_max_output = max_output_length
+        
+        # Load initial config
+        self._load_config()
+        
+        # Register for config changes
+        self._register_config_callback()
+        
         self._background_processes: dict[str, asyncio.subprocess.Process] = {}
+    
+    def _load_config(self) -> None:
+        """Load configuration from ConfigManager."""
+        config = _get_tools_config()
+        
+        # Use override values first, then config, then defaults
+        if self._override_blacklist is not None:
+            self.blacklist = self._override_blacklist
+        elif config is not None:
+            self.blacklist = set(config.terminal_blacklist)
+        else:
+            self.blacklist = {
+                "rm", "dd", "mkfs", "fdisk", "format",
+                "shutdown", "reboot", "poweroff", "halt", "init",
+                "systemctl", "service",
+            }
+        
+        if self._override_timeout is not None:
+            self.default_timeout = self._override_timeout
+        elif config is not None:
+            self.default_timeout = config.terminal_timeout
+        else:
+            self.default_timeout = 60
+        
+        if self._override_dirs is not None:
+            self.allowed_working_dirs = self._override_dirs
+        elif config is not None and config.terminal_allowed_dirs:
+            self.allowed_working_dirs = config.terminal_allowed_dirs
+        else:
+            self.allowed_working_dirs = None
+        
+        if self._override_max_output is not None:
+            self.max_output_length = self._override_max_output
+        elif config is not None:
+            self.max_output_length = config.terminal_max_output
+        else:
+            self.max_output_length = 10000
+        
+        # Load high-risk commands list
+        if config is not None:
+            self.high_risk_commands = set(config.terminal_high_risk)
+        else:
+            # Default high-risk commands
+            self.high_risk_commands = {
+                "kill", "pkill", "killall",
+                "docker", "kubectl", "helm", "terraform", "ansible-playbook",
+                "pip", "npm", "yarn", "pnpm",
+                "apt", "apt-get", "yum", "dnf", "pacman", "brew",
+            }
+        
+        logger.info(
+            "Terminal tool configuration loaded",
+            extra={
+                "blacklist_count": len(self.blacklist),
+                "high_risk_count": len(self.high_risk_commands),
+                "timeout": self.default_timeout,
+                "max_output": self.max_output_length,
+            }
+        )
+    
+    def _register_config_callback(self) -> None:
+        """Register callback for config hot-reload."""
+        try:
+            from ...config.manager import ConfigManager
+            
+            def on_config_change(new_config):
+                logger.info("Config changed, reloading terminal tool settings")
+                self._load_config()
+            
+            ConfigManager().on_change(on_config_change)
+        except Exception as e:
+            logger.debug(f"Could not register config callback: {e}")
     
     @property
     def name(self) -> str:
@@ -131,6 +203,13 @@ class RunInTerminalTool(BaseTool):
                 name="is_background",
                 type=ToolParameterType.BOOLEAN,
                 description="Run in background (non-blocking). Returns a process ID to check later.",
+                required=False,
+                default=False,
+            ),
+            ToolParameter(
+                name="confirmed",
+                type=ToolParameterType.BOOLEAN,
+                description="Set to true to confirm execution of high-risk commands (kill, docker, npm install, etc.)",
                 required=False,
                 default=False,
             ),
@@ -191,6 +270,25 @@ class RunInTerminalTool(BaseTool):
         
         return True, None
     
+    def _is_high_risk_command(self, command: str) -> tuple[bool, str | None]:
+        """Check if a command is high-risk and requires user confirmation.
+        
+        Args:
+            command: Command string to check
+            
+        Returns:
+            Tuple of (is_high_risk, warning_message)
+        """
+        base_cmd = self._extract_command(command)
+        
+        if not base_cmd:
+            return False, None
+        
+        if base_cmd in self.high_risk_commands:
+            return True, f"Command '{base_cmd}' is high-risk and requires user confirmation"
+        
+        return False, None
+    
     def _validate_working_dir(self, working_dir: str) -> tuple[bool, str | None]:
         """Validate working directory is allowed.
         
@@ -222,6 +320,7 @@ class RunInTerminalTool(BaseTool):
         working_dir: str = ".",
         timeout: int = 60,
         is_background: bool = False,
+        confirmed: bool = False,
     ) -> ToolResult:
         """Execute a shell command.
         
@@ -230,6 +329,7 @@ class RunInTerminalTool(BaseTool):
             working_dir: Working directory for the command
             timeout: Timeout in seconds
             is_background: Whether to run in background
+            confirmed: Whether user has confirmed high-risk command execution
             
         Returns:
             ToolResult with command output or error
@@ -242,6 +342,25 @@ class RunInTerminalTool(BaseTool):
                 extra={"command": command, "reason": error}
             )
             return ToolResult.error_result(error or "Command not allowed")
+        
+        # Check for high-risk commands
+        is_high_risk, warning = self._is_high_risk_command(command)
+        if is_high_risk and not confirmed:
+            logger.warning(
+                "High-risk command requires confirmation",
+                extra={"command": command, "warning": warning}
+            )
+            return ToolResult.error_result(
+                f"{warning}. Set 'confirmed=true' to execute this command.",
+                requires_confirmation=True,
+                command=command,
+            )
+        
+        if is_high_risk and confirmed:
+            logger.info(
+                "High-risk command confirmed by user",
+                extra={"command": command}
+            )
         
         # Validate working directory
         is_valid, error = self._validate_working_dir(working_dir)
@@ -266,6 +385,7 @@ class RunInTerminalTool(BaseTool):
                 "working_dir": str(cwd),
                 "is_background": is_background,
                 "timeout": timeout,
+                "is_high_risk": is_high_risk,
             }
         )
         
@@ -327,10 +447,9 @@ class RunInTerminalTool(BaseTool):
             output = "\n\n".join(output_parts) if output_parts else "Command completed with no output"
             
             # Truncate if too long
-            max_length = 10000
             was_truncated = False
-            if len(output) > max_length:
-                output = output[:max_length] + f"\n\n... [truncated, {len(output)} total characters]"
+            if len(output) > self.max_output_length:
+                output = output[:self.max_output_length] + f"\n\n... [truncated, {len(output)} total characters]"
                 was_truncated = True
             
             success = process.returncode == 0
