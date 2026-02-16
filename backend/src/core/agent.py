@@ -12,6 +12,7 @@ from .session import SessionManager
 
 if TYPE_CHECKING:
     from ..memory.context_builder import ContextBuilder
+    from ..orchestrator.engine import Orchestrator
 
 logger = get_logger(__name__)
 
@@ -25,6 +26,7 @@ class Agent:
     - Streaming responses
     - Message persistence
     - Context loading from memory system
+    - Orchestrator for ReAct loop and tools (new)
     """
     
     def __init__(
@@ -32,6 +34,7 @@ class Agent:
         session_manager: SessionManager | None = None,
         llm_router: LLMRouter | None = None,
         context_builder: "ContextBuilder | None" = None,
+        use_orchestrator: bool = True,
     ) -> None:
         """Initialize agent.
         
@@ -39,26 +42,47 @@ class Agent:
             session_manager: Session manager instance
             llm_router: LLM router instance
             context_builder: Context builder for memory system
+            use_orchestrator: Whether to use the new Orchestrator (default: True)
         """
         self._session_manager = session_manager or SessionManager()
         self._llm_router = llm_router or LLMRouter()
+        self._use_orchestrator = use_orchestrator
+        self._orchestrator: "Orchestrator | None" = None
         
         # Get workspace path from config
+        config_manager = ConfigManager()
+        workspace_path = config_manager.config.workspace.path
+        backend_dir = Path(__file__).parent.parent.parent
+        self._resolved_workspace_path = str((backend_dir / workspace_path).resolve())
+        
         if context_builder:
             self._context_builder = context_builder
         else:
             from ..memory.context_builder import get_context_builder
-            config_manager = ConfigManager()
-            workspace_path = config_manager.config.workspace.path
-            # Resolve relative path from backend directory
-            backend_dir = Path(__file__).parent.parent.parent
-            resolved_path = (backend_dir / workspace_path).resolve()
-            # Use global singleton to ensure cache is shared and can be cleared
-            self._context_builder = get_context_builder(str(resolved_path))
+            self._context_builder = get_context_builder(self._resolved_workspace_path)
             logger.info(
                 "Agent initialized with workspace",
-                extra={"workspace_path": str(resolved_path)}
+                extra={"workspace_path": self._resolved_workspace_path}
             )
+        
+        # Initialize Orchestrator if enabled
+        if self._use_orchestrator:
+            from ..orchestrator.engine import Orchestrator
+            self._orchestrator = Orchestrator(
+                workspace_path=self._resolved_workspace_path,
+                llm_router=self._llm_router,
+            )
+            logger.info("Agent initialized with Orchestrator")
+    
+    def _get_orchestrator(self) -> "Orchestrator":
+        """Get or create orchestrator instance."""
+        if self._orchestrator is None:
+            from ..orchestrator.engine import Orchestrator
+            self._orchestrator = Orchestrator(
+                workspace_path=self._resolved_workspace_path,
+                llm_router=self._llm_router,
+            )
+        return self._orchestrator
     
     @log_execution
     async def chat(
@@ -77,6 +101,14 @@ class Agent:
         Returns:
             Response dict (non-streaming) or AsyncGenerator (streaming)
         """
+        # Use Orchestrator if available and enabled
+        if self._use_orchestrator and self._orchestrator:
+            if stream:
+                return self._chat_with_orchestrator_streaming(session_id, user_message)
+            else:
+                return await self._chat_with_orchestrator(session_id, user_message)
+        
+        # Legacy path (without Orchestrator)
         # Save user message
         await self._session_manager.add_message(
             session_id=session_id,
@@ -110,6 +142,138 @@ class Agent:
             return self._chat_streaming(session_id, messages)
         else:
             return await self._chat_non_streaming(session_id, messages)
+    
+    async def _chat_with_orchestrator(
+        self,
+        session_id: str,
+        user_message: str,
+    ) -> dict[str, Any]:
+        """Chat using the new Orchestrator (non-streaming)."""
+        try:
+            # Save user message
+            await self._session_manager.add_message(
+                session_id=session_id,
+                role="user",
+                content=user_message,
+            )
+            
+            final_content = ""
+            
+            # Process through Orchestrator
+            async for event in self._orchestrator.process_request(
+                session_id=session_id,
+                user_message=user_message,
+                stream=False,
+            ):
+                if event.get("type") == "final_answer":
+                    final_content = event.get("content", "")
+            
+            # Save assistant message
+            if final_content:
+                await self._session_manager.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=final_content,
+                )
+            
+            return {
+                "type": "message",
+                "role": "assistant",
+                "content": final_content,
+                "session_id": session_id,
+            }
+            
+        except Exception as e:
+            logger.error(
+                "Orchestrator chat failed",
+                extra={"session_id": session_id, "error": str(e)}
+            )
+            return {
+                "type": "error",
+                "error": str(e),
+                "session_id": session_id,
+            }
+    
+    async def _chat_with_orchestrator_streaming(
+        self,
+        session_id: str,
+        user_message: str,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Chat using the new Orchestrator (streaming)."""
+        try:
+            # Save user message
+            await self._session_manager.add_message(
+                session_id=session_id,
+                role="user",
+                content=user_message,
+            )
+            
+            full_content = ""
+            
+            # Process through Orchestrator
+            async for event in self._orchestrator.process_request(
+                session_id=session_id,
+                user_message=user_message,
+                stream=True,
+            ):
+                event_type = event.get("type")
+                
+                # Forward events to client
+                if event_type == "thinking":
+                    yield {
+                        "type": "thinking",
+                        "content": event.get("content", ""),
+                        "session_id": session_id,
+                    }
+                elif event_type == "tool_call":
+                    yield {
+                        "type": "tool_call",
+                        "name": event.get("name"),
+                        "arguments": event.get("arguments"),
+                        "session_id": session_id,
+                    }
+                elif event_type == "tool_result":
+                    yield {
+                        "type": "tool_result",
+                        "tool_name": event.get("tool_name"),
+                        "success": event.get("success"),
+                        "output": event.get("output"),
+                        "session_id": session_id,
+                    }
+                elif event_type == "final_answer":
+                    full_content = event.get("content", "")
+                    yield {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": full_content,
+                        "session_id": session_id,
+                        "is_finished": True,
+                    }
+                elif event_type == "error":
+                    yield {
+                        "type": "error",
+                        "error": event.get("error"),
+                        "session_id": session_id,
+                    }
+            
+            # Save assistant message
+            if full_content:
+                await self._session_manager.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=full_content,
+                )
+            
+        except Exception as e:
+            logger.error(
+                "Orchestrator streaming chat failed",
+                extra={"session_id": session_id, "error": str(e)}
+            )
+            yield {
+                "type": "error",
+                "error": str(e),
+                "session_id": session_id,
+            }
     
     async def _chat_non_streaming(
         self,

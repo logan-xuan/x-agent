@@ -25,6 +25,17 @@ echo -e "${NC}"
 echo "Mode: $MODE"
 echo ""
 
+# Detect Python interpreter
+if [ -f "$SCRIPT_DIR/backend/.venv/bin/python" ]; then
+    PYTHON="$SCRIPT_DIR/backend/.venv/bin/python"
+elif [ -f "$SCRIPT_DIR/backend/venv/bin/python" ]; then
+    PYTHON="$SCRIPT_DIR/backend/venv/bin/python"
+else
+    PYTHON="python"
+fi
+echo "Using Python: $PYTHON"
+echo ""
+
 # Function to cleanup background processes on exit
 cleanup() {
     echo ""
@@ -53,13 +64,6 @@ lsof -ti:5173 | xargs kill -9 2>/dev/null || true
 echo -e "${BLUE}Starting backend...${NC}"
 cd "$SCRIPT_DIR/backend"
 
-# Check for venv
-if [ -d "venv" ]; then
-    source venv/bin/activate
-elif [ -d ".venv" ]; then
-    source .venv/bin/activate
-fi
-
 # Check for config
 if [ ! -f "x-agent.yaml" ] && [ -f "x-agent.yaml.example" ]; then
     cp x-agent.yaml.example x-agent.yaml
@@ -67,7 +71,7 @@ if [ ! -f "x-agent.yaml" ] && [ -f "x-agent.yaml.example" ]; then
 fi
 
 # Start backend in background
-python -m src.main 2>&1 &
+$PYTHON -m src.main 2>&1 &
 BACKEND_PID=$!
 cd "$SCRIPT_DIR"
 

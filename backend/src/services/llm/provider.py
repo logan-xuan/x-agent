@@ -9,10 +9,12 @@ from typing import Any
 @dataclass
 class LLMResponse:
     """Standard LLM response."""
-    content: str
+    content: str | None
     model: str
     usage: dict[str, int] | None = None
     metadata: dict[str, Any] | None = None
+    tool_calls: list[dict[str, Any]] | None = None  # OpenAI function calls
+    finish_reason: str | None = None  # "stop", "tool_calls", etc.
 
 
 @dataclass

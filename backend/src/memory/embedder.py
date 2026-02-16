@@ -1,25 +1,36 @@
 """Embedder module for generating text embeddings.
 
 This module provides:
+- ONNXEmbedder: ONNX Runtime based embedding (PyTorch-free)
 - MockEmbedder: Simple embedder for testing (random embeddings)
-- Embedder: Interface for embedding generation
+
+All embedding functionality is self-contained in this module.
+Only requires: onnxruntime, numpy
 """
 
-from typing import Any
 import hashlib
+import json
+import os
 import random
+import urllib.request
+from pathlib import Path
+from typing import Any
 
-from ..utils.logger import get_logger
+import numpy as np
 
-logger = get_logger(__name__)
+from ._logger import get_memory_logger
+
+logger = get_memory_logger(__name__)
 
 
 class MockEmbedder:
     """Mock embedder for testing and development.
     
     Generates deterministic embeddings based on text content hash.
-    Not suitable for production - use a real embedding model.
+    Not suitable for production - use ONNX embedder.
     """
+    
+    EMBEDDING_DIM = 384
     
     def __init__(self, dimension: int = 384) -> None:
         """Initialize mock embedder.
@@ -28,149 +39,152 @@ class MockEmbedder:
             dimension: Embedding dimension (default: 384)
         """
         self.dimension = dimension
-        self._is_mock = True  # Marker for detection
+        self._is_mock = True
         logger.info(
             "MockEmbedder initialized",
             extra={"dimension": dimension, "note": "Not suitable for production"}
         )
     
     def embed(self, text: str) -> list[float]:
-        """Generate embedding for text.
-        
-        Uses hash-based deterministic generation for consistency.
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            List of floats representing the embedding
-        """
-        # Use hash for deterministic but varied embeddings
+        """Generate embedding for text."""
         text_hash = hashlib.md5(text.encode()).hexdigest()
-        
-        # Seed random with hash for consistency
         random.seed(text_hash)
         
-        # Generate random embedding
         embedding = [random.gauss(0, 1) for _ in range(self.dimension)]
-        
-        # Normalize to unit vector
         magnitude = sum(x * x for x in embedding) ** 0.5
-        embedding = [x / magnitude for x in embedding]
         
-        logger.debug(
-            "Mock embedding generated",
-            extra={"text_length": len(text), "dimension": self.dimension}
-        )
-        
-        return embedding
-
-
-class Embedder:
-    """Embedder that wraps external embedding services.
+        return [x / magnitude for x in embedding]
     
-    Supports multiple backends:
-    - openai: OpenAI text-embedding-ada-002
-    - huggingface: Local HuggingFace models
-    - mock: Mock embedder for testing
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts."""
+        return [self.embed(text) for text in texts]
+
+
+class ONNXEmbedder:
+    """ONNX-based embedder using all-MiniLM-L6-v2.
+    
+    Downloads and uses a pre-converted ONNX model.
+    No PyTorch required - only onnxruntime and numpy.
     """
     
-    def __init__(
-        self,
-        backend: str = "mock",
-        model: str | None = None,
-        api_key: str | None = None,
-        dimension: int = 384,
-    ) -> None:
-        """Initialize embedder.
+    EMBEDDING_DIM = 384
+    DEFAULT_MODEL_URL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+    
+    def __init__(self, model_path: str | None = None) -> None:
+        """Initialize ONNX embedder.
         
         Args:
-            backend: Backend type ('openai', 'huggingface', 'mock')
-            model: Model name/ID
-            api_key: API key for cloud services
-            dimension: Embedding dimension
+            model_path: Path to ONNX model file. If None, downloads default model.
         """
-        self.backend = backend
-        self.model = model
-        self.dimension = dimension
-        
-        if backend == "mock":
-            self._impl = MockEmbedder(dimension)
-        elif backend == "openai":
-            self._impl = self._init_openai(model, api_key, dimension)
-        elif backend == "huggingface":
-            self._impl = self._init_huggingface(model, dimension)
-        else:
-            logger.warning(
-                f"Unknown backend '{backend}', using mock embedder",
-                extra={"backend": backend}
-            )
-            self._impl = MockEmbedder(dimension)
+        self.model_path = model_path
+        self._session: Any = None
+        self._initialized = False
         
         logger.info(
-            "Embedder initialized",
-            extra={"backend": backend, "model": model, "dimension": dimension}
+            "ONNXEmbedder created",
+            extra={"model_path": model_path or "default"}
         )
     
-    def _init_openai(
-        self,
-        model: str | None,
-        api_key: str | None,
-        dimension: int,
-    ) -> Any:
-        """Initialize OpenAI embedder."""
+    def _load_model(self) -> Any:
+        """Load the ONNX model."""
+        if self._session is not None:
+            return self._session
+        
         try:
-            import openai
+            import onnxruntime as ort
             
-            client = openai.OpenAI(api_key=api_key)
+            providers = ['CPUExecutionProvider']
             
-            class OpenAIEmbedder:
-                def __init__(self, client, model: str, dimension: int):
-                    self.client = client
-                    self.model = model or "text-embedding-ada-002"
-                    self.dimension = dimension
-                
-                def embed(self, text: str) -> list[float]:
-                    response = self.client.embeddings.create(
-                        model=self.model,
-                        input=text,
-                    )
-                    return response.data[0].embedding
+            if self.model_path and Path(self.model_path).exists():
+                logger.info("Loading ONNX model from path", extra={"path": self.model_path})
+                self._session = ort.InferenceSession(self.model_path, providers=providers)
+            else:
+                self._session = self._download_and_load_default_model(ort, providers)
             
-            return OpenAIEmbedder(client, model, dimension)
+            if self._session:
+                self._initialized = True
+                logger.info("ONNX model loaded successfully")
+            
+            return self._session
             
         except ImportError:
-            logger.warning(
-                "OpenAI package not installed, falling back to mock",
-                extra={"backend": "openai"}
-            )
-            return MockEmbedder(dimension)
+            logger.warning("onnxruntime not installed, cannot use ONNX embedder")
+            return None
+        except Exception as e:
+            logger.error("Failed to load ONNX model", extra={"error": str(e)})
+            return None
     
-    def _init_huggingface(self, model: str | None, dimension: int) -> Any:
-        """Initialize HuggingFace embedder."""
+    def _download_and_load_default_model(self, ort: Any, providers: list[str]) -> Any:
+        """Download and load the default ONNX model."""
+        cache_dir = Path.home() / ".cache" / "x-agent" / "models"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        model_file = cache_dir / "all-MiniLM-L6-v2.onnx"
+        
+        if not model_file.exists():
+            logger.info("Downloading ONNX model...", extra={"url": self.DEFAULT_MODEL_URL})
+            try:
+                urllib.request.urlretrieve(self.DEFAULT_MODEL_URL, model_file)
+                logger.info("ONNX model downloaded", extra={"path": str(model_file)})
+            except Exception as e:
+                logger.error("Failed to download model", extra={"error": str(e)})
+                return None
+        
+        return ort.InferenceSession(str(model_file), providers=providers)
+    
+    def _tokenize(self, text: str) -> dict[str, np.ndarray]:
+        """Tokenize text for ONNX model.
+        
+        Uses bert-base-uncased tokenizer which is compatible with all-MiniLM-L6-v2.
+        """
         try:
-            from sentence_transformers import SentenceTransformer
+            from transformers import AutoTokenizer
             
-            model_name = model or "all-MiniLM-L6-v2"
-            hf_model = SentenceTransformer(model_name)
+            # Load tokenizer (cached after first download)
+            tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
             
-            class HFEmbedder:
-                def __init__(self, model, dimension: int):
-                    self.model = model
-                    self.dimension = dimension
-                
-                def embed(self, text: str) -> list[float]:
-                    embedding = self.model.encode(text)
-                    return embedding.tolist()
-            
-            return HFEmbedder(hf_model, dimension)
-            
-        except ImportError:
-            logger.warning(
-                "sentence-transformers not installed, falling back to mock",
-                extra={"backend": "huggingface"}
+            # Tokenize with padding and truncation
+            encoded = tokenizer(
+                text,
+                padding=True,
+                truncation=True,
+                max_length=256,
+                return_tensors="np"
             )
-            return MockEmbedder(dimension)
+            
+            return {
+                "input_ids": encoded["input_ids"].astype(np.int64),
+                "attention_mask": encoded["attention_mask"].astype(np.int64),
+                "token_type_ids": encoded.get("token_type_ids", np.zeros_like(encoded["input_ids"])).astype(np.int64),
+            }
+        except ImportError:
+            logger.warning("transformers not installed, using fallback tokenization")
+            return self._fallback_tokenize(text)
+        except Exception as e:
+            logger.error(f"Tokenization failed: {e}, using fallback")
+            return self._fallback_tokenize(text)
+    
+    def _fallback_tokenize(self, text: str) -> dict[str, np.ndarray]:
+        """Fallback character-based tokenization."""
+        # Use character-level encoding as fallback
+        chars = list(text.lower())[:256]
+        
+        # Simple char-to-id mapping (not ideal but better than hash)
+        char_ids = [ord(c) % 30000 for c in chars]
+        
+        # Pad to reasonable length
+        while len(char_ids) < 16:
+            char_ids.append(0)
+        
+        input_ids = np.array([char_ids], dtype=np.int64)
+        attention_mask = np.ones_like(input_ids, dtype=np.int64)
+        token_type_ids = np.zeros_like(input_ids, dtype=np.int64)
+        
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "token_type_ids": token_type_ids,
+        }
     
     def embed(self, text: str) -> list[float]:
         """Generate embedding for text.
@@ -179,9 +193,116 @@ class Embedder:
             text: Text to embed
             
         Returns:
-            List of floats representing the embedding
+            Embedding vector (384 dimensions)
         """
+        session = self._load_model()
+        
+        if session is None:
+            logger.warning("ONNX session not available, using mock fallback")
+            mock = MockEmbedder(self.EMBEDDING_DIM)
+            return mock.embed(text)
+        
+        try:
+            inputs = self._tokenize(text)
+            outputs = session.run(None, inputs)
+            
+            output = outputs[0]
+            if len(output.shape) == 3:
+                embedding = output[0, 0, :]
+            elif len(output.shape) == 2:
+                if output.shape[0] == 1:
+                    embedding = output[0]
+                else:
+                    embedding = output[0, :]
+            else:
+                embedding = output.flatten()[:self.EMBEDDING_DIM]
+            
+            if len(embedding) > self.EMBEDDING_DIM:
+                embedding = embedding[:self.EMBEDDING_DIM]
+            elif len(embedding) < self.EMBEDDING_DIM:
+                embedding = np.pad(embedding, (0, self.EMBEDDING_DIM - len(embedding)))
+            
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
+            
+            return embedding.tolist()
+            
+        except Exception as e:
+            logger.error("Failed to generate embedding", extra={"error": str(e)})
+            mock = MockEmbedder(self.EMBEDDING_DIM)
+            return mock.embed(text)
+    
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts."""
+        return [self.embed(text) for text in texts]
+
+
+class Embedder:
+    """Main embedder interface.
+    
+    Uses ONNX Runtime by default, with Mock fallback.
+    PyTorch-free implementation.
+    """
+    
+    EMBEDDING_DIM = 384
+    
+    def __init__(
+        self,
+        backend: str = "auto",
+        model_path: str | None = None,
+        dimension: int = 384,
+    ) -> None:
+        """Initialize embedder.
+        
+        Args:
+            backend: Backend type ('onnx', 'mock')
+            model_path: Path to ONNX model (optional)
+            dimension: Embedding dimension
+        """
+        self.backend = backend
+        self.model_path = model_path
+        self.dimension = dimension
+        self._impl: Any = None
+        
+        if backend == "mock":
+            self._impl = MockEmbedder(dimension)
+        elif backend == "onnx" or backend == "auto":
+            self._impl = self._init_onnx(model_path, dimension)
+        else:
+            logger.warning(f"Unknown backend '{backend}', using ONNX")
+            self._impl = self._init_onnx(model_path, dimension)
+        
+        logger.info(
+            "Embedder initialized",
+            extra={"backend": backend, "dimension": dimension}
+        )
+    
+    def _init_onnx(self, model_path: str | None, dimension: int) -> Any:
+        """Initialize ONNX embedder."""
+        try:
+            embedder = ONNXEmbedder(model_path)
+            # Test if it works
+            test_embedding = embedder.embed("test")
+            if len(test_embedding) == dimension:
+                logger.info("ONNX embedder initialized successfully")
+                return embedder
+            else:
+                raise ValueError(f"Unexpected embedding dimension: {len(test_embedding)}")
+        except Exception as e:
+            logger.warning(
+                f"ONNX embedder failed: {e}, falling back to mock",
+                extra={"error": str(e)}
+            )
+            return MockEmbedder(dimension)
+    
+    def embed(self, text: str) -> list[float]:
+        """Generate embedding for text."""
         return self._impl.embed(text)
+    
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts."""
+        return self._impl.embed_batch(texts)
 
 
 # Global embedder instance
@@ -190,20 +311,17 @@ _embedder: Embedder | None = None
 
 def get_embedder(
     backend: str = "auto",
-    model: str | None = None,
-    api_key: str | None = None,
+    model_path: str | None = None,
     dimension: int = 384,
 ) -> Embedder:
     """Get or create global embedder instance.
     
     Args:
-        backend: Backend type ('auto', 'huggingface', 'openai', 'mock')
-            - auto: Automatically detect available backend (huggingface > mock)
-            - huggingface: Use sentence-transformers
-            - openai: Use OpenAI embeddings API
-            - mock: Use mock embedder for testing
-        model: Model name/ID
-        api_key: API key for cloud services
+        backend: Backend type ('auto', 'onnx', 'mock')
+            - auto: Try ONNX first, fallback to mock
+            - onnx: Use ONNX Runtime
+            - mock: Use mock embedder
+        model_path: Path to ONNX model file
         dimension: Embedding dimension
         
     Returns:
@@ -211,48 +329,25 @@ def get_embedder(
     """
     global _embedder
     if _embedder is None:
-        actual_backend = backend
-        
-        if backend == "auto":
-            # Try backends in order of preference
-            try:
-                from sentence_transformers import SentenceTransformer
-                actual_backend = "huggingface"
-                logger.info("Auto-detected huggingface backend (sentence-transformers)")
-            except ImportError:
-                actual_backend = "mock"
-                logger.info("No huggingface available, using mock backend")
-        
-        _embedder = Embedder(backend=actual_backend, model=model, api_key=api_key, dimension=dimension)
+        _embedder = Embedder(backend=backend, model_path=model_path, dimension=dimension)
     return _embedder
 
 
 def init_embedder(
     backend: str = "auto",
-    model: str | None = None,
-    api_key: str | None = None,
+    model_path: str | None = None,
     dimension: int = 384,
 ) -> Embedder:
     """Initialize global embedder instance.
     
     Args:
-        backend: Backend type ('auto', 'huggingface', 'openai', 'mock')
-        model: Model name/ID
-        api_key: API key
+        backend: Backend type ('auto', 'onnx', 'mock')
+        model_path: Path to ONNX model
         dimension: Embedding dimension
         
     Returns:
         Embedder instance
     """
     global _embedder
-    
-    actual_backend = backend
-    if backend == "auto":
-        try:
-            from sentence_transformers import SentenceTransformer
-            actual_backend = "huggingface"
-        except ImportError:
-            actual_backend = "mock"
-    
-    _embedder = Embedder(backend=actual_backend, model=model, api_key=api_key, dimension=dimension)
+    _embedder = Embedder(backend=backend, model_path=model_path, dimension=dimension)
     return _embedder

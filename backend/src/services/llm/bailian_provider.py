@@ -86,14 +86,34 @@ class BailianProvider(LLMProvider):
         """Non-streaming chat completion."""
         response = await client.chat.completions.create(**params)
         
+        choice = response.choices[0]
+        message = choice.message
+        
+        # Extract tool calls if present
+        tool_calls = None
+        if message.tool_calls:
+            tool_calls = [
+                {
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                }
+                for tc in message.tool_calls
+            ]
+        
         return LLMResponse(
-            content=response.choices[0].message.content or "",
+            content=message.content,
             model=response.model,
             usage={
                 "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
                 "completion_tokens": response.usage.completion_tokens if response.usage else 0,
                 "total_tokens": response.usage.total_tokens if response.usage else 0,
             } if response.usage else None,
+            tool_calls=tool_calls,
+            finish_reason=choice.finish_reason,
         )
     
     async def _chat_streaming(
@@ -123,8 +143,13 @@ class BailianProvider(LLMProvider):
         
         try:
             client = self._get_client()
-            # Try to list models as health check
-            await client.models.list()
+            # Try a simple chat completion as health check
+            # Some Bailian endpoints don't support /v1/models
+            response = await client.chat.completions.create(
+                model=self.model_id,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=1,
+            )
             return True
         except Exception:
             return False
