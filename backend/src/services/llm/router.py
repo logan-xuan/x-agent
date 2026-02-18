@@ -590,3 +590,19 @@ class LLMRouter:
                 )
                 results[name] = False
         return results
+    
+    async def complete(self, prompt: str, **kwargs: Any) -> LLMResponse:
+        """Complete a prompt (single message convenience method).
+        
+        This is a convenience method that wraps chat() for single-prompt completions.
+        Used by compression service for summary generation.
+        
+        Args:
+            prompt: The prompt text to complete
+            **kwargs: Additional parameters passed to chat()
+            
+        Returns:
+            LLM response
+        """
+        messages = [{"role": "user", "content": prompt}]
+        return await self.chat(messages, stream=False, **kwargs)
