@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..services.log_parser import get_log_parser
 from ..services.llm.router import LLMRouter
+from ..services.analysis_cache import get_analysis_cache
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -185,44 +186,78 @@ class TraceAnalyzer:
         
         return "\n".join(lines)
     
+    def __init__(self, llm_router: LLMRouter, log_dir: str = "logs", cache_enabled: bool = True):
+        """Initialize trace analyzer.
+
+        Args:
+            llm_router: LLM router instance for making LLM calls
+            log_dir: Directory containing log files
+            cache_enabled: Whether to use analysis caching
+        """
+        self.llm_router = llm_router
+        self.log_parser = get_log_parser(log_dir)
+        self.cache_enabled = cache_enabled
+
+        if cache_enabled:
+            self.cache = get_analysis_cache()
+
+        logger.info(
+            "TraceAnalyzer initialized",
+            extra={'log_dir': log_dir, 'cache_enabled': cache_enabled}
+        )
+
     async def analyze(
         self,
         trace_id: str,
         focus_areas: list[str] | None = None,
+        force_reanalyze: bool = False,
     ) -> dict[str, Any]:
         """Analyze a trace using LLM.
-        
+
         Args:
             trace_id: Trace ID to analyze
             focus_areas: Optional areas to focus on (performance, error, llm_usage)
-            
+            force_reanalyze: Whether to force reanalysis even if cached version exists
+
         Returns:
             Analysis result with insights and suggestions
         """
         logger.info(
-            f"Starting LLM analysis for trace",
+            f"Starting trace analysis",
             extra={
                 'trace_id': trace_id,
                 'focus_areas': focus_areas,
+                'force_reanalyze': force_reanalyze,
+                'cache_enabled': self.cache_enabled,
             }
         )
-        
+
+        # Check cache if enabled and not forcing reanalysis
+        if self.cache_enabled and not force_reanalyze:
+            cached_result = self.cache.get_cached_analysis(trace_id, focus_areas)
+            if cached_result:
+                logger.info(
+                    "Returning cached analysis result",
+                    extra={'trace_id': trace_id, 'cached_at': cached_result.get('cached_at')}
+                )
+                return cached_result
+
         # Get trace data
         timeline_data = self.log_parser.build_timeline(trace_id)
         x_agent_logs = self.log_parser.parse_x_agent_logs(trace_id)
         prompt_logs = self.log_parser.parse_prompt_llm_logs(trace_id)
-        
+
         if not x_agent_logs and not prompt_logs:
             return {
                 'analysis': '未找到该trace的日志数据',
                 'insights': [],
                 'suggestions': ['请检查trace_id是否正确'],
             }
-        
+
         # Build summaries
         x_agent_summary = self._build_x_agent_summary(x_agent_logs[:20])  # Limit to first 20
         llm_summary = self._build_llm_summary(prompt_logs)
-        
+
         # Build prompt
         prompt = self.ANALYSIS_PROMPT.format(
             trace_id=trace_id,
@@ -232,7 +267,7 @@ class TraceAnalyzer:
             x_agent_summary=x_agent_summary,
             llm_summary=llm_summary,
         )
-        
+
         # Add focus areas if specified
         if focus_areas:
             focus_instruction = f"\n\n请重点关注以下方面：{', '.join(focus_areas)}"
@@ -242,20 +277,20 @@ class TraceAnalyzer:
             # Call LLM
             messages = [{"role": "user", "content": prompt}]
             response = await self.llm_router.chat(messages, stream=False)
-            
+
             # Parse response
             response_text = response.content
-            
+
             # Try to extract JSON from response
             result = self._parse_llm_response(response_text)
-            
+
             # Build call chain diagram
             call_chain_diagram = self._build_call_chain_diagram(timeline_data, prompt_logs)
-            
+
             # Prepend call chain diagram to analysis
             if result.get('analysis'):
                 result['analysis'] = f"{call_chain_diagram}\n\n{result['analysis']}"
-            
+
             logger.info(
                 f"LLM analysis completed",
                 extra={
@@ -264,9 +299,17 @@ class TraceAnalyzer:
                     'suggestions_count': len(result.get('suggestions', [])),
                 }
             )
-            
+
+            # Cache the result if caching is enabled
+            if self.cache_enabled:
+                self.cache.cache_analysis(trace_id, result, focus_areas)
+                logger.info(
+                    f"Cached analysis for trace",
+                    extra={'trace_id': trace_id}
+                )
+
             return result
-            
+
         except Exception as e:
             logger.error(
                 f"LLM analysis failed",
@@ -276,9 +319,19 @@ class TraceAnalyzer:
                 },
                 exc_info=True,
             )
-            
+
             # Return fallback analysis
-            return self._fallback_analysis(trace_id, timeline_data, x_agent_logs, prompt_logs)
+            result = self._fallback_analysis(trace_id, timeline_data, x_agent_logs, prompt_logs)
+
+            # Cache the fallback result if caching is enabled
+            if self.cache_enabled:
+                self.cache.cache_analysis(trace_id, result, focus_areas)
+                logger.info(
+                    f"Cached fallback analysis for trace",
+                    extra={'trace_id': trace_id}
+                )
+
+            return result
     
     def _build_x_agent_summary(self, logs: list[Any]) -> str:
         """Build a summary of x-agent logs."""
@@ -435,22 +488,23 @@ class TraceAnalyzer:
 _trace_analyzer: TraceAnalyzer | None = None
 
 
-def get_trace_analyzer(llm_router: LLMRouter | None = None, log_dir: str = "logs") -> TraceAnalyzer:
+def get_trace_analyzer(llm_router: LLMRouter | None = None, log_dir: str = "logs", cache_enabled: bool = True) -> TraceAnalyzer:
     """Get or create trace analyzer instance.
-    
+
     Args:
         llm_router: LLM router instance
         log_dir: Directory containing log files
-        
+        cache_enabled: Whether to use analysis caching
+
     Returns:
         TraceAnalyzer instance
     """
     global _trace_analyzer
-    
+
     if _trace_analyzer is None:
         if llm_router is None:
             from ..main import get_llm_router
             llm_router = get_llm_router()
-        _trace_analyzer = TraceAnalyzer(llm_router, log_dir)
-    
+        _trace_analyzer = TraceAnalyzer(llm_router, log_dir, cache_enabled)
+
     return _trace_analyzer
