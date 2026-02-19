@@ -54,11 +54,17 @@ class Agent:
         # Tool confirmation tracking for high-risk commands
         self._tool_confirmations: dict[str, bool] = {}
 
-        # Get workspace path from config
+        # Get workspace path from config with proper ~ expansion
         config_manager = ConfigManager()
-        workspace_path = config_manager.config.workspace.path
+        raw_workspace_path = config_manager.config.workspace.path
         backend_dir = Path(__file__).parent.parent.parent
-        self._resolved_workspace_path = str((backend_dir / workspace_path).resolve())
+        
+        # Handle ~ expansion and absolute/relative paths correctly
+        expanded_path = Path(raw_workspace_path).expanduser()  # Expand ~ to user home
+        if expanded_path.is_absolute():
+            self._resolved_workspace_path = str(expanded_path.resolve())
+        else:
+            self._resolved_workspace_path = str((backend_dir / raw_workspace_path).resolve())
 
         if context_builder:
             self._context_builder = context_builder

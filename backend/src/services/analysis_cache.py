@@ -8,6 +8,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+import os
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,13 +17,22 @@ logger = get_logger(__name__)
 class AnalysisCache:
     """Manages caching of trace analysis results."""
 
-    def __init__(self, cache_dir: str = "../../workspace/dev/Analysis"):
+    def __init__(self, cache_dir: str = None):
         """Initialize cache service.
 
         Args:
-            cache_dir: Directory to store cached analysis results
+            cache_dir: Directory to store cached analysis results. If None, uses workspace/dev/Analysis in project root
         """
-        self.cache_dir = Path(cache_dir)
+        # Determine the location of the cache directory
+        if cache_dir is None:
+            # From backend/src/services/analysis_cache.py -> go up 3 levels to get to backend directory
+            # Then workspace directory should be a sibling at the parent level
+            backend_dir = Path(__file__).parent.parent.parent  # This gets us to the backend directory
+            project_root = backend_dir.parent  # Go to parent of backend (the project root)
+            self.cache_dir = project_root / "workspace" / "dev" / "Analysis"
+        else:
+            self.cache_dir = Path(cache_dir)
+
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(
@@ -279,11 +289,11 @@ class AnalysisCache:
 _analysis_cache: Optional[AnalysisCache] = None
 
 
-def get_analysis_cache(cache_dir: str = "../../workspace/dev/Analysis") -> AnalysisCache:
+def get_analysis_cache(cache_dir: str = None) -> AnalysisCache:
     """Get or create analysis cache instance.
 
     Args:
-        cache_dir: Directory to store cached analysis results
+        cache_dir: Directory to store cached analysis results. If None, uses workspace/dev/Analysis
 
     Returns:
         AnalysisCache instance
