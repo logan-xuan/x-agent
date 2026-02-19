@@ -65,43 +65,70 @@ class PromptLogsResponse(BaseModel):
 
 def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
     """Read the last N lines from prompt log file.
-    
+
     Args:
         limit: Maximum number of log entries to return
-        
+
     Returns:
         List of parsed log entries
     """
     logs = []
-    
+
     if not PROMPT_LOG_PATH.exists():
         logger.warning("Prompt log file not found", extra={"path": str(PROMPT_LOG_PATH)})
         return logs
-    
+
     try:
         # Read all lines and parse JSON
         with open(PROMPT_LOG_PATH, "r", encoding="utf-8") as f:
             lines = f.readlines()
-        
+
         # Parse last N lines (most recent first)
         for line in reversed(lines[-limit:]):
             line = line.strip()
             if not line:
                 continue
             try:
-                entry = json.loads(line)
-                logs.append(entry)
+                # Parse the outer JSON object
+                outer_entry = json.loads(line)
+
+                # Extract the actual log data from the 'message' field which contains JSON string
+                message_content = outer_entry.get("message", "")
+
+                # Parse the inner JSON string to get the actual log data
+                if isinstance(message_content, str) and message_content.startswith('{'):
+                    try:
+                        inner_entry = json.loads(message_content)
+
+                        # Combine the outer and inner entries, with inner taking precedence for core fields
+                        # Keep outer metadata but prioritize inner log data
+                        combined_entry = {**outer_entry, **inner_entry}
+
+                        # Remove the original 'message' field since we've parsed its contents
+                        if 'message' in combined_entry:
+                            del combined_entry['message']
+
+                        logs.append(combined_entry)
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to parse inner JSON from message field",
+                                     extra={"line_start": line[:100]})
+                        # If we can't parse the inner JSON, use the outer object as fallback
+                        logs.append(outer_entry)
+                else:
+                    # If message field is not a JSON string, use the outer object
+                    logs.append(outer_entry)
+
             except json.JSONDecodeError:
                 logger.warning("Failed to parse log entry", extra={"line": line[:100]})
                 continue
-                
+
     except Exception as e:
         logger.error("Error reading prompt logs", extra={"error": str(e)})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to read prompt logs: {str(e)}"
         )
-    
+
     return logs
 
 
