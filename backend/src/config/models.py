@@ -54,6 +54,18 @@ class LoggingConfig(BaseModel):
     max_size: str = Field(default="10MB", description="Max log file size")
     backup_count: int = Field(default=5, ge=0, description="Number of backup files")
     console: bool = Field(default=True, description="Output to console")
+    when: str = Field(default="D", description="Time interval for rotation: S=seconds, M=minutes, H=hours, D=days, W=weekday, midnight=end of day")
+    interval: int = Field(default=1, ge=1, description="Rotation interval multiplier (e.g., 1 means every day/week)")
+    
+    # LLM prompt log configuration
+    prompt_llm_file: str = Field(default="logs/prompt-llm.log", description="LLM prompt log file path")
+    prompt_llm_max_size: str = Field(default="50MB", description="Max LLM prompt log file size")
+    prompt_llm_backup_count: int = Field(default=5, ge=0, description="Number of LLM prompt log backups")
+    
+    # Server log configuration
+    server_log_file: str = Field(default="logs/server.log", description="Server log file path")
+    server_log_max_size: str = Field(default="10MB", description="Max server log file size")
+    server_log_backup_count: int = Field(default=3, ge=0, description="Number of server log backups")
 
 
 class WorkspaceConfig(BaseModel):

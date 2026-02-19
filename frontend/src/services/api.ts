@@ -250,6 +250,33 @@ export async function analyzeTrace(
   return response.json();
 }
 
+/** Get detailed information for a specific node in the trace */
+export interface NodeDetailsResponse {
+  node_id: string;
+  trace_id: string;
+  node_type: string;
+  label: string;
+  timestamp: string | null;
+  source: string | null;
+  operation_type: string | null;
+  metadata: Record<string, any>;
+}
+
+export async function getNodeDetails(traceId: string, nodeId: string): Promise<NodeDetailsResponse> {
+  const response = await fetch(`${API_BASE_URL}/trace/${traceId}/node-details/${nodeId}`, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch node details');
+  }
+
+  return response.json();
+}
+
 export interface CompressionRecord {
   id: string;
   sessionId: string;

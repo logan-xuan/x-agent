@@ -4,6 +4,7 @@ import functools
 import inspect
 import json
 import logging
+import os
 import sys
 import time
 from datetime import datetime
@@ -13,7 +14,182 @@ from typing import Any, Callable, TypeVar
 import structlog
 from pythonjsonlogger import jsonlogger
 
-from ..config.models import LoggingConfig
+try:
+    from ..config.models import LoggingConfig
+except (ImportError, ValueError):
+    from config.models import LoggingConfig
+
+
+class TimedSizeRotatingFileHandler(logging.Handler):
+    """Custom log handler that rotates logs by both time and size.
+    
+    Features:
+    - Rotates logs at specified time intervals (daily by default)
+    - Rotates logs when they exceed max size
+    - Names files with date and sequence: x-agent-2026-02-17-01.log
+    - Compresses old backup files
+    """
+    
+    def __init__(
+        self,
+        filename: str,
+        when: str = 'D',
+        interval: int = 1,
+        max_bytes: int = 10 * 1024 * 1024,  # 10MB default
+        backup_count: int = 5,
+        encoding: str = 'utf-8'
+    ):
+        """Initialize the handler.
+        
+        Args:
+            filename: Base log file path
+            when: Time interval (S=seconds, M=minutes, H=hours, D=days, W=weekday)
+            interval: Rotation interval multiplier
+            max_bytes: Maximum file size in bytes before rotation
+            backup_count: Number of backup files to keep
+            encoding: File encoding
+        """
+        super().__init__()
+        self.base_filename = filename
+        self.when = when.upper()
+        self.interval = interval
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self.encoding = encoding
+        self.stream = None  # Initialize stream attribute
+        
+        # Calculate rollover time
+        self.rollover_time = self._compute_rollover_time()
+        
+        # Open the base file
+        self.open()
+    
+    def _compute_rollover_time(self) -> float:
+        """Compute the next rollover time based on the interval."""
+        from logging.handlers import TimedRotatingFileHandler
+        # Use TimedRotatingFileHandler's logic to compute rollover
+        t = TimedRotatingFileHandler(
+            filename=self.base_filename,
+            when=self.when,
+            interval=self.interval,
+            backupCount=self.backup_count
+        )
+        rollover = t.computeRollover(time.time())
+        return rollover
+    
+    def open(self):
+        """Open the current log file for writing."""
+        if self.stream is None:
+            self.stream = open(self.base_filename, 'a', encoding=self.encoding)
+    
+    def should_rollover(self, record: logging.LogRecord) -> bool:
+        """Determine if rollover should occur."""
+        # Check if time-based rollover is needed
+        if time.time() >= self.rollover_time:
+            return True
+        
+        # Check if size-based rollover is needed
+        if self.stream is not None:
+            self.stream.seek(0, 2)  # Seek to end
+            if self.stream.tell() >= self.max_bytes:
+                return True
+        
+        return False
+    
+    def do_rollover(self):
+        """Perform the rollover operation."""
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        
+        # Generate new filename with date and sequence
+        current_time = datetime.now()
+        date_suffix = current_time.strftime('%Y-%m-%d')
+        
+        # Find the next available sequence number
+        seq = 1
+        while True:
+            dir_name = os.path.dirname(self.base_filename)
+            base_name = os.path.basename(self.base_filename)
+            name_parts = os.path.splitext(base_name)
+            
+            if len(name_parts) == 2:
+                new_filename = os.path.join(
+                    dir_name, 
+                    f"{name_parts[0]}-{date_suffix}-{seq:02d}{name_parts[1]}"
+                )
+            else:
+                new_filename = os.path.join(
+                    dir_name,
+                    f"{base_name}-{date_suffix}-{seq:02d}"
+                )
+            
+            if not os.path.exists(new_filename):
+                break
+            seq += 1
+        
+        # Rename the current file
+        try:
+            os.rename(self.base_filename, new_filename)
+        except OSError:
+            pass
+        
+        # Clean up old backups
+        self._delete_old_backups()
+        
+        # Compute next rollover time
+        self.rollover_time = self._compute_rollover_time()
+        
+        # Open new base file
+        self.open()
+    
+    def _delete_old_backups(self):
+        """Delete old backup files exceeding backup_count."""
+        dir_name = os.path.dirname(self.base_filename)
+        base_name = os.path.basename(self.base_filename)
+        name_parts = os.path.splitext(base_name)
+        
+        if len(name_parts) != 2:
+            return
+        
+        prefix = name_parts[0]
+        suffix = name_parts[1]
+        
+        # Find all backup files
+        backup_files = []
+        try:
+            for filename in os.listdir(dir_name):
+                # Match pattern: prefix-YYYY-MM-DD-NN.suffix
+                if filename.startswith(prefix + '-') and filename.endswith(suffix):
+                    full_path = os.path.join(dir_name, filename)
+                    if os.path.isfile(full_path):
+                        backup_files.append((full_path, os.path.getmtime(full_path)))
+        except OSError:
+            return
+        
+        # Sort by modification time (newest first)
+        backup_files.sort(key=lambda x: x[1], reverse=True)
+        
+        # Delete excess backups
+        for filepath, _ in backup_files[self.backup_count:]:
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass
+    
+    def emit(self, record: logging.LogRecord):
+        """Emit a log record."""
+        try:
+            if self.should_rollover(record):
+                self.do_rollover()
+            
+            msg = self.format(record)
+            if self.stream is None:
+                self.open()
+            self.stream.write(msg + '\n')
+            self.flush()
+        except Exception:
+            self.handleError(record)
 
 # Type variable for generic function decoration
 F = TypeVar('F', bound=Callable[..., Any])
@@ -80,11 +256,32 @@ def setup_logging(config: LoggingConfig) -> None:
     # Create trace ID filter
     trace_filter = TraceIDFilter()
     
+    # Parse max size (e.g., "10MB" -> bytes)
+    max_size_str = config.max_size.upper()
+    if max_size_str.endswith('MB'):
+        max_bytes = int(float(max_size_str[:-2]) * 1024 * 1024)
+    elif max_size_str.endswith('KB'):
+        max_bytes = int(float(max_size_str[:-2]) * 1024)
+    elif max_size_str.endswith('GB'):
+        max_bytes = int(float(max_size_str[:-2]) * 1024 * 1024 * 1024)
+    else:
+        try:
+            max_bytes = int(max_size_str)
+        except ValueError:
+            max_bytes = 10 * 1024 * 1024  # Default to 10MB
+    
     # Configure standard library logging
     handlers: list[logging.Handler] = []
     
-    # File handler with JSON format
-    file_handler = logging.FileHandler(config.file)
+    # File handler with custom timed+size rotation and JSON format
+    file_handler = TimedSizeRotatingFileHandler(
+        filename=config.file,
+        when=config.when,
+        interval=config.interval,
+        max_bytes=max_bytes,
+        backup_count=config.backup_count,
+        encoding='utf-8'
+    )
     file_handler.addFilter(trace_filter)
     
     if config.format == "json":
@@ -128,6 +325,13 @@ def setup_logging(config: LoggingConfig) -> None:
         handlers=handlers,
         force=True,
     )
+    
+    # Initialize LLM prompt logger with rotation
+    try:
+        llm_logger = get_llm_prompt_logger(config)
+    except Exception as e:
+        logger = get_logger(__name__)
+        logger.warning(f"Failed to initialize LLM prompt logger: {e}")
     
     # Configure structlog with module info processor
     processors = [
@@ -190,6 +394,7 @@ class LLMPromptLogger:
     
     _instance: "LLMPromptLogger | None" = None
     _log_file: Path | None = None
+    _file_handler: TimedSizeRotatingFileHandler | None = None
     _initialized: bool = False
     
     def __new__(cls) -> "LLMPromptLogger":
@@ -197,17 +402,67 @@ class LLMPromptLogger:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    def initialize(self, log_dir: str = "logs") -> None:
-        """Initialize the LLM prompt logger.
+    def initialize(
+        self, 
+        log_dir: str = "logs",
+        max_size: str = "50MB",
+        backup_count: int = 5,
+        when: str = "D",
+        interval: int = 1
+    ) -> None:
+        """Initialize the LLM prompt logger with rotation support.
         
         Args:
             log_dir: Directory to store log files
+            max_size: Max file size before rotation
+            backup_count: Number of backup files to keep
+            when: Time interval for rotation (D=days, H=hours, etc.)
+            interval: Rotation interval multiplier
         """
         if self._initialized:
             return
-            
+        
         self._log_file = Path(log_dir) / "prompt-llm.log"
         self._log_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Parse max size
+        max_size_str = max_size.upper()
+        if max_size_str.endswith('MB'):
+            max_bytes = int(float(max_size_str[:-2]) * 1024 * 1024)
+        elif max_size_str.endswith('KB'):
+            max_bytes = int(float(max_size_str[:-2]) * 1024)
+        elif max_size_str.endswith('GB'):
+            max_bytes = int(float(max_size_str[:-2]) * 1024 * 1024 * 1024)
+        else:
+            try:
+                max_bytes = int(max_size_str)
+            except ValueError:
+                max_bytes = 50 * 1024 * 1024  # Default to 50MB
+        
+        # Create rotating file handler
+        self._file_handler = TimedSizeRotatingFileHandler(
+            filename=str(self._log_file),
+            when=when,
+            interval=interval,
+            max_bytes=max_bytes,
+            backup_count=backup_count,
+            encoding='utf-8'
+        )
+        
+        # Set JSON formatter
+        formatter = jsonlogger.JsonFormatter(
+            "%(timestamp)s %(level)s %(name)s %(message)s %(trace_id)s %(request_id)s %(session_id)s",
+            rename_fields={
+                "timestamp": "timestamp", 
+                "level": "level", 
+                "name": "module",
+                "trace_id": "trace_id",
+                "request_id": "request_id",
+                "session_id": "session_id",
+            },
+        )
+        self._file_handler.setFormatter(formatter)
+        
         self._initialized = True
     
     def log_interaction(
@@ -261,24 +516,44 @@ class LLMPromptLogger:
         if error:
             entry["error"] = error
         
-        # Append to log file
-        assert self._log_file is not None
-        with open(self._log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        # Write using rotating handler
+        assert self._file_handler is not None
+        log_record = logging.LogRecord(
+            name='llm_prompt',
+            level=logging.INFO,
+            pathname=str(self._log_file),
+            lineno=0,
+            msg=json.dumps(entry, ensure_ascii=False),
+            args=(),
+            exc_info=None
+        )
+        self._file_handler.emit(log_record)
 
 
 # Global instance
 _llm_prompt_logger = LLMPromptLogger()
 
 
-def get_llm_prompt_logger() -> LLMPromptLogger:
+def get_llm_prompt_logger(config: LoggingConfig | None = None) -> LLMPromptLogger:
     """Get the global LLM prompt logger instance.
     
+    Args:
+        config: Optional logging configuration (uses defaults if not provided)
+        
     Returns:
         LLMPromptLogger instance
     """
     if not _llm_prompt_logger._initialized:
-        _llm_prompt_logger.initialize()
+        if config:
+            _llm_prompt_logger.initialize(
+                log_dir=str(Path(config.prompt_llm_file).parent),
+                max_size=config.prompt_llm_max_size,
+                backup_count=config.prompt_llm_backup_count,
+                when=config.when,
+                interval=config.interval
+            )
+        else:
+            _llm_prompt_logger.initialize()
     return _llm_prompt_logger
 
 

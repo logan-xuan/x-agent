@@ -1,13 +1,11 @@
-/** TraceViewer - Main trace visualization component */
+/** TraceViewer - Main trace visualization component with timeline view */
 
 import { useState, useCallback, useEffect } from 'react';
-import FlowCanvas from './FlowCanvas';
-import { getTraceFlow, analyzeTrace } from '@/services/api';
-import type { 
-  TraceFlowResponse, 
-  TraceDetailLevel,
+import TraceTimeline from './TraceTimeline';
+import { getTraceRawData, analyzeTrace } from '@/services/api';
+import type {
+  TraceRawDataResponse,
   TraceAnalysisResponse,
-  FlowNode as TraceFlowNode,
 } from '@/types';
 
 interface TraceViewerProps {
@@ -17,45 +15,43 @@ interface TraceViewerProps {
 
 function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
   const [traceId, setTraceId] = useState(initialTraceId);
-  const [detailLevel, setDetailLevel] = useState<TraceDetailLevel>('medium');
-  const [flowData, setFlowData] = useState<TraceFlowResponse | null>(null);
+  const [rawData, setRawData] = useState<TraceRawDataResponse | null>(null);
   const [analysis, setAnalysis] = useState<TraceAnalysisResponse | null>(null);
-  const [selectedNode, setSelectedNode] = useState<TraceFlowNode | null>(null);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'flow' | 'analysis'>('flow');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'analysis'>('timeline');
 
-  // Fetch trace flow data
-  const fetchFlowData = useCallback(async (id: string) => {
+  // Fetch trace raw data
+  const fetchRawData = useCallback(async (id: string) => {
     if (!id) return;
-    
+
     setLoading(true);
     setError(null);
     setAnalysis(null);
-    
+
     try {
-      const data = await getTraceFlow(id, detailLevel);
-      setFlowData(data);
+      const data = await getTraceRawData(id);
+      setRawData(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch trace data');
-      setFlowData(null);
+      setRawData(null);
     } finally {
       setLoading(false);
     }
-  }, [detailLevel]);
+  }, []);
 
-  // Fetch when traceId or detailLevel changes
+  // Fetch when traceId changes
   useEffect(() => {
     if (traceId) {
-      fetchFlowData(traceId);
+      fetchRawData(traceId);
     }
-  }, [traceId, detailLevel, fetchFlowData]);
+  }, [traceId, fetchRawData]);
 
   // Handle analyze button
   const handleAnalyze = useCallback(async () => {
     if (!traceId) return;
-    
+
     setAnalyzing(true);
     try {
       const result = await analyzeTrace(traceId, {
@@ -71,13 +67,11 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
     }
   }, [traceId]);
 
-  // Handle node click
-  const handleNodeClick = useCallback((nodeId: string) => {
-    const node = flowData?.nodes.find(n => n.id === nodeId);
-    if (node) {
-      setSelectedNode(node);
-    }
-  }, [flowData]);
+  // Handle event selection (optional)
+  const handleEventSelect = useCallback((event: any, source: 'x-agent' | 'prompt-llm') => {
+    console.log('Event selected:', event, source);
+    // Can implement additional logic when an event is selected
+  }, []);
 
   return (
     <div className="h-full w-full flex flex-col bg-gray-50">
@@ -94,17 +88,8 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
                 placeholder="Enter Trace ID"
                 className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-80"
               />
-              <select
-                value={detailLevel}
-                onChange={(e) => setDetailLevel(e.target.value as TraceDetailLevel)}
-                className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="high">High Level</option>
-                <option value="medium">Medium</option>
-                <option value="detailed">Detailed</option>
-              </select>
               <button
-                onClick={() => fetchFlowData(traceId)}
+                onClick={() => fetchRawData(traceId)}
                 disabled={loading || !traceId}
                 className="px-4 py-1.5 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -112,7 +97,7 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
               </button>
               <button
                 onClick={handleAnalyze}
-                disabled={analyzing || !flowData}
+                disabled={analyzing || !rawData}
                 className="px-4 py-1.5 bg-purple-500 text-white rounded-md text-sm hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {analyzing ? 'Analyzing...' : 'Analyze'}
@@ -139,19 +124,19 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Tabs for flow/analysis */}
+        {/* Tabs for timeline/analysis */}
         <div className="flex-1 flex flex-col">
           <div className="bg-white border-b border-gray-200 px-4">
             <div className="flex gap-4">
               <button
-                onClick={() => setActiveTab('flow')}
+                onClick={() => setActiveTab('timeline')}
                 className={`py-2 px-1 text-sm font-medium border-b-2 ${
-                  activeTab === 'flow'
+                  activeTab === 'timeline'
                     ? 'text-blue-600 border-blue-600'
                     : 'text-gray-500 border-transparent hover:text-gray-700'
                 }`}
               >
-                Flow
+                Timeline
               </button>
               <button
                 onClick={() => setActiveTab('analysis')}
@@ -168,12 +153,11 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
 
           {/* Tab content */}
           <div className="flex-1 overflow-hidden">
-            {activeTab === 'flow' && (
-              flowData ? (
-                <FlowCanvas
-                  nodes={flowData.nodes}
-                  edges={flowData.edges}
-                  onNodeClick={handleNodeClick}
+            {activeTab === 'timeline' && (
+              rawData ? (
+                <TraceTimeline
+                  traceData={rawData}
+                  onEventSelect={handleEventSelect}
                 />
               ) : (
                 <div className="h-full flex items-center justify-center text-gray-500">
@@ -181,7 +165,7 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
                 </div>
               )
             )}
-            
+
             {activeTab === 'analysis' && (
               <div className="h-full overflow-auto p-4">
                 {analysis ? (
@@ -257,88 +241,11 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
             )}
           </div>
         </div>
-
-        {/* Side panel for metadata */}
-        {flowData && activeTab === 'flow' && (
-          <div className="w-80 bg-white border-l border-gray-200 overflow-auto">
-            <div className="p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Trace Info</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Trace ID:</span>
-                  <span className="text-gray-800 font-mono text-xs truncate max-w-[180px]">
-                    {flowData.metadata.trace_id}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Nodes:</span>
-                  <span className="text-gray-800">{flowData.metadata.total_nodes}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Edges:</span>
-                  <span className="text-gray-800">{flowData.metadata.total_edges}</span>
-                </div>
-                {flowData.metadata.total_duration_ms > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Duration:</span>
-                    <span className="text-gray-800">{flowData.metadata.total_duration_ms}ms</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Execution path */}
-              <div className="mt-4">
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">Execution Path</h3>
-                <div className="text-xs text-gray-600 space-y-1">
-                  {flowData.metadata.execution_path.map((step, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <span className="text-gray-400">{idx + 1}.</span>
-                      <span>{step}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Selected node details */}
-              {selectedNode && (
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Selected Node</h3>
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <span className="text-gray-500">Label:</span>
-                      <div className="text-gray-800 font-medium">{selectedNode.data.label}</div>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Module:</span>
-                      <div className="text-gray-800">{selectedNode.data.module}</div>
-                    </div>
-                    {selectedNode.data.timestamp && (
-                      <div>
-                        <span className="text-gray-500">Timestamp:</span>
-                        <div className="text-gray-800">{selectedNode.data.timestamp}</div>
-                      </div>
-                    )}
-                    {selectedNode.data.level && (
-                      <div>
-                        <span className="text-gray-500">Level:</span>
-                        <div className={`inline-block px-2 py-0.5 rounded text-xs ${
-                          selectedNode.data.level === 'error' ? 'bg-red-100 text-red-600' :
-                          selectedNode.data.level === 'warning' ? 'bg-yellow-100 text-yellow-600' :
-                          'bg-green-100 text-green-600'
-                        }`}>
-                          {selectedNode.data.level}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
 }
+
+export default TraceViewer;
 
 export default TraceViewer;

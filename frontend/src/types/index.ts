@@ -229,6 +229,28 @@ export interface FlowNodeData {
   timestamp?: string | null;
   level?: string | null;
   source?: string;
+  operation_type?: string | null;
+  // Additional fields for specialized node types
+  tool_name?: string;
+  tool_args?: Record<string, unknown>;
+  skill_name?: string;
+  skill_args?: Record<string, unknown>;
+  command?: string;
+  command_output?: string;
+  command_error?: string;
+  memory_type?: string;
+  memory_content?: string;
+  query?: string;
+  results_count?: number;
+  query_results?: any[];
+  step_type?: string;
+  thought?: string;
+  action?: string;
+  observation?: string;
+  plan_step?: string;
+  plan_action?: string;
+  plan_status?: string;
+  // Additional generic fields
   [key: string]: unknown;
 }
 
