@@ -121,6 +121,7 @@ class ReActLoop:
         messages: list[dict[str, str]],
         tools: list[BaseTool] | None = None,
         session_id: str | None = None,
+        skill_context: Any = None,  # Phase 2 - Skill metadata for tool restrictions
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run the ReAct loop with streaming events.
         
@@ -136,6 +137,7 @@ class ReActLoop:
             messages: Conversation messages
             tools: Available tools (uses tool_manager if not provided)
             session_id: Optional session ID for logging
+            skill_context: SkillMetadata object (Phase 2, for tool restrictions)
             
         Yields:
             Event dictionaries
@@ -216,6 +218,7 @@ class ReActLoop:
                         result = await self.tool_manager.execute(
                             tool_call.name,
                             tool_call.arguments,
+                            skill_context=skill_context,  # Phase 2 - Pass skill context for tool restrictions
                         )
                         
                         # Check if this requires user confirmation - stop the loop
