@@ -655,11 +655,27 @@ if __name__ == "__main__":
 
 ### Step 2: Execute the Script
 
+**CRITICAL**: The script MUST be executed with workspace as the working directory!
+
 ```bash
-# Navigate to workspace first
+# Navigate to workspace first (REQUIRED!)
 cd /path/to/workspace
 
-# Run the script from scripts/ directory
+# Run the script from workspace directory
+python scripts/chinese_new_year_eating.py
+```
+
+**When using run_in_terminal tool, ALWAYS specify working_dir**:
+```json
+{
+  "command": "python scripts/chinese_new_year_eating.py",
+  "working_dir": "/path/to/workspace"
+}
+```
+
+**WRONG - Do NOT execute from backend directory**:
+```bash
+# ❌ WRONG - This saves files to backend/presentations/ instead of workspace/presentations/
 python scripts/chinese_new_year_eating.py
 ```
 
