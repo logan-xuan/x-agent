@@ -88,14 +88,14 @@ export function SkillMenu({ skills, onSelect, onClose, anchorPosition }: SkillMe
                 <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
                   /{skill.name}
                 </span>
-                {skill.argument_hint && (
+                {skill.argument_hint && typeof skill.argument_hint === 'string' && (
                   <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">
                     {skill.argument_hint}
                   </span>
                 )}
               </div>
               <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">
-                {skill.description}
+                {typeof skill.description === 'string' ? skill.description : JSON.stringify(skill.description)}
               </p>
               {skill.allowed_tools && (
                 <div className="flex items-center gap-1 mt-1 flex-wrap">
