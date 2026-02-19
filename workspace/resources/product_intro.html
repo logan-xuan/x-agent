@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page { margin: 0; size: 720pt 405pt; }
+        body { margin: 0; padding: 20pt; box-sizing: border-box; font-family: Arial, sans-serif; }
+        .slide { width: 720pt; height: 405pt; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: linear-gradient(135deg, #1e3c72, #2a5298); color: white; position: relative; overflow: hidden; }
+        .slide::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px); transform: rotate(30deg); z-index: 0; }
+        .content { position: relative; z-index: 1; width: 100%; padding: 20pt; box-sizing: border-box; }
+        h1 { font-size: 28pt; margin: 0 0 20pt 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); color: white; }
+        h2 { font-size: 20pt; margin: 10pt 0; color: white; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+        p { font-size: 14pt; margin: 8pt 0; color: white; line-height: 1.4; }
+        ul { text-align: left; font-size: 14pt; color: white; line-height: 1.5; max-width: 500pt; margin: 10pt auto; }
+        li { margin: 6pt 0; }
+        .highlight { background: rgba(255,255,255,0.2); padding: 3pt 6pt; border-radius: 4pt; }
+        .features-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20pt; max-width: 600pt; margin: 20pt auto; }
+        .feature-card { background: rgba(255,255,255,0.15); padding: 15pt; border-radius: 10pt; text-align: center; backdrop-filter: blur(5px); }
+        .contact { background: rgba(0,0,0,0.3); padding: 15pt; border-radius: 10pt; max-width: 500pt; margin: 20pt auto; }
+    </style>
+</head>
+<body>
+    <div class="slide">
+        <div class="content">
+            <h1>产品介绍</h1>
+            <p>创新解决方案，卓越用户体验</p>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>关于我们</h2>
+            <p>我们是一家致力于提供高质量产品和服务的创新公司</p>
+            <ul>
+                <li>行业领先的技术实力</li>
+                <li>专业的服务团队</li>
+                <li>持续的产品创新</li>
+                <li>客户至上的理念</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>核心功能</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <h3>智能分析</h3>
+                    <p>利用AI技术提供精准的数据分析</p>
+                </div>
+                <div class="feature-card">
+                    <h3>高效协作</h3>
+                    <p>支持多用户实时协作功能</p>
+                </div>
+                <div class="feature-card">
+                    <h3>安全保障</h3>
+                    <p>企业级安全防护机制</p>
+                </div>
+                <div class="feature-card">
+                    <h3>灵活定制</h3>
+                    <p>根据需求个性化配置</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>产品优势</h2>
+            <ul>
+                <li>显著提升工作效率 <span class="highlight">高达50%</span></li>
+                <li>降低运营成本 <span class="highlight">平均30%</span></li>
+                <li>增强数据安全性</li>
+                <li>简化操作流程</li>
+                <li>提升用户体验满意度</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>应用场景</h2>
+            <ul>
+                <li><strong>企业办公:</strong> 提升团队协作效率</li>
+                <li><strong>数据分析:</strong> 实现智能决策支持</li>
+                <li><strong>客户服务:</strong> 优化服务流程体验</li>
+                <li><strong>项目管理:</strong> 增强项目跟踪能力</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>客户案例</h2>
+            <ul>
+                <li><strong>大型企业:</strong> 某500强企业采用后效率提升40%</li>
+                <li><strong>中小企业:</strong> 帮助创业公司快速实现数字化转型</li>
+                <li><strong>政府部门:</strong> 支持政务系统现代化升级</li>
+                <li><strong>教育机构:</strong> 提升教学管理信息化水平</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>定价方案</h2>
+            <ul>
+                <li><strong>基础版:</strong> 适合小型团队，功能全面</li>
+                <li><strong>专业版:</strong> 面向中型企业，高级功能</li>
+                <li><strong>企业版:</strong> 定制化解决方案，专属服务</li>
+                <li><strong>试用版:</strong> 免费体验30天</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>技术支持</h2>
+            <div class="contact">
+                <p><strong>7×24小时技术支持</strong></p>
+                <p>客服热线: 400-XXX-XXXX</p>
+                <p>邮箱: support@company.com</p>
+                <p>在线客服: website.com/chat</p>
+            </div>
+            <p>我们提供全方位的技术支持和培训服务</p>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h2>未来发展</h2>
+            <ul>
+                <li>持续技术创新</li>
+                <li>拓展更多应用场景</li>
+                <li>深化AI能力集成</li>
+                <li>构建生态合作伙伴体系</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="slide">
+        <div class="content">
+            <h1>感谢观看</h1>
+            <p>期待与您合作，共创美好未来</p>
+            <p>联系我们: www.company.com</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "dependencies": {
+    "html2pptx": "^0.0.5",
+    "pptxgenjs": "^4.0.1"
+  },
+  "name": "workspace",
+  "version": "1.0.0",
+  "main": "create_chinese_new_year_travel_ppt.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}

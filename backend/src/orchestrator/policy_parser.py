@@ -87,12 +87,13 @@ class PolicyBundle:
 
 # Section to rule type mapping
 SECTION_TYPE_MAP: dict[str, RuleType] = {
-    # Hard constraints - system enforced
+    # Hard constraints - system enforced (TRUE P0 level - CRITICAL security, privacy, core behavior)
     "安全准则": RuleType.HARD_CONSTRAINT,
-    "外部操作": RuleType.HARD_CONSTRAINT,
     "外部操作 vs 内部操作": RuleType.HARD_CONSTRAINT,
-    
-    # Soft guidelines - prompt injected
+
+    # Soft guidelines - prompt injected (behavioral guidelines that are P0-like)
+    "MEMORY.md - 你的长期记忆": RuleType.SOFT_GUIDELINE,
+    "动手写下来 - 拒绝\"脑记\"！": RuleType.SOFT_GUIDELINE,
     "避免三连击": RuleType.SOFT_GUIDELINE,
     "表情反应": RuleType.SOFT_GUIDELINE,
     "记忆系统": RuleType.SOFT_GUIDELINE,
@@ -100,8 +101,8 @@ SECTION_TYPE_MAP: dict[str, RuleType] = {
     "工具": RuleType.SOFT_GUIDELINE,
     "记忆维护": RuleType.SOFT_GUIDELINE,
     "打造你的风格": RuleType.SOFT_GUIDELINE,
-    
-    # Identity - role definition
+
+    # Identity - role definition (non-P0, but important for context)
     "首次启动": RuleType.IDENTITY,
     "每次会话开始时": RuleType.IDENTITY,
     "每次会话": RuleType.IDENTITY,
@@ -274,6 +275,12 @@ class PolicyParser:
         if section_name in SECTION_TYPE_MAP:
             return SECTION_TYPE_MAP[section_name]
 
+        # Check if the section contains P0-level markers anywhere in the name
+        section_lower = section_name.lower()
+        if ("p0" in section_lower or "(p0)" in section_lower or
+            "p0级" in section_name or "优先级p0" in section_name):
+            return RuleType.SOFT_GUIDELINE  # P0 sections should be included in prompts
+
         # For optimization, classify certain sections as hard constraints
         # that should NOT be injected into system prompt
         optimization_exclusions = [
@@ -340,7 +347,6 @@ class PolicyParser:
         return None
     
     def _extract_prompt_text(self, section: str, content: str) -> str | None:
-
         """Extract text suitable for System Prompt injection.
 
         For soft guidelines, extracts bullet points and key instructions
@@ -356,12 +362,14 @@ class PolicyParser:
         """
         lines = content.split("\n")
 
-        # Define P0 hard constraint sections that should be included in system prompt
-        p0_hard_constraints = ["安全准则"]
+        # Check if section contains P0-level markers anywhere
+        section_lower = section.lower()
+        has_p0_marker = ("p0" in section_lower or "(p0)" in section_lower or
+                         "p0级" in section or "优先级p0" in section)
 
-        # For P0 hard constraints, we want to extract their essential information
-        if any(p0_section in section for p0_section in p0_hard_constraints):
-            # Extract bullet points from P0 hard constraints
+        # For any section with P0 markers, extract the essential information
+        if has_p0_marker:
+            # Extract bullet points from sections marked as P0
             bullets = []
             for line in lines:
                 line = line.strip()
@@ -375,14 +383,61 @@ class PolicyParser:
             if bullets:
                 # Format as bullet list
                 formatted = "\n".join(f"- {b}" for b in bullets[:3])  # Limit to 3 items
-                return f"【P0安全准则】{section}\n{formatted}"
+                # Return without adding 【P0安全准则】 prefix to maintain original format
+                return f"## {section}\n{formatted}"
 
             # If no bullets, return first 100 chars
             if content:
                 preview = content[:100]
                 if len(content) > 100:
                     preview += "..."
-                return f"【P0安全准则】{section}: {preview}"
+                return f"## {section}: {preview}"
+
+        # Special handling for content that contains key P0 phrases but in the wrong section
+        # Check if content contains the key phrase even if section name doesn't match
+        if "在不惹人厌的前提下提供帮助" in content:
+            # Find the line containing this phrase and the next line
+            result_lines = []
+            for i, line in enumerate(lines):
+                if "在不惹人厌的前提下提供帮助" in line:
+                    # Keep the original format without adding prefixes
+                    line = line.replace("目标：", "").strip()
+                    result_lines.append(line)
+                    # Add the next line if it exists (usually contains "每天适度报到几次...")
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1].strip()
+                        if next_line and "报到" in next_line:
+                            next_line_cleaned = next_line.replace("目标：", "").strip()
+                            result_lines.append(next_line_cleaned)
+                    break
+            if result_lines:
+                return "## 目标：" + "\n".join(result_lines)
+
+        # Look for individual P0-level sentences/paragraphs within content
+        # Identify content that has P0-level importance markers within the text
+        p0_indicators = ["p0", "(p0)", "p0级", "p0层面", "最高优先级", "优先级p0"]
+        if any(indicator in content.lower() or indicator in section.lower() for indicator in p0_indicators):
+            # Extract lines that contain P0 indicators
+            p0_sentences = []
+            for line in lines:
+                line = line.strip()
+                if line and any(indicator in line.lower() for indicator in p0_indicators):
+                    p0_sentences.append(line)
+                elif line and ("-" in line or "*" in line) and any(indicator in content.lower() for indicator in p0_indicators):
+                    # Also capture bullet points that might be related to P0 content
+                    if line.startswith("- ") or line.startswith("* "):
+                        p0_sentences.append(line)
+
+            if p0_sentences:
+                formatted = "\n".join(p0_sentences[:5])  # Limit to 5 sentences
+                return f"## {section}\nP0级别内容:\n{formatted}"
+
+            # If no specific P0 sentences found, but content has P0 indicators, return relevant parts
+            if content:
+                preview = content[:150]
+                if len(content) > 150:
+                    preview += "..."
+                return f"## P0级别约束: {section}\n{preview}"
 
         # Extract bullet points for soft guidelines (most important for LLM behavior)
         bullets = []
@@ -398,7 +453,7 @@ class PolicyParser:
         if bullets:
             # Format as bullet list, limit to 3-5 items to save tokens
             formatted = "\n".join(f"- {b}" for b in bullets[:3])  # Reduced from 5 to 3
-            return f"{section}\n{formatted}"
+            return f"## {section}\n{formatted}"
 
         # If no bullets, return only essential info from the content (first 100 chars)
         if content:
@@ -406,7 +461,7 @@ class PolicyParser:
             preview = content[:100]
             if len(content) > 100:
                 preview += "..."
-            return f"{section}: {preview}"
+            return f"## {section}: {preview}"
 
         return None
     

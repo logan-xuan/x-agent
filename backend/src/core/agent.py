@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, TYPE_CHECKING
 
 from ..config.manager import ConfigManager
+from ..services.compression import ContextCompressionManager
 from ..services.llm.router import LLMRouter
 from ..services.storage import StorageService
 from ..utils.logger import get_logger, log_execution
@@ -19,7 +20,7 @@ logger = get_logger(__name__)
 
 class Agent:
     """X-Agent core logic.
-    
+
     Orchestrates:
     - Session management
     - LLM routing with failover
@@ -27,8 +28,9 @@ class Agent:
     - Message persistence
     - Context loading from memory system
     - Orchestrator for ReAct loop and tools (new)
+    - Tool confirmation for high-risk commands
     """
-    
+
     def __init__(
         self,
         session_manager: SessionManager | None = None,
@@ -37,7 +39,7 @@ class Agent:
         use_orchestrator: bool = True,
     ) -> None:
         """Initialize agent.
-        
+
         Args:
             session_manager: Session manager instance
             llm_router: LLM router instance
@@ -48,13 +50,16 @@ class Agent:
         self._llm_router = llm_router or LLMRouter()
         self._use_orchestrator = use_orchestrator
         self._orchestrator: "Orchestrator | None" = None
-        
+
+        # Tool confirmation tracking for high-risk commands
+        self._tool_confirmations: dict[str, bool] = {}
+
         # Get workspace path from config
         config_manager = ConfigManager()
         workspace_path = config_manager.config.workspace.path
         backend_dir = Path(__file__).parent.parent.parent
         self._resolved_workspace_path = str((backend_dir / workspace_path).resolve())
-        
+
         if context_builder:
             self._context_builder = context_builder
         else:
@@ -64,15 +69,57 @@ class Agent:
                 "Agent initialized with workspace",
                 extra={"workspace_path": self._resolved_workspace_path}
             )
-        
+
         # Initialize Orchestrator if enabled
         if self._use_orchestrator:
             from ..orchestrator.engine import Orchestrator
             self._orchestrator = Orchestrator(
                 workspace_path=self._resolved_workspace_path,
                 llm_router=self._llm_router,
+                session_manager=self._session_manager,
             )
             logger.info("Agent initialized with Orchestrator")
+        
+        # Initialize context compression manager
+        self._compression_manager = ContextCompressionManager(
+            config=config_manager.config.compression,
+            workspace_path=self._resolved_workspace_path,
+            llm_service=self._llm_router if hasattr(self._llm_router, 'complete') else None
+        )
+        logger.info("Agent initialized with ContextCompressionManager")
+
+    def set_tool_confirmation(self, tool_call_id: str, confirmed: bool) -> None:
+        """Set confirmation status for a high-risk tool call.
+
+        Args:
+            tool_call_id: The tool call ID to confirm
+            confirmed: Whether the tool call is confirmed
+        """
+        self._tool_confirmations[tool_call_id] = confirmed
+        logger.info(
+            f"Tool confirmation set: {tool_call_id} = {confirmed}",
+            extra={"tool_call_id": tool_call_id, "confirmed": confirmed}
+        )
+
+    def is_tool_confirmed(self, tool_call_id: str) -> bool:
+        """Check if a tool call has been confirmed.
+
+        Args:
+            tool_call_id: The tool call ID to check
+
+        Returns:
+            True if confirmed, False otherwise
+        """
+        return self._tool_confirmations.get(tool_call_id, False)
+
+    def clear_tool_confirmation(self, tool_call_id: str) -> None:
+        """Clear confirmation status for a tool call.
+
+        Args:
+            tool_call_id: The tool call ID to clear
+        """
+        if tool_call_id in self._tool_confirmations:
+            del self._tool_confirmations[tool_call_id]
     
     def _get_orchestrator(self) -> "Orchestrator":
         """Get or create orchestrator instance."""
@@ -81,6 +128,7 @@ class Agent:
             self._orchestrator = Orchestrator(
                 workspace_path=self._resolved_workspace_path,
                 llm_router=self._llm_router,
+                session_manager=self._session_manager,
             )
         return self._orchestrator
     
@@ -137,6 +185,14 @@ class Agent:
                     "message_count": len(messages),
                 }
             )
+        
+        # Apply context compression if needed
+        prepared = await self._compression_manager.prepare_context(
+            session_id=session_id,
+            current_messages=messages,
+            system_prompt=system_prompt
+        )
+        messages = prepared.messages
         
         if stream:
             return self._chat_streaming(session_id, messages)
@@ -228,6 +284,7 @@ class Agent:
                 elif event_type == "tool_call":
                     yield {
                         "type": "tool_call",
+                        "tool_call_id": event.get("tool_call_id"),
                         "name": event.get("name"),
                         "arguments": event.get("arguments"),
                         "session_id": session_id,
@@ -235,9 +292,19 @@ class Agent:
                 elif event_type == "tool_result":
                     yield {
                         "type": "tool_result",
+                        "tool_call_id": event.get("tool_call_id"),
                         "tool_name": event.get("tool_name"),
                         "success": event.get("success"),
                         "output": event.get("output"),
+                        "result": event.get("result"),
+                        "session_id": session_id,
+                    }
+                elif event_type == "awaiting_confirmation":
+                    yield {
+                        "type": "awaiting_confirmation",
+                        "tool_call_id": event.get("tool_call_id"),
+                        "confirmation_id": event.get("confirmation_id"),
+                        "command": event.get("command"),
                         "session_id": session_id,
                     }
                 elif event_type == "final_answer":

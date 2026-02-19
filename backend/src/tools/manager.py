@@ -14,6 +14,14 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+class ToolNotAllowedError(Exception):
+    """Exception raised when a tool is not allowed by skill constraints."""
+    
+    def __init__(self, message: str, allowed_tools: list[str] | None = None):
+        super().__init__(message)
+        self.allowed_tools = allowed_tools
+
+
 class ToolManager:
     """Manager for tool registration and execution.
     
@@ -114,16 +122,42 @@ class ToolManager:
         """
         return [tool.to_openai_tool() for tool in self._tools.values()]
     
-    async def execute(self, name: str, params: dict[str, Any]) -> ToolResult:
+    async def execute(
+        self, 
+        name: str, 
+        params: dict[str, Any],
+        skill_context: Any = None  # Phase 2 - Skill metadata for tool restrictions
+    ) -> ToolResult:
         """Execute a tool by name.
         
         Args:
             name: Name of the tool to execute
             params: Parameters to pass to the tool
+            skill_context: SkillMetadata object (optional, for tool restrictions)
             
         Returns:
             ToolResult with execution result
+            
+        Raises:
+            ToolNotAllowedError: If the tool is not allowed by skill constraints
         """
+        # Phase 2: Check if tool is allowed by skill constraints
+        if skill_context and hasattr(skill_context, 'allowed_tools') and skill_context.allowed_tools:
+            if name not in skill_context.allowed_tools:
+                error_msg = (
+                    f"Tool '{name}' is not allowed by skill '{skill_context.name}'. "
+                    f"Allowed tools: {', '.join(skill_context.allowed_tools)}"
+                )
+                logger.warning(
+                    "Tool blocked by skill constraints",
+                    extra={
+                        "tool_name": name,
+                        "skill_name": skill_context.name,
+                        "allowed_tools": skill_context.allowed_tools,
+                    }
+                )
+                raise ToolNotAllowedError(error_msg, skill_context.allowed_tools)
+        
         # Find tool
         tool = self._tools.get(name)
         if tool is None:

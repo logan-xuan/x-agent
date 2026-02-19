@@ -69,20 +69,20 @@ class ReActLoop:
                 print(f"Answer: {event['content']}")
     """
     
-    MAX_ITERATIONS = 5  # Maximum ReAct iterations
+    MAX_ITERATIONS = 8  # Maximum ReAct iterations (increased from 5 to 8 for better plan execution)
     
     def __init__(
         self,
         llm_router: LLMRouter,
         tool_manager: ToolManager,
-        max_iterations: int = 5,
+        max_iterations: int = 8,  # Increased default from 5 to 8
     ) -> None:
         """Initialize the ReAct loop.
         
         Args:
             llm_router: LLM router for making API calls
             tool_manager: Tool manager for executing tools
-            max_iterations: Maximum number of iterations
+            max_iterations: Maximum number of iterations (default: 8 for complex tasks with plans)
         """
         self.llm_router = llm_router
         self.tool_manager = tool_manager
@@ -150,15 +150,22 @@ class ReActLoop:
         # Working message list
         working_messages = list(messages)
         
+        # Track iteration statistics
+        actual_iterations = 0
+        tool_calls_count = 0
+        completed_early = False
+        
         logger.info(
             "ReAct loop started",
             extra={
                 "tools_count": len(tools) if tools else 0,
                 "max_iterations": self.max_iterations,
+                "session_id": session_id,
             }
         )
         
         for iteration in range(self.max_iterations):
+            actual_iterations = iteration + 1
             logger.debug(
                 f"ReAct iteration {iteration + 1}/{self.max_iterations}"
             )
@@ -185,13 +192,25 @@ class ReActLoop:
                     
                     # Process each tool call
                     for tool_call in tool_calls:
+                        tool_calls_count += 1
+                        
                         # Emit tool_call event
-                        yield {
+                        tool_call_event = {
                             "type": REACT_EVENT_TOOL_CALL,
+                            "tool_call_id": tool_call.id,
                             "name": tool_call.name,
                             "arguments": tool_call.arguments,
-                            "id": tool_call.id,
                         }
+                        logger.info(
+                            "Emitting tool_call from react_loop",
+                            extra={
+                                "tool_call_id": tool_call.id,
+                                "tool_call_name": tool_call.name,
+                                "event_keys": list(tool_call_event.keys()),
+                                "event_tool_call_id": tool_call_event.get("tool_call_id"),
+                            }
+                        )
+                        yield tool_call_event
                         
                         # Execute tool
                         result = await self.tool_manager.execute(
@@ -199,14 +218,57 @@ class ReActLoop:
                             tool_call.arguments,
                         )
                         
+                        # Check if this requires user confirmation - stop the loop
+                        requires_confirmation = result.metadata.get("requires_confirmation", False)
+                        is_blocked = result.metadata.get("is_blocked", False)
+                        
                         # Emit tool_result event
+                        logger.info(
+                            "Emitting tool_result from react_loop",
+                            extra={
+                                "tool_call_id": tool_call.id,
+                                "tool_call_name": tool_call.name,
+                                "result_success": result.success,
+                                "requires_confirmation": requires_confirmation,
+                            }
+                        )
                         yield {
                             "type": REACT_EVENT_TOOL_RESULT,
+                            "tool_call_id": tool_call.id,
                             "tool_name": tool_call.name,
                             "success": result.success,
                             "output": result.output[:500] if result.output else "",
                             "error": result.error,
+                            "result": {
+                                "success": result.success,
+                                "output": result.output,
+                                "error": result.error,
+                                "requires_confirmation": requires_confirmation,
+                                "is_blocked": is_blocked,
+                                "confirmation_id": result.metadata.get("confirmation_id", ""),
+                                "command": result.metadata.get("command", ""),
+                            },
                         }
+                        
+                        # If command requires confirmation or is blocked, stop the loop
+                        # User must confirm before the command can be executed
+                        if requires_confirmation:
+                            logger.info(
+                                "ReAct loop paused - awaiting user confirmation",
+                                extra={
+                                    "tool_call_id": tool_call.id,
+                                    "confirmation_id": result.metadata.get("confirmation_id"),
+                                }
+                            )
+                            # Emit a waiting event to tell frontend to wait for user
+                            yield {
+                                "type": "awaiting_confirmation",
+                                "tool_call_id": tool_call.id,
+                                "confirmation_id": result.metadata.get("confirmation_id"),
+                                "command": result.metadata.get("command"),
+                            }
+                            # Don't continue the loop - wait for user action
+                            return
                         
                         # Add tool result to messages
                         working_messages.append({
@@ -232,6 +294,36 @@ class ReActLoop:
                 
                 # No tool calls - we have the final answer
                 final_content = response.content if hasattr(response, 'content') else str(response)
+                
+                # ===== SCHEME 1: Check if tool calls were required but not made =====
+                # Detect if user message requires tool calls but LLM didn't call any
+                if self._requires_tool_call_but_none_made(messages):
+                    logger.warning(
+                        "LLM responded without tool calls when tools were required",
+                        extra={
+                            "iteration": iteration + 1,
+                            "response_preview": final_content[:200],
+                        }
+                    )
+                    
+                    # If this is within the first 2 iterations and no tools were called at all,
+                    # give LLM another chance with explicit reminder
+                    # Changed from (iteration == 0) to (iteration < 2) to allow more attempts
+                    if iteration < 2 and tool_calls_count == 0:
+                        # Add a system reminder to use tools
+                        working_messages.append({
+                            "role": "system",
+                            "content": "⚠️ 注意：你需要调用实际的工具来完成这个任务，而不是只用文字回复。\n\n"
+                                      "当用户要求创建/生成/制作任何具体产物（如 PPT、文件、代码等）时：\n"
+                                      "1. 必须立即调用相应的工具（read_file, write_file, run_in_terminal）\n"
+                                      "2. 绝不能用文字声称'已经完成'而不实际调用工具\n"
+                                      "3. 只有在工具真正执行成功后才能告知用户完成\n\n"
+                                      "请重新思考并调用适当的工具来完成任务。"
+                        })
+                        # Continue to next iteration to let LLM try again
+                        continue
+                
+                completed_early = True
                 
                 logger.info(
                     "ReAct loop completed",
@@ -267,7 +359,19 @@ class ReActLoop:
                 continue
         
         # Max iterations reached
-        logger.warning("ReAct loop reached max iterations")
+        utilization_rate = (actual_iterations / self.max_iterations * 100) if self.max_iterations > 0 else 0
+        
+        logger.warning(
+            "ReAct loop reached max iterations",
+            extra={
+                "actual_iterations": actual_iterations,
+                "max_iterations": self.max_iterations,
+                "utilization_rate": f"{utilization_rate:.1f}%",
+                "total_tool_calls": tool_calls_count,
+                "completed_early": completed_early,
+                "session_id": session_id,
+            }
+        )
         
         yield {
             "type": REACT_EVENT_ERROR,
@@ -355,6 +459,67 @@ class ReActLoop:
         )
         
         return tool_calls
+    
+    def _requires_tool_call_but_none_made(self, messages: list[dict]) -> bool:
+        """Check if user message requires tool calls but LLM didn't make any.
+        
+        Detects common patterns that typically require tool execution:
+        - File creation/modification requests
+        - Code execution requests
+        - Terminal command needs
+        - Web search requests
+        
+        Args:
+            messages: Conversation messages
+            
+        Returns:
+            True if tool calls were likely required but not made
+        """
+        # Get last user message
+        last_user_message = None
+        for msg in reversed(messages):
+            if msg.get('role') == 'user':
+                last_user_message = msg.get('content', '')
+                break
+        
+        if not last_user_message:
+            return False
+        
+        # Keywords that typically require tool calls
+        tool_required_patterns = [
+            # File operations
+            r'创建.*文件|create.*file|write.*file|save.*file',
+            r'删除.*文件|delete.*file|remove.*file',
+            r'移动.*文件|move.*file|rename.*file',
+            r'读取.*文件|read.*file|open.*file',
+            
+            # PPT/Document creation
+            r'创建.*PPT|create.*PPT|make.*presentation|generate.*PPT',
+            r'创建.*文档 | create.*document|make.*doc',
+            r'生成.*PPT|generate.*presentation',
+            r'制作.*幻灯片|make.*slides',
+            r'写.*脚本 | write.*script|create.*script',
+            
+            # Code execution
+            r'运行.*代码|run.*code|execute.*script',
+            r'执行.*命令|execute.*command|run.*command',
+            
+            # Terminal operations
+            r'安装.*库 | install.*package|pip install',
+            r'创建目录 | create.*directory|mkdir',
+            
+            # Web search
+            r'搜索.*信息|search.*information|look up',
+        ]
+        
+        import re
+        message_lower = last_user_message.lower()
+        
+        for pattern in tool_required_patterns:
+            if re.search(pattern, message_lower, re.IGNORECASE):
+                return True
+        
+        return False
     
     def _parse_xml_tool_calls(self, content: str) -> list[ToolCallRequest]:
         """Parse XML format tool calls from response content.

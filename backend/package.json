@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "html2pptx": "^0.0.5",
+    "pptx": "^0.0.0",
+    "pptxgenjs": "^4.0.1"
+  }
+}

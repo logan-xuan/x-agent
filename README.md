@@ -85,6 +85,7 @@ Common required packages:
 - Configuration: http://localhost:8000/api/v1/config/status
 - Memory: http://localhost:8000/api/v1/memory
 - Developer Mode: http://localhost:8000/api/v1/dev/prompt-logs
+- Compression Records: http://localhost:8000/api/v1/dev/compression-records (NEW)
 
 ### Frontend Proxy
 
@@ -153,10 +154,18 @@ server:
 - Natural language memory search
 - Context-aware responses
 
+### Context Compression
+- Automatic context compression when token limits are exceeded
+- Preserves important conversation history
+- Configurable compression thresholds (rounds and tokens)
+- Compression history tracking and analysis (NEW)
+
 ### Developer Mode
 - View LLM interaction logs
 - Test prompts directly with primary LLM
 - Monitor token usage and latency
+- Query compression history records (NEW: Replaces compression test functionality)
+- Search and debug memory system
 
 ### Trace Viewer
 - Visual request flow tracing with React Flow

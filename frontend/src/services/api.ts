@@ -1,15 +1,15 @@
 /** REST API client for X-Agent */
 
-import type { 
-  ApiResponse, 
-  ChatRequest, 
-  ChatResponse, 
-  HealthResponse, 
-  Message, 
-  Session, 
-  PromptLogsResponse, 
-  PromptTestRequest, 
-  PromptTestResponse, 
+import type {
+  ApiResponse,
+  ChatRequest,
+  ChatResponse,
+  HealthResponse,
+  Message,
+  Session,
+  PromptLogsResponse,
+  PromptTestRequest,
+  PromptTestResponse,
   PromptTestStreamChunk,
   TraceFlowResponse,
   TraceRawDataResponse,
@@ -17,6 +17,8 @@ import type {
   TraceAnalysisResponse,
   TraceDetailLevel,
   SearchResponse,
+  CompressionRecordQueryResponse,
+  CompressionRecord,
 } from '@/types';
 
 const API_BASE_URL = '/api/v1';
@@ -243,6 +245,56 @@ export async function analyzeTrace(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to analyze trace');
+  }
+
+  return response.json();
+}
+
+export interface CompressionRecord {
+  id: string;
+  sessionId: string;
+  originalMessageCount: number;
+  compressedMessageCount: number;
+  originalTokenCount: number;
+  compressedTokenCount: number;
+  compressionRatio: number;
+  compressionTime: string;
+  originalMessages: Array<{
+    role: string;
+    content: string;
+    timestamp?: string;
+  }>;
+  compressedMessages: Array<{
+    role: string;
+    content: string;
+    timestamp?: string;
+  }>;
+}
+
+export interface CompressionRecordQueryResponse {
+  records: CompressionRecord[];
+  total: number;
+}
+
+/** Query compression records */
+export async function queryCompressionRecords(
+  params: { limit?: number; offset?: number } = {}
+): Promise<CompressionRecordQueryResponse> {
+  const { limit = 20, offset = 0 } = params;
+  const searchParams = new URLSearchParams({
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+
+  const response = await fetch(`${API_BASE_URL}/dev/compression-records?${searchParams}`, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to query compression records');
   }
 
   return response.json();

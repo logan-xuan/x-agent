@@ -5,9 +5,10 @@ import { PromptLogList } from './PromptLogList';
 import { PromptTester } from './PromptTester';
 import { TraceViewer } from '../trace';
 import { MemorySearchDebugger } from './MemorySearchDebugger';
+import { CompressionRecordQuery } from './CompressionRecordQuery';
 import { Button } from '../ui/Button';
 
-type TabType = 'logs' | 'tester' | 'trace' | 'search';
+type TabType = 'logs' | 'tester' | 'trace' | 'search' | 'compression_records';
 
 interface DevModeWindowProps {
   isOpen: boolean;
@@ -208,7 +209,17 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
                 }`}
               >
-                搜索调试
+                记忆搜索
+              </button>
+              <button
+                onClick={() => handleTabChange('compression_records')}
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                  activeTab === 'compression_records'
+                    ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                压缩记录
               </button>
             </div>
 
@@ -254,8 +265,10 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
             <PromptTester onError={setError} />
           ) : activeTab === 'trace' ? (
             <TraceViewer initialTraceId={traceId} />
-          ) : (
+          ) : activeTab === 'search' ? (
             <MemorySearchDebugger onError={setError} />
+          ) : (
+            <CompressionRecordQuery onError={setError} />
           )}
         </div>
 

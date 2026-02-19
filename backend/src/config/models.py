@@ -60,6 +60,10 @@ class WorkspaceConfig(BaseModel):
     """Workspace configuration."""
     
     path: str = Field(default="workspace", description="Path to workspace directory")
+    skills_dir: str = Field(
+        default="skills",
+        description="User skills directory (relative to workspace path)"
+    )
 
 
 class SearchConfig(BaseModel):
@@ -100,6 +104,106 @@ class SearchConfig(BaseModel):
         if abs(total - 1.0) > 0.01:
             raise ValueError(f"vector_weight + text_weight must equal 1.0, got {total}")
         return self
+
+
+class CompressionConfig(BaseModel):
+    """Context compression configuration.
+    
+    Controls when and how conversation context is compressed to manage token usage.
+    """
+    
+    threshold_rounds: int = Field(
+        default=100,
+        ge=10,
+        le=1000,
+        description="Trigger compression when message count exceeds this threshold"
+    )
+    threshold_tokens: int = Field(
+        default=4000,
+        ge=1000,
+        le=32000,
+        description="Trigger compression when token count exceeds this threshold"
+    )
+    retention_count: int = Field(
+        default=50,
+        ge=5,
+        le=200,
+        description="Number of most recent messages to retain after compression"
+    )
+
+
+class PlanConfig(BaseModel):
+    """Plan mode configuration.
+    
+    Controls the behavior of task planning and replanning for complex tasks.
+    """
+    
+    consecutive_failures: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description="Trigger replanning after this many consecutive failures"
+    )
+    stuck_iterations: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Trigger replanning if stuck on same step for this many iterations without progress"
+    )
+    max_replan_count: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="Maximum number of replanning attempts before giving up (prevents infinite loops)"
+    )
+
+
+class SkillMetadata(BaseModel):
+    """Single skill metadata entry."""
+    
+    name: str = Field(..., description="Skill name (directory name)")
+    description: str = Field(..., description="Skill description")
+    keywords: list[str] = Field(default_factory=list, description="Keywords for skill matching")
+    auto_trigger: bool = Field(default=True, description="Whether to auto-trigger this skill")
+    priority: int = Field(default=999, ge=1, le=999, description="Priority (lower number = higher priority)")
+
+
+class SkillsConfig(BaseModel):
+    """Skills metadata configuration.
+    
+    Controls skill discovery and recommendation in task analysis phase.
+    """
+    
+    registered: list[SkillMetadata] = Field(
+        default_factory=list,
+        description="List of registered skills with metadata"
+    )
+    
+    def get_skill_by_name(self, name: str) -> SkillMetadata | None:
+        """Get skill metadata by name."""
+        for skill in self.registered:
+            if skill.name == name:
+                return skill
+        return None
+    
+    def get_auto_trigger_skills(self) -> list[SkillMetadata]:
+        """Get skills that can be auto-triggered."""
+        return [s for s in self.registered if s.auto_trigger]
+    
+    def match_skills_by_keywords(self, query: str) -> list[SkillMetadata]:
+        """Match skills based on query keywords."""
+        matched = []
+        query_lower = query.lower()
+        
+        for skill in self.registered:
+            # Check if any keyword matches
+            for keyword in skill.keywords:
+                if keyword.lower() in query_lower:
+                    matched.append(skill)
+                    break
+        
+        # Sort by priority
+        return sorted(matched, key=lambda s: s.priority)
 
 
 class ToolsConfig(BaseModel):
@@ -180,6 +284,9 @@ class Config(BaseModel):
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig, description="Workspace config")
     search: SearchConfig = Field(default_factory=SearchConfig, description="Hybrid search config")
     tools: ToolsConfig = Field(default_factory=ToolsConfig, description="Tools config")
+    compression: CompressionConfig = Field(default_factory=CompressionConfig, description="Context compression config")
+    plan: PlanConfig = Field(default_factory=PlanConfig, description="Plan mode config")
+    skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills metadata config")
     
     @field_validator("models")
     @classmethod
