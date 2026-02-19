@@ -50,26 +50,44 @@ export function MessageInput({
   const checkForSkillTrigger = () => {
     const cursorPosition = textareaRef.current?.selectionStart || 0;
     const textBeforeCursor = message.substring(0, cursorPosition);
-    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
     
-    // Show menu if / is the last character or followed by space/letters
+    // Check if the last non-space character is /
+    const trimmed = textBeforeCursor.trimEnd();
+    if (trimmed.endsWith('/')) {
+      // Show menu when / is typed
+      const textarea = textareaRef.current;
+      if (textarea) {
+        const rect = textarea.getBoundingClientRect();
+        setMenuPosition({
+          x: rect.left,
+          y: rect.top - 300, // Show above input
+        });
+        setShowSkillMenu(true);
+      }
+      return;
+    }
+    
+    // Check if typing a skill name after /
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
     if (lastSlashIndex !== -1) {
       const afterSlash = textBeforeCursor.substring(lastSlashIndex + 1);
-      if (afterSlash === '' || /^[a-zA-Z0-9_-]*$/.test(afterSlash)) {
-        // Calculate position
+      // Show menu if typing skill name (letters, numbers, underscore, hyphen)
+      if (/^[a-zA-Z0-9_-]+$/.test(afterSlash)) {
         const textarea = textareaRef.current;
         if (textarea) {
           const rect = textarea.getBoundingClientRect();
           setMenuPosition({
             x: rect.left,
-            y: rect.top - 300, // Show above input
+            y: rect.top - 300,
           });
           setShowSkillMenu(true);
         }
+        return;
       }
-    } else {
-      setShowSkillMenu(false);
     }
+    
+    // Hide menu if no / or invalid pattern
+    setShowSkillMenu(false);
   };
 
   const handleSend = () => {
