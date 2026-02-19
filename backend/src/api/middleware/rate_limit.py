@@ -19,9 +19,9 @@ logger = get_logger(__name__)
 @dataclass
 class RateLimitConfig:
     """Rate limit configuration."""
-    requests_per_minute: int = 60
-    requests_per_hour: int = 1000
-    burst_size: int = 10  # Max requests in burst
+    requests_per_minute: int = 300  # Increased for development (was 60)
+    requests_per_hour: int = 5000   # Increased for development (was 1000)
+    burst_size: int = 50            # Increased for development (was 10)
     burst_window_seconds: float = 1.0
 
 
