@@ -75,26 +75,25 @@ workspace:
 
 #### File Organization Patterns
 
-1. **Project-based folders** (RECOMMENDED): Create subdirectories for different projects
+**MANDATORY**: All generated presentation files (.pptx) MUST be saved to the `presentations/` subdirectory within the workspace.
+
+1. **Default location** (REQUIRED):
    ```javascript
-   // Example: Save in project-specific folder within workspace
-   const outputPath = 'project-alpha/presentation.pptx';
+   // Example: Save in presentations/ folder within workspace
+   const outputPath = 'presentations/chinese_new_year_food.pptx';
    await pptx.writeFile(outputPath);
    ```
 
-2. **Categorized folders**: Organize by presentation type
+2. **Project-based subfolders** (RECOMMENDED for multiple related presentations):
    ```javascript
-   // Examples (all relative to workspace):
-   'sales/q4-review.pptx'
-   'training/onboarding.pptx'
-   'client-proposals/acme-corp.pptx'
+   // Example: Create subdirectory for a project
+   const outputPath = 'presentations/project-alpha/q4-review.pptx';
+   await pptx.writeFile(outputPath);
    ```
 
-3. **Date-based organization**: For chronological filing
-   ```javascript
-   // Example:
-   '2026-02/presentation.pptx'
-   ```
+3. **User-specified paths** (only if explicitly requested):
+   - If user says "Save to /my/custom/path.pptx", use that path
+   - Otherwise, always default to `presentations/`
 
 #### Best Practices
 
