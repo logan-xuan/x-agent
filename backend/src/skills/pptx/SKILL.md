@@ -73,31 +73,43 @@ await pptx.writeFile({ fileName: 'presentations/my-presentation.pptx' });
 
 **For simple presentations without complex layouts**, you can use PptxGenJS directly:
 
+**TEMPLATE - COPY AND USE THIS:**
 ```javascript
 const PptxGenJS = require('pptxgenjs');
 const path = require('path');
 
-// Create presentation
+// Create presentation instance
 const pptx = new PptxGenJS();
 pptx.layout = 'LAYOUT_16x9';
 
-// Add title slide
+// Slide 1: Title
 let slide1 = pptx.addSlide();
-slide1.addText('Presentation Title', { x: 0.5, y: 1.5, w: 9, h: 1, fontSize: 36, bold: true, color: '1C2833' });
-slide1.addText('Subtitle', { x: 0.5, y: 2.5, w: 9, h: 0.5, fontSize: 18, color: '666666' });
+slide1.addText('2026 创业方向分析', { 
+  x: 0.5, y: 1.5, w: 9, h: 1, 
+  fontSize: 36, bold: true, 
+  color: '1C2833' 
+});
+slide1.addText('抓住未来商业机遇', { 
+  x: 0.5, y: 2.5, w: 9, h: 0.5, 
+  fontSize: 18, 
+  color: '666666' 
+});
 
-// Add content slide
+// Slide 2: Content
 let slide2 = pptx.addSlide();
-slide2.addText('Slide Title', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 28, bold: true });
+slide2.addText('市场环境分析', { 
+  x: 0.5, y: 0.3, w: 9, h: 0.6, 
+  fontSize: 28, bold: true 
+});
 slide2.addText([
-  { text: '• First point\n', options: { bullet: true } },
-  { text: '• Second point\n', options: { bullet: true } },
+  { text: '• 经济复苏与增长趋势\\n', options: { bullet: true } },
+  { text: '• 消费者行为变化\\n', options: { bullet: true } },
 ], { x: 0.5, y: 1.2, w: 9, h: 4, fontSize: 16 });
 
-// Save to workspace/presentations/
-const outputPath = path.join(__dirname, 'presentations', 'my-presentation.pptx');
+// IMPORTANT: Use writeFile() to generate ACTUAL .pptx file
+const outputPath = path.join(__dirname, '..', 'presentations', '2026-entrepreneurship-direction.pptx');
 pptx.writeFile({ fileName: outputPath })
-  .then(() => console.log(`✅ Saved: ${outputPath}`))
+  .then(() => console.log(`✅ PPT saved: ${outputPath}`))
   .catch(err => console.error('Error:', err));
 ```
 
