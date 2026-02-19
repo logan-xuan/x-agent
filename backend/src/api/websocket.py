@@ -30,6 +30,40 @@ logger = get_logger(__name__)
 _agent: Agent | None = None
 
 
+async def send_system_message(
+    websocket: WebSocket,
+    session_id: str,
+    trace_id: str,
+    log_type: str,
+    log_data: dict,
+) -> None:
+    """Send a system log message to the client.
+    
+    System messages are used for CLI commands, tool executions, errors, etc.
+    They are displayed separately from user and assistant messages.
+    
+    Args:
+        websocket: WebSocket connection
+        session_id: Session ID
+        trace_id: Trace ID for distributed tracing
+        log_type: Type of log (cli_command, tool_execution, error, info)
+        log_data: Log data including command, output, error, duration, etc.
+    """
+    try:
+        await websocket.send_json({
+            "type": "system",
+            "session_id": session_id,
+            "trace_id": trace_id,
+            "log_type": log_type,
+            "log_data": log_data,
+        })
+    except Exception as e:
+        logger.error(
+            f"Failed to send system message: {e}",
+            extra={"trace_id": trace_id, "session_id": session_id}
+        )
+
+
 def get_agent() -> Agent:
     """Get or create agent instance."""
     global _agent
@@ -369,6 +403,23 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                     "arguments": chunk.get("arguments"),
                                 }
                             )
+                            
+                            # Send system message for CLI command execution
+                            tool_name = chunk.get("name")
+                            tool_args = chunk.get("arguments", {})
+                            if tool_name == "run_in_terminal":
+                                command = tool_args.get("command", "")
+                                await send_system_message(
+                                    websocket=websocket,
+                                    session_id=session_id,
+                                    trace_id=message_context.trace_id,
+                                    log_type="cli_command",
+                                    log_data={
+                                        "command": command,
+                                        "status": "executing",
+                                        "tool_call_id": chunk.get("tool_call_id"),
+                                    }
+                                )
                         
                         elif chunk_type == "tool_result":
                             # Tool result - log and forward
@@ -381,6 +432,26 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                     "success": chunk.get("success"),
                                     "has_result": "result" in chunk,
                                     "result_requires_confirmation": chunk.get("result", {}).get("requires_confirmation") if chunk.get("result") else None,
+                                }
+                            )
+                            
+                            # Send system message for tool execution result
+                            tool_call_id = chunk.get("tool_call_id")
+                            success = chunk.get("success")
+                            output = chunk.get("output", "")
+                            error = chunk.get("error")
+                            
+                            await send_system_message(
+                                websocket=websocket,
+                                session_id=session_id,
+                                trace_id=message_context.trace_id,
+                                log_type="tool_execution",
+                                log_data={
+                                    "tool_call_id": tool_call_id,
+                                    "success": success,
+                                    "output": output[:1000] if output else None,
+                                    "error": error,
+                                    "duration_ms": None,  # TODO: Add timing info
                                 }
                             )
                         

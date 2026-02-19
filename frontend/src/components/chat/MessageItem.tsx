@@ -59,7 +59,25 @@ function UserIcon() {
 
 export function MessageItem({ message, isStreaming = false, onToolConfirm }: MessageItemProps) {
   const isUser = message.role === 'user';
+  const isSystem = message.role === 'system';
   const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
+
+  // System message styling
+  if (isSystem) {
+    return (
+      <div className="flex w-full mb-2">
+        <details className="w-full text-xs">
+          <summary className="cursor-pointer text-yellow-700 dark:text-yellow-400 font-mono select-none flex items-center gap-2">
+            <span>🔧 System Log: {message.metadata?.log_type || 'info'}</span>
+            <span className="text-gray-500 dark:text-gray-600">▼</span>
+          </summary>
+          <pre className="mt-2 p-3 bg-black/10 dark:bg-white/5 rounded border-l-4 border-yellow-500 overflow-auto text-xs font-mono whitespace-pre-wrap break-all">
+            {message.content}
+          </pre>
+        </details>
+      </div>
+    );
+  }
 
   return (
     <div

@@ -33,6 +33,15 @@ export interface Message {
   metadata?: {
     model?: string;
     tokens?: number;
+    // System message fields
+    log_type?: 'cli_command' | 'tool_execution' | 'error' | 'info';
+    command?: string;
+    output?: string;
+    error?: string;
+    duration_ms?: number;
+    success?: boolean;
+    status?: string;
+    tool_call_id?: string;
   };
   tool_calls?: ToolCall[];
 }
@@ -54,6 +63,7 @@ export type WebSocketMessageType =
   | 'assistant_end'
   | 'tool_call'
   | 'tool_result'
+  | 'system'
   | 'error';
 
 /** WebSocket message interface */
@@ -82,6 +92,17 @@ export interface WebSocketMessage {
     is_blocked?: boolean;
     confirmation_id?: string;
     command?: string;
+  };
+  // System message fields
+  log_type?: 'cli_command' | 'tool_execution' | 'error' | 'info';
+  log_data?: {
+    command?: string;
+    output?: string;
+    error?: string;
+    duration_ms?: number;
+    success?: boolean;
+    status?: string;
+    tool_call_id?: string;
   };
   trace_id?: string;
 }
