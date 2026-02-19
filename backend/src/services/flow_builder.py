@@ -82,7 +82,7 @@ class FlowEdge:
 class FlowBuilder:
     """Builds React Flow graphs from trace data."""
     
-    # Node type mapping based on module paths
+    # Node type mapping based on module paths and operation types
     NODE_TYPE_MAP = {
         'api': 'api',
         'middleware': 'middleware',
@@ -96,6 +96,12 @@ class FlowBuilder:
         'service': 'service',
         'plugin': 'plugin',
         'tool': 'tool',
+        'skill': 'skill',
+        'command': 'command',
+        'react': 'react_loop',
+        'reasoning': 'react_loop',
+        'plan': 'plan_mode',
+        'planner': 'plan_mode',
     }
     
     # Layout configuration
@@ -254,33 +260,44 @@ class FlowBuilder:
                 continue
             
             seen_keys.add(node_key)
-            
-            # Determine node type
-            node_type = self._get_node_type(module, source)
-            
-            # Create label
-            if detail_level == "high":
-                label = self._get_module_display_name(module)
+
+            # Get operation type from enriched data
+            event_data = event.get('data', {})
+            operation_type = event_data.get('operation_type')
+
+            # Determine node type using enhanced method
+            node_type = self._get_node_type(module, source, operation_type)
+
+            # Create label - if it's a specialized operation, use the operation type as the label
+            if operation_type:
+                if detail_level == "high":
+                    label = self._get_operation_display_name(operation_type)
+                else:
+                    label = self._get_detailed_operation_label(operation_type, event_data, event_name)
             else:
-                label = self._truncate_label(event_name, 50)
-            
+                if detail_level == "high":
+                    label = self._get_module_display_name(module)
+                else:
+                    label = self._truncate_label(event_name, 50)
+
             # Prepare node data
             node_data = {
                 'module': module,
                 'timestamp': event.get('timestamp'),
                 'level': event.get('level'),
                 'source': source,
+                'operation_type': operation_type,  # Add operation type for frontend identification
             }
-            
+
             # Add extra data based on detail level
             if detail_level != "high":
-                node_data.update(event.get('data', {}))
+                node_data.update(event_data)
                 if source == 'prompt-llm':
                     # Include LLM specific data
-                    node_data['provider'] = event.get('data', {}).get('provider')
-                    node_data['model'] = event.get('data', {}).get('model')
-                    node_data['latency_ms'] = event.get('data', {}).get('latency_ms')
-            
+                    node_data['provider'] = event_data.get('provider')
+                    node_data['model'] = event_data.get('model')
+                    node_data['latency_ms'] = event_data.get('latency_ms')
+
             node_id = f"node-{len(nodes)}"
             node = FlowNode(
                 node_id=node_id,
@@ -398,16 +415,34 @@ class FlowBuilder:
             'node_types': list(set(node.type for node in nodes)),
         }
     
-    def _get_node_type(self, module: str, source: str) -> str:
-        """Determine node type from module path and source."""
+    def _get_node_type(self, module: str, source: str, operation_type: str = None) -> str:
+        """Determine node type from module path, source, and operation type."""
+        # Prioritize operation type from enriched log data
+        if operation_type:
+            operation_type_lower = operation_type.lower()
+            if operation_type_lower in ['tool_call']:
+                return 'tool'
+            elif operation_type_lower in ['skill_call']:
+                return 'skill'
+            elif operation_type_lower in ['command']:
+                return 'command'
+            elif operation_type_lower in ['memory_store']:
+                return 'memory_store'
+            elif operation_type_lower in ['memory_query']:
+                return 'memory_query'
+            elif operation_type_lower in ['react_loop']:
+                return 'react_loop'
+            elif operation_type_lower in ['plan_mode']:
+                return 'plan_mode'
+
         if source == 'prompt-llm':
             return 'llm'
-        
+
         module_lower = module.lower()
         for keyword, node_type in self.NODE_TYPE_MAP.items():
             if keyword in module_lower:
                 return node_type
-        
+
         return 'default'
     
     def _get_module_display_name(self, module: str) -> str:

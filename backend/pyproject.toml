@@ -45,7 +45,7 @@ dependencies = [
     "tiktoken>=0.6.0",
     
     # Memory System (ONNX-only, PyTorch-free)
-    # "onnxruntime>=1.16.0",  # Temporarily disabled for macOS x86_64 compatibility
+    "onnxruntime>=1.16.0",  # Re-enabled - now supports macOS x86_64 with Python 3.13
     "transformers>=4.30.0",  # For tokenizer only (no PyTorch)
     "numpy>=1.24.0",
     "python-frontmatter>=1.0.0",

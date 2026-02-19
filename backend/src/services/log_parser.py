@@ -237,8 +237,13 @@ class LogParser:
                     'token_usage': entry.token_usage,
                     'request_preview': self._preview_messages(entry.request.get('messages', [])),
                     'response_preview': entry.response[:200] if entry.response else None,
+                    'full_request': entry.request,  # Include full request data
+                    'full_response': entry.response,  # Include full response data
                 },
             })
+
+        # Enhance timeline with special operation detection and enriched metadata
+        timeline = self._enrich_timeline_data(timeline)
         
         # Sort timeline by timestamp
         timeline.sort(key=lambda e: e['timestamp'] or '')
@@ -324,8 +329,121 @@ class LogParser:
                 # Use module name
                 path.append(module)
                 seen.add(module)
-        
+
         return path
+
+    def _enrich_timeline_data(self, timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Enrich timeline data with special operation detection and detailed metadata.
+
+        Detects and enhances special operations like tool calls, skill calls, commands,
+        memory operations, ReAct loops, and Plan modes with detailed metadata.
+
+        Args:
+            timeline: Sorted timeline of events
+
+        Returns:
+            Enriched timeline with additional metadata for special operations
+        """
+        enriched_timeline = []
+
+        for event in timeline:
+            module = event.get('module', '').lower()
+            event_name = event.get('event', '').lower()
+            data = event.get('data', {})
+
+            # Enhance LLM event with full request/response
+            if event.get('source') == 'prompt-llm':
+                # Already enriched in build_timeline method
+                enriched_timeline.append(event)
+                continue
+
+            # Detect and enrich different types of operations
+            enhanced_event = event.copy()
+            enhanced_data = data.copy()
+
+            # Detect tool calls
+            if ('tool' in module and 'call' in event_name) or \
+               any(key in data for key in ['tool_name', 'tool_call', 'tool_args']) or \
+               'run_tool' in event_name or 'execute_tool' in event_name:
+
+                enhanced_data['operation_type'] = 'tool_call'
+                enhanced_data['tool_name'] = data.get('tool_name') or data.get('name') or 'unknown'
+                enhanced_data['tool_args'] = data.get('arguments') or data.get('tool_args')
+                enhanced_data['result'] = data.get('result')
+
+                # Add timing information if available
+                if data.get('duration_ms'):
+                    enhanced_data['duration_ms'] = data.get('duration_ms')
+                if data.get('start_time'):
+                    enhanced_data['start_time'] = data.get('start_time')
+                if data.get('end_time'):
+                    enhanced_data['end_time'] = data.get('end_time')
+
+            # Detect skill calls
+            elif ('skill' in module and 'call' in event_name) or \
+                 'skill_call' in event_name or 'execute_skill' in event_name or \
+                 data.get('skill_name'):
+
+                enhanced_data['operation_type'] = 'skill_call'
+                enhanced_data['skill_name'] = data.get('skill_name') or data.get('name') or 'unknown'
+                enhanced_data['skill_args'] = data.get('arguments') or data.get('args')
+                enhanced_data['result'] = data.get('result')
+
+            # Detect command execution
+            elif ('command' in event_name) or ('terminal' in module) or \
+                 any(key in data for key in ['command', 'cmd', 'shell_command']) or \
+                 'execute' in event_name:
+
+                enhanced_data['operation_type'] = 'command'
+                enhanced_data['command'] = data.get('command') or data.get('cmd') or data.get('shell_command')
+                enhanced_data['command_output'] = data.get('output')
+                enhanced_data['command_error'] = data.get('error')
+                enhanced_data['success'] = data.get('success', True)
+
+            # Detect memory operations
+            elif ('memory' in module and any(op in event_name for op in ['store', 'save', 'create', 'update'])) or \
+                 any(key in data for key in ['memory_store', 'memory_save', 'memory_create']) or \
+                 ('memory' in module and 'write' in event_name):
+
+                enhanced_data['operation_type'] = 'memory_store'
+                enhanced_data['memory_type'] = data.get('memory_type') or 'memory_entry'
+                enhanced_data['memory_content'] = data.get('content') or data.get('data')
+                enhanced_data['memory_id'] = data.get('id')
+
+            elif ('memory' in module and 'query' in event_name) or \
+                 ('memory' in module and 'search' in event_name) or \
+                 any(key in data for key in ['memory_query', 'memory_search', 'memory_get']) or \
+                 ('vector_store' in module):
+
+                enhanced_data['operation_type'] = 'memory_query'
+                enhanced_data['query'] = data.get('query') or data.get('search_term')
+                enhanced_data['results_count'] = data.get('results_count') or data.get('count')
+                enhanced_data['query_results'] = data.get('results')
+
+            # Detect ReAct loop operations
+            elif any(keyword in event_name for keyword in ['react', 'think', 'observe', 'act', 'reason']) or \
+                 any(keyword in module for keyword in ['react', 'reasoning']):
+
+                enhanced_data['operation_type'] = 'react_loop'
+                enhanced_data['step_type'] = data.get('step_type') or 'think'  # think, observe, act
+                enhanced_data['thought'] = data.get('thought') or data.get('reasoning')
+                enhanced_data['action'] = data.get('action')
+                enhanced_data['observation'] = data.get('observation')
+
+            # Detect Plan Mode operations
+            elif any(keyword in event_name for keyword in ['plan', 'planning', 'generate_plan', 'execute_plan']) or \
+                 any(keyword in module for keyword in ['plan', 'planner']):
+
+                enhanced_data['operation_type'] = 'plan_mode'
+                enhanced_data['plan_step'] = data.get('step')
+                enhanced_data['plan_action'] = data.get('action') or data.get('activity')
+                enhanced_data['plan_status'] = data.get('status')
+
+            # Update event with enhanced data
+            enhanced_event['data'] = enhanced_data
+            enriched_timeline.append(enhanced_event)
+
+        return enriched_timeline
 
 
 def get_log_parser(log_dir: str = "logs") -> LogParser:
