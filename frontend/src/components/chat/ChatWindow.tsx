@@ -1,6 +1,6 @@
 /** Main chat container component */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Message } from '../../types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
@@ -8,6 +8,8 @@ import { Spinner } from '../ui/Spinner';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { DevModeWindow } from '../dev/DevModeWindow';
+import { Skill } from '@/services/api';
+import { listSkills } from '@/services/api';
 
 interface ChatWindowProps {
   sessionId: string | null;
@@ -38,6 +40,27 @@ export function ChatWindow({
 }: ChatWindowProps) {
   // Developer mode state
   const [isDevModeOpen, setIsDevModeOpen] = useState(false);
+  
+  // Skills state
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [isLoadingSkills, setIsLoadingSkills] = useState(true);
+
+  // Load skills on mount
+  useEffect(() => {
+    async function loadSkills() {
+      try {
+        setIsLoadingSkills(true);
+        const loadedSkills = await listSkills();
+        setSkills(loadedSkills);
+      } catch (error) {
+        console.error('Failed to load skills:', error);
+      } finally {
+        setIsLoadingSkills(false);
+      }
+    }
+    
+    loadSkills();
+  }, []);
 
   // Connection status indicator
   const getStatusConfig = () => {
@@ -173,8 +196,9 @@ export function ChatWindow({
             placeholder={
               isConnecting ? '正在连接...' : 
               connectionStatus !== 'connected' ? '等待连接...' : 
-              '输入消息...'
+              isLoadingSkills ? '加载技能...' : '输入消息... (输入 / 显示技能菜单)'
             }
+            skills={skills}
           />
         </div>
       </div>

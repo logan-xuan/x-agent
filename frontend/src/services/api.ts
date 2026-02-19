@@ -344,3 +344,52 @@ export async function searchMemory(params: {
 
   return response.json();
 }
+
+/** Skills API */
+
+export interface Skill {
+  name: string;
+  description: string;
+  argument_hint?: string | null;
+  allowed_tools?: string[] | null;
+  user_invocable: boolean;
+  disable_model_invocation: boolean;
+  has_scripts: boolean;
+  has_references: boolean;
+  has_assets: boolean;
+  context?: string | null;
+  license?: string | null;
+  path: string;
+}
+
+/** List all available skills */
+export async function listSkills(): Promise<Skill[]> {
+  const response = await fetch(`${API_BASE_URL}/skills`, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch skills');
+  }
+
+  return response.json();
+}
+
+/** Get specific skill details */
+export async function getSkill(skillName: string): Promise<Skill> {
+  const response = await fetch(`${API_BASE_URL}/skills/${skillName}`, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || `Failed to fetch skill: ${skillName}`);
+  }
+
+  return response.json();
+}
