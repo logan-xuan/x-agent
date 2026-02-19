@@ -91,7 +91,7 @@ interface SettingsWindowProps {
   onClose?: () => void;
 }
 
-const API_BASE = 'http://localhost:8000/api/v1';
+const API_BASE = '/api/v1';
 
 // Format number with units (K, M, B)
 function formatNumber(num: number): string {
