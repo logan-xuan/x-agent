@@ -391,6 +391,9 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                     "content": chunk.get("content", "")[:100],
                                 }
                             )
+                            
+                            # Forward thinking event to frontend for UI feedback
+                            await websocket.send_json(chunk)
                         
                         elif chunk_type == "tool_call":
                             # Tool call - log and forward
