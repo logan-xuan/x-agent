@@ -33,6 +33,44 @@ export function SkillMenu({ skills, onSelect, onClose, anchorPosition, searchQue
              name.split(/[-_]/).some(part => part.startsWith(query)) ||
              // Match consecutive characters
              Array.from(name).filter(char => query.includes(char)).length >= query.length * 0.5;
+    })
+    .sort((a, b) => {
+      if (!searchQuery) return 0;
+      
+      const query = searchQuery.toLowerCase();
+      const nameA = a.name.toLowerCase();
+      const nameB = b.name.toLowerCase();
+      
+      // Scoring system for better relevance ranking
+      const scoreSkill = (name: string) => {
+        let score = 0;
+        
+        // Exact match gets highest priority
+        if (name === query) score += 1000;
+        
+        // Starts with query gets high priority
+        if (name.startsWith(query)) score += 500;
+        
+        // Contains query as substring
+        if (name.includes(query)) score += 100;
+        
+        // Word boundary match (e.g., "ppt" matches "pptx" at word start)
+        const words = name.split(/[-_]/);
+        if (words.some(word => word.startsWith(query))) score += 200;
+        
+        // Prefix match (query matches beginning of name)
+        if (name.startsWith(query)) score += 150;
+        
+        // Penalize longer names that aren't exact matches
+        if (name !== query && name.length > query.length) {
+          score -= (name.length - query.length) * 2;
+        }
+        
+        return score;
+      };
+      
+      // Sort by score (higher score = more relevant = appears first)
+      return scoreSkill(nameB) - scoreSkill(nameA);
     });
   
   // Reset selection when filter changes
