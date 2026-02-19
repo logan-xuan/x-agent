@@ -926,21 +926,29 @@ class Orchestrator:
             
             # ===== Add workspace path for file operations =====
             system_parts.append(
-                f"\n\n# 工作目录（极其重要）\n"
+                f"\n\n# 工作目录与文件分类存储（极其重要）\n"
                 f"**你的工作目录是：** `{self.workspace_path}`\n\n"
-                f"**文件操作规则：**\n"
-                f"1. **所有用户文件（脚本、PPT、文档等）必须保存在工作目录下**\n"
-                f"2. **使用 write_file 工具时，文件路径必须是绝对路径，且以工作目录为前缀**\n"
-                f"   - 例如：脚本应保存到 `{self.workspace_path}/scripts/xxx.py` 或 `{self.workspace_path}/scripts/xxx.js`\n"
-                f"   - 例如：PPT 应保存到 `{self.workspace_path}/presentations/xxx.pptx`\n"
-                f"3. **使用 run_in_terminal 执行脚本时，必须指定 working_dir 为工作目录**\n"
-                f"4. **绝不要把文件保存到 backend 目录或其他位置**\n\n"
+                f"**文件分类存储规则（必须遵守）：**\n"
+                f"| 文件类型 | 存储目录 | 示例路径 |\n"
+                f"|---------|---------|--------|\n"
+                f"| Python/JS 脚本 | `scripts/` | `{self.workspace_path}/scripts/demo.py` |\n"
+                f"| PPT 演示文稿 | `presentations/` | `{self.workspace_path}/presentations/demo.pptx` |\n"
+                f"| 文档（Word/PDF） | `documents/` | `{self.workspace_path}/documents/report.docx` |\n"
+                f"| Excel 表格 | `spreadsheets/` | `{self.workspace_path}/spreadsheets/data.xlsx` |\n"
+                f"| 图片资源 | `images/` | `{self.workspace_path}/images/logo.png` |\n"
+                f"| PDF 文件 | `pdfs/` | `{self.workspace_path}/pdfs/report.pdf` |\n\n"
+                f"**核心规则：**\n"
+                f"1. ❌ **禁止**将文件保存到工作目录根目录（如 `{self.workspace_path}/demo.py`）\n"
+                f"2. ✅ **必须**保存到对应的分类子目录（如 `{self.workspace_path}/scripts/demo.py`）\n"
+                f"3. 脚本中的输出文件路径也必须使用分类子目录\n"
+                f"4. **run_in_terminal 执行脚本时，working_dir 必须设为工作目录**\n\n"
                 f"**正确示例：**\n"
                 f"```json\n"
                 f'{{"file_path": "{self.workspace_path}/scripts/demo.py", "content": "..."}}\n'
                 f"```\n\n"
                 f"**错误示例（禁止）：**\n"
                 f"```json\n"
+                f'{{"file_path": "{self.workspace_path}/demo.py", "content": "..."}}  // 错误！未使用子目录\n'
                 f'{{"file_path": "/path/to/backend/demo.py", "content": "..."}}  // 错误！不是工作目录\n'
                 f"```"
             )
