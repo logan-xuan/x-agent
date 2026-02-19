@@ -39,6 +39,7 @@ from ..memory.embedder import get_embedder
 from ..services.compression import ContextCompressionManager
 from ..services.llm.router import LLMRouter
 from ..services.smart_memory import get_smart_memory_service
+from ..services.skill_registry import SkillRegistry, get_skill_registry
 from ..tools.manager import ToolManager, get_tool_manager
 from ..tools.builtin import get_builtin_tools
 from ..utils.logger import get_logger
