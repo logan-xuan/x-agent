@@ -48,6 +48,27 @@ You need raw XML access for: comments, speaker notes, slide layouts, animations,
 
 When creating a new PowerPoint presentation from scratch, use the **html2pptx** workflow to convert HTML slides to PowerPoint with accurate positioning.
 
+### ⚠️ CRITICAL: Avoid Common Mistakes
+
+**COMMON ERROR TO AVOID:**
+```javascript
+// ❌ WRONG: Creating a .txt file with text content
+fs.writeFileSync('presentation-outline.txt', 'Slide 1: Title...');
+console.log('Created presentation.txt');
+```
+
+**CORRECT APPROACH:**
+```javascript
+// ✅ RIGHT: Using PptxGenJS to create actual .pptx file
+const pptx = new PptxGenJS();
+pptx.addSlide().addText('Title', { fontSize: 36 });
+await pptx.writeFile({ fileName: 'presentations/my-presentation.pptx' });
+```
+
+**KEY DIFFERENCE:**
+- ❌ `.txt` file = Plain text outline (NOT a presentation)
+- ✅ `.pptx` file = Actual PowerPoint file that can be opened in PowerPoint/Keynote
+
 ### Quick Method: Direct PptxGenJS (Recommended for Simple Presentations)
 
 **For simple presentations without complex layouts**, you can use PptxGenJS directly:
