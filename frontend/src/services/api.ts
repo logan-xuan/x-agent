@@ -277,31 +277,6 @@ export async function getNodeDetails(traceId: string, nodeId: string): Promise<N
   return response.json();
 }
 
-export interface CompressionRecord {
-  id: string;
-  sessionId: string;
-  originalMessageCount: number;
-  compressedMessageCount: number;
-  originalTokenCount: number;
-  compressedTokenCount: number;
-  compressionRatio: number;
-  compressionTime: string;
-  originalMessages: Array<{
-    role: string;
-    content: string;
-    timestamp?: string;
-  }>;
-  compressedMessages: Array<{
-    role: string;
-    content: string;
-    timestamp?: string;
-  }>;
-}
-
-export interface CompressionRecordQueryResponse {
-  records: CompressionRecord[];
-  total: number;
-}
 
 /** Query compression records */
 export async function queryCompressionRecords(
