@@ -1,35 +1,76 @@
 /** User input component with send button */
 
 import { useState, useRef, useEffect } from 'react';
+import { Skill } from '@/services/api';
+import { SkillMenu } from './SkillMenu';
 
 interface MessageInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  skills?: Skill[];
 }
 
 export function MessageInput({
   onSend,
   disabled = false,
-  placeholder = '输入消息...'
+  placeholder = '输入消息...',
+  skills = []
 }: MessageInputProps) {
   const [message, setMessage] = useState('');
   const [isComposing, setIsComposing] = useState(false); // Track IME composition state
+  const [showSkillMenu, setShowSkillMenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | undefined>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-resize textarea
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-    }
-  }, [message]);
 
   // Focus textarea on mount
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
+
+  // Handle skill selection
+  const handleSkillSelect = (skillName: string) => {
+    const currentText = message;
+    const lastSlashIndex = currentText.lastIndexOf('/');
+    
+    let newMessage: string;
+    if (lastSlashIndex !== -1) {
+      // Replace the text after last /
+      newMessage = currentText.substring(0, lastSlashIndex + 1) + skillName + ' ';
+    } else {
+      newMessage = `/${skillName} `;
+    }
+    
+    setMessage(newMessage);
+    setShowSkillMenu(false);
+    textareaRef.current?.focus();
+  };
+
+  // Check for / trigger
+  const checkForSkillTrigger = () => {
+    const cursorPosition = textareaRef.current?.selectionStart || 0;
+    const textBeforeCursor = message.substring(0, cursorPosition);
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+    
+    // Show menu if / is the last character or followed by space/letters
+    if (lastSlashIndex !== -1) {
+      const afterSlash = textBeforeCursor.substring(lastSlashIndex + 1);
+      if (afterSlash === '' || /^[a-zA-Z0-9_-]*$/.test(afterSlash)) {
+        // Calculate position
+        const textarea = textareaRef.current;
+        if (textarea) {
+          const rect = textarea.getBoundingClientRect();
+          setMenuPosition({
+            x: rect.left,
+            y: rect.top - 300, // Show above input
+          });
+          setShowSkillMenu(true);
+        }
+      }
+    } else {
+      setShowSkillMenu(false);
+    }
+  };
 
   const handleSend = () => {
     const trimmedMessage = message.trim();
@@ -44,6 +85,12 @@ export function MessageInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Close menu on Escape
+    if (e.key === 'Escape' && showSkillMenu) {
+      setShowSkillMenu(false);
+      return;
+    }
+    
     // Send on Enter (without Shift) but only when not composing (IME input)
     if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       e.preventDefault();
@@ -52,7 +99,7 @@ export function MessageInput({
   };
 
   const canSend = message.trim().length > 0 && !disabled;
-
+  
   // Handle composition events for IME input (Chinese, Japanese, Korean, etc.)
   const handleCompositionStart = () => {
     setIsComposing(true);
@@ -70,7 +117,10 @@ export function MessageInput({
           <textarea
             ref={textareaRef}
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              checkForSkillTrigger();
+            }}
             onKeyDown={handleKeyDown}
             onCompositionStart={handleCompositionStart}
             onCompositionEnd={handleCompositionEnd}
@@ -84,6 +134,16 @@ export function MessageInput({
                        disabled:opacity-50 disabled:cursor-not-allowed
                        transition-colors"
           />
+          
+          {/* Skill menu */}
+          {showSkillMenu && skills.length > 0 && (
+            <SkillMenu
+              skills={skills}
+              onSelect={handleSkillSelect}
+              onClose={() => setShowSkillMenu(false)}
+              anchorPosition={menuPosition}
+            />
+          )}
           
           {/* Character count - hidden on mobile */}
           {message.length > 0 && (
