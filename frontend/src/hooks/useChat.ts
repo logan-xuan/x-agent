@@ -1,7 +1,7 @@
 /** Chat state management hook */
 
 import { useCallback, useState, useRef } from 'react';
-import { Message, Session, ToolCall } from '../types';
+import { Message, Session, ToolCall, WebSocketMessage } from '../types';
 import { useWebSocket, ConnectionStatus } from './useWebSocket';
 
 interface UseChatOptions {
@@ -23,6 +23,36 @@ interface UseChatReturn {
 }
 
 const API_BASE_URL = '/api/v1';
+
+/** Format system log content for display */
+function formatSystemLogContent(
+  logType: string | undefined,
+  logData: Record<string, unknown> | undefined
+): string {
+  if (!logType || !logData) {
+    return `[System] ${JSON.stringify(logData || {})}`;
+  }
+
+  switch (logType) {
+    case 'cli_command':
+      return `🔧 Executing: ${logData.command || 'Unknown command'} (${logData.status || 'running'})`;
+    
+    case 'tool_execution':
+      const status = logData.success ? '✅' : '❌';
+      const output = logData.output ? `\n${logData.output}` : '';
+      const error = logData.error ? `\nError: ${logData.error}` : '';
+      return `${status} Completed${output}${error}`;
+    
+    case 'error':
+      return `⚠️ System Error: ${logData.error || 'Unknown error'}`;
+    
+    case 'info':
+      return `ℹ️ ${logData.message || 'System info'}`;
+    
+    default:
+      return `[System:${logType}] ${JSON.stringify(logData)}`;
+  }
+}
 
 export function useChat({
   sessionId,
@@ -62,6 +92,17 @@ export function useChat({
         is_blocked?: boolean;
         confirmation_id?: string;
         command?: string;
+      };
+      // System message fields
+      log_type?: 'cli_command' | 'tool_execution' | 'error' | 'info';
+      log_data?: {
+        command?: string;
+        output?: string;
+        error?: string;
+        duration_ms?: number;
+        success?: boolean;
+        status?: string;
+        tool_call_id?: string;
       };
     };
 
@@ -226,6 +267,23 @@ export function useChat({
         // Stop loading state since we're waiting for user action
         setIsLoading(false);
         setStreamingContent('');
+        break;
+
+      case 'system':
+        // System log message (CLI commands, tool executions, errors, etc.)
+        const systemMessage: Message = {
+          id: `system-${Date.now()}-${Math.random()}`,
+          session_id: msg.session_id || currentSessionId || '',
+          role: 'system',
+          content: formatSystemLogContent(msg.log_type, msg.log_data),
+          created_at: new Date().toISOString(),
+          metadata: {
+            log_type: msg.log_type,
+            ...msg.log_data,
+          },
+        };
+        
+        setMessages(prev => [...prev, systemMessage]);
         break;
 
       case 'error':
