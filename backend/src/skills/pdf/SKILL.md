@@ -12,6 +12,40 @@ This guide covers essential PDF processing operations using Python libraries and
 
 ## Quick Start
 
+### ⚠️ CRITICAL: How to Create PDF Files
+
+**COMMON ERROR TO AVOID:**
+```python
+# ❌ WRONG: Writing text content and naming it .pdf
+with open("report.pdf", "w") as f:
+    f.write("PDF Report Content...")
+# This creates a TEXT file, NOT a PDF!
+```
+
+**CORRECT APPROACH - Use PDF Generation Libraries:**
+```python
+# ✅ RIGHT: Using reportlab to create actual PDF
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+
+def create_pdf(filename, title):
+    c = canvas.Canvas(filename, pagesize=letter)
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(100, 750, title)
+    c.setFont("Helvetica", 12)
+    c.drawString(100, 730, "Content line 1")
+    c.drawString(100, 715, "Content line 2")
+    c.save()
+
+create_pdf("report.pdf", "My Report")
+```
+
+**KEY DIFFERENCE:**
+- ❌ Text file with `.pdf` extension = Won't open in PDF readers
+- ✅ Binary PDF file created with library = Opens in any PDF reader
+
+---
+
 ```python
 from pypdf import PdfReader, PdfWriter
 
