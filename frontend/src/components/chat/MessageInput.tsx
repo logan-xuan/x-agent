@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Skill } from '@/services/api';
-import { SkillMenu } from './SkillMenu';
+import { SkillMenu } from '../skills/SkillMenu';
 
 interface MessageInputProps {
   onSend: (message: string) => void;
