@@ -247,5 +247,3 @@ function TraceViewer({ initialTraceId = '', onClose }: TraceViewerProps) {
 }
 
 export default TraceViewer;
-
-export default TraceViewer;
