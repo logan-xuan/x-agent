@@ -48,6 +48,43 @@ You need raw XML access for: comments, speaker notes, slide layouts, animations,
 
 When creating a new PowerPoint presentation from scratch, use the **html2pptx** workflow to convert HTML slides to PowerPoint with accurate positioning.
 
+### Quick Method: Direct PptxGenJS (Recommended for Simple Presentations)
+
+**For simple presentations without complex layouts**, you can use PptxGenJS directly:
+
+```javascript
+const PptxGenJS = require('pptxgenjs');
+const path = require('path');
+
+// Create presentation
+const pptx = new PptxGenJS();
+pptx.layout = 'LAYOUT_16x9';
+
+// Add title slide
+let slide1 = pptx.addSlide();
+slide1.addText('Presentation Title', { x: 0.5, y: 1.5, w: 9, h: 1, fontSize: 36, bold: true, color: '1C2833' });
+slide1.addText('Subtitle', { x: 0.5, y: 2.5, w: 9, h: 0.5, fontSize: 18, color: '666666' });
+
+// Add content slide
+let slide2 = pptx.addSlide();
+slide2.addText('Slide Title', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 28, bold: true });
+slide2.addText([
+  { text: '• First point\n', options: { bullet: true } },
+  { text: '• Second point\n', options: { bullet: true } },
+], { x: 0.5, y: 1.2, w: 9, h: 4, fontSize: 16 });
+
+// Save to workspace/presentations/
+const outputPath = path.join(__dirname, 'presentations', 'my-presentation.pptx');
+pptx.writeFile({ fileName: outputPath })
+  .then(() => console.log(`✅ Saved: ${outputPath}`))
+  .catch(err => console.error('Error:', err));
+```
+
+**CRITICAL Requirements**:
+1. **Save to `presentations/` subdirectory** (e.g., `workspace/presentations/my-presentation.pptx`)
+2. **Use `pptx.writeFile()`** to generate the actual `.pptx` file (NOT `fs.writeFileSync`)
+3. **Scripts go to `scripts/` subdirectory** (e.g., `workspace/scripts/my-presentation.js`)
+
 ### Workspace and File Organization
 
 **IMPORTANT**: All created presentations should be saved in the user's configured workspace directory or a user-specified location.
