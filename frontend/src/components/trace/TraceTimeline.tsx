@@ -36,6 +36,10 @@ interface TimelineEvent {
   source: 'x-agent' | 'prompt-llm';
   data: any;
   durationMs?: number;
+  // Additional fields for rich display
+  title?: string;
+  description?: string;
+  details?: Record<string, any>;
 }
 
 function getEventTypeFromEvent(event: any, source: 'x-agent' | 'prompt-llm'): EventType {
@@ -217,6 +221,146 @@ function formatTimestamp(timestamp: string) {
   }
 }
 
+// Function to extract rich details from log events for display
+function extractEventDetails(event: any, eventType: EventType): { title: string; description: string; details: Record<string, any> } {
+  const module = event.module || '';
+  const message = event.message || '';
+  const data = event.data || {};
+  const eventMsg = event.event || '';
+
+  switch (eventType) {
+    case 'tool':
+      // For tool calls, extract relevant information
+      const toolName = data.tool_name || module.includes('tool') ? module : 'Unknown Tool';
+      const toolArgs = data.arguments || data.args || data;
+
+      return {
+        title: `Tool Call: ${toolName}`,
+        description: `Execution of ${toolName} tool`,
+        details: {
+          ...data,
+          module,
+          event: eventMsg,
+          ...(data.result && { result: data.result }),
+          ...(data.error && { error: data.error })
+        }
+      };
+
+    case 'skill':
+      // For skill calls, extract relevant information
+      const skillName = data.skill_name || data.name || 'Unknown Skill';
+
+      return {
+        title: `Skill Execution: ${skillName}`,
+        description: `Running skill: ${skillName}`,
+        details: {
+          ...data,
+          module,
+          event: eventMsg,
+          ...(data.result && { result: data.result }),
+          ...(data.error && { error: data.error })
+        }
+      };
+
+    case 'command':
+      // For command execution, extract relevant information
+      const command = data.command || data.cmd || message;
+
+      return {
+        title: `Command Execution`,
+        description: command.substring(0, 100) + (command.length > 100 ? '...' : ''),
+        details: {
+          command,
+          module,
+          event: eventMsg,
+          ...(data.output && { output: data.output }),
+          ...(data.error && { error: data.error }),
+          ...(data.exit_code && { exit_code: data.exit_code })
+        }
+      };
+
+    case 'memory_store':
+    case 'memory_query':
+      // For memory operations, extract relevant information
+      const operation = eventType === 'memory_store' ? 'Storage' : 'Query';
+      const content = data.content || data.query || data.entry || 'Memory operation';
+
+      return {
+        title: `Memory ${operation}`,
+        description: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
+        details: {
+          operation,
+          ...data,
+          module,
+          event: eventMsg,
+          ...(data.results && { results: data.results }),
+          ...(data.entries && { entries: data.entries })
+        }
+      };
+
+    case 'react_loop':
+      // For ReAct loop steps, extract relevant information
+      const stepType = data.step_type || data.react_step || data.type || 'Step';
+      const thought = data.thought || data.reasoning || 'No reasoning provided';
+
+      return {
+        title: `ReAct Loop: ${stepType}`,
+        description: thought.substring(0, 150) + (thought.length > 150 ? '...' : ''),
+        details: {
+          step_type: stepType,
+          thought,
+          ...data,
+          module,
+          event: eventMsg,
+          ...(data.action && { action: data.action }),
+          ...(data.observation && { observation: data.observation })
+        }
+      };
+
+    case 'plan_mode':
+      // For plan mode steps, extract relevant information
+      const planAction = data.action || data.plan_step || data.task || 'Planning';
+      const planDetails = data.plan_details || data.details || 'Plan details';
+
+      return {
+        title: `Plan Mode: ${planAction}`,
+        description: planDetails.substring(0, 150) + (planDetails.length > 150 ? '...' : ''),
+        details: {
+          action: planAction,
+          ...data,
+          module,
+          event: eventMsg,
+          ...(data.steps && { steps: data.steps }),
+          ...(data.status && { status: data.status })
+        }
+      };
+
+    case 'llm':
+      // For LLM interactions, use the data from prompt logs
+      if (event.source === 'prompt-llm' && typeof event === 'object') {
+        return {
+          title: `LLM Interaction: ${event.model || 'Unknown Model'}`,
+          description: `Provider: ${event.provider || 'Unknown'}, Latency: ${event.latency_ms || 0}ms`,
+          details: event
+        };
+      }
+
+      return {
+        title: 'LLM Interaction',
+        description: message,
+        details: { ...data, module, event: eventMsg }
+      };
+
+    default:
+      // For other types, use generic extraction
+      return {
+        title: eventType.charAt(0).toUpperCase() + eventType.slice(1),
+        description: message,
+        details: { ...data, module, event: eventMsg }
+      };
+  }
+}
+
 function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<EventType | 'all'>('all');
@@ -229,6 +373,8 @@ function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
     const eventType = getEventTypeFromEvent(log, 'x-agent');
     if (filter !== 'all' && filter !== eventType) return;
 
+    const extractedDetails = extractEventDetails(log, eventType);
+
     allEvents.push({
       id: `x-agent-${index}-${log.timestamp || index}`,
       timestamp: log.timestamp || '',
@@ -238,6 +384,9 @@ function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
       level: log.level || 'info',
       source: 'x-agent',
       data: log.data,
+      title: extractedDetails.title,
+      description: extractedDetails.description,
+      details: extractedDetails.details,
     });
   });
 
@@ -245,6 +394,8 @@ function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
   traceData.prompt_llm_logs.forEach((log: PromptLLMLogEntry, index: number) => {
     const eventType: EventType = 'llm';
     if (filter !== 'all' && filter !== eventType) return;
+
+    const extractedDetails = extractEventDetails(log, eventType);
 
     allEvents.push({
       id: `prompt-${index}-${log.timestamp}`,
@@ -255,6 +406,9 @@ function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
       level: 'info',
       source: 'prompt-llm',
       data: log,
+      title: extractedDetails.title,
+      description: extractedDetails.description,
+      details: extractedDetails.details,
     });
   });
 
@@ -364,9 +518,12 @@ function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
                     <div className="flex justify-between items-start">
                       <div>
                         <div className="font-medium text-gray-900">
-                          {event.message || event.eventType}
+                          {event.title || event.message || event.eventType}
                         </div>
-                        <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
+                        <div className="text-sm text-gray-600 mt-1 line-clamp-2">
+                          {event.description || event.message}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-2 flex items-center gap-2">
                           <span>{formatTimestamp(event.timestamp)}</span>
                           <span className="text-gray-300">•</span>
                           <span className="font-mono">{event.module}</span>
@@ -412,6 +569,27 @@ function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
                             <div>
                               <span className="text-gray-500">间隔:</span>
                               <span className="ml-2 font-medium text-green-600">{event.durationMs}ms</span>
+                            </div>
+                          )}
+
+                          {/* Additional contextual information based on event type */}
+                          {event.details && Object.keys(event.details).length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-gray-200">
+                              <h5 className="font-medium text-gray-700 mb-2">具体信息</h5>
+                              <div className="space-y-1 text-xs">
+                                {Object.entries(event.details)
+                                  .filter(([key]) => !['timestamp', 'level', 'module', 'source', 'event', 'trace_id', 'request_id', 'session_id'].includes(key))
+                                  .map(([key, value]) => (
+                                    <div key={key} className="flex">
+                                      <span className="text-gray-500 w-24 truncate" title={key}>{key}:</span>
+                                      <span className="font-medium ml-2 break-all">
+                                        {typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+                                          ? String(value)
+                                          : JSON.stringify(value, null, 2)}
+                                      </span>
+                                    </div>
+                                  ))}
+                              </div>
                             </div>
                           )}
                         </div>
