@@ -923,6 +923,28 @@ class Orchestrator:
         if tools:
             tool_names = [t.name for t in tools]
             system_parts.append(f"\n# 可用工具\n你可以使用以下工具：{', '.join(tool_names)}")
+            
+            # ===== Add workspace path for file operations =====
+            system_parts.append(
+                f"\n\n# 工作目录（极其重要）\n"
+                f"**你的工作目录是：** `{self.workspace_path}`\n\n"
+                f"**文件操作规则：**\n"
+                f"1. **所有用户文件（脚本、PPT、文档等）必须保存在工作目录下**\n"
+                f"2. **使用 write_file 工具时，文件路径必须是绝对路径，且以工作目录为前缀**\n"
+                f"   - 例如：脚本应保存到 `{self.workspace_path}/scripts/xxx.py` 或 `{self.workspace_path}/scripts/xxx.js`\n"
+                f"   - 例如：PPT 应保存到 `{self.workspace_path}/presentations/xxx.pptx`\n"
+                f"3. **使用 run_in_terminal 执行脚本时，必须指定 working_dir 为工作目录**\n"
+                f"4. **绝不要把文件保存到 backend 目录或其他位置**\n\n"
+                f"**正确示例：**\n"
+                f"```json\n"
+                f'{{"file_path": "{self.workspace_path}/scripts/demo.py", "content": "..."}}\n'
+                f"```\n\n"
+                f"**错误示例（禁止）：**\n"
+                f"```json\n"
+                f'{{"file_path": "/path/to/backend/demo.py", "content": "..."}}  // 错误！不是工作目录\n'
+                f"```"
+            )
+            
             # Add explicit instruction for tool usage
             system_parts.append("\n# 工具使用规则\n**重要：当用户要求执行任何操作时，你必须立即调用相应的工具，而不是用文字询问用户确认。**\n例如：\n- 用户要求删除文件 → 直接调用 run_in_terminal 工具执行 rm 命令\n- 用户要求创建目录 → 直接调用 run_in_terminal 工具执行 mkdir 命令\n- 用户要求移动文件 → 直接调用 run_in_terminal 工具执行 mv 命令\n\n不要用文字询问用户是否确认。如果操作需要用户确认，系统会自动处理确认流程。")
             
@@ -1209,8 +1231,17 @@ def get_orchestrator(workspace_path: str | None = None) -> Orchestrator:
     if _orchestrator is None:
         if workspace_path is None:
             config = ConfigManager().config
-            backend_dir = Path(__file__).parent.parent.parent
-            workspace_path = str((backend_dir / config.workspace.path).resolve())
+            # Handle ~ expansion and absolute/relative paths correctly
+            raw_path = config.workspace.path
+            expanded_path = Path(raw_path).expanduser()  # Expand ~ to user home
+            
+            if expanded_path.is_absolute():
+                # Use absolute path directly
+                workspace_path = str(expanded_path.resolve())
+            else:
+                # Relative path: resolve from backend directory
+                backend_dir = Path(__file__).parent.parent.parent
+                workspace_path = str((backend_dir / raw_path).resolve())
         _orchestrator = Orchestrator(workspace_path)
     
     return _orchestrator
