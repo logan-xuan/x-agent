@@ -75,30 +75,58 @@ workspace:
 
 #### File Organization Patterns
 
-**MANDATORY**: All generated presentation files (.pptx) MUST be saved to the `presentations/` subdirectory within the workspace.
+**MANDATORY**: All generated files MUST be saved to appropriate subdirectories within the workspace. NEVER save files in the workspace root directory - treat it as a clean workspace, not a dumping ground.
 
-1. **Default location** (REQUIRED):
+1. **Python Scripts** (REQUIRED):
    ```javascript
-   // Example: Save in presentations/ folder within workspace
-   const outputPath = 'presentations/chinese_new_year_food.pptx';
+   // All generated Python scripts MUST go to scripts/ directory
+   const scriptPath = 'scripts/chinese_new_year_eating.py';
+   // Write script content to scriptPath
+   ```
+
+2. **Presentations** (REQUIRED):
+   ```javascript
+   // All generated .pptx files MUST go to presentations/ directory
+   const outputPath = 'presentations/chinese_new_year_eating.pptx';
    await pptx.writeFile(outputPath);
    ```
 
-2. **Project-based subfolders** (RECOMMENDED for multiple related presentations):
+3. **Project-based subfolders** (RECOMMENDED for organization):
    ```javascript
-   // Example: Create subdirectory for a project
+   // Organize by project/category
+   const scriptPath = 'scripts/project-alpha/generate-presentation.py';
    const outputPath = 'presentations/project-alpha/q4-review.pptx';
-   await pptx.writeFile(outputPath);
    ```
 
-3. **User-specified paths** (only if explicitly requested):
+4. **User-specified paths** (only if explicitly requested):
    - If user says "Save to /my/custom/path.pptx", use that path
-   - Otherwise, always default to `presentations/`
+   - Otherwise, always default to the appropriate directory pattern
+
+#### Directory Structure Example
+
+```
+workspace/
+├── scripts/                    # All generated Python scripts
+│   ├── chinese_new_year_eating.py
+│   ├── thumbnail_generator.py
+│   └── project-alpha/
+│       └── generate_pptx.py
+├── presentations/              # All .pptx presentation files
+│   ├── chinese_new_year_eating.pptx
+│   └── project-alpha/
+│       └── q4-review.pptx
+├── documents/                  # .docx documents
+├── spreadsheets/               # .xlsx spreadsheets
+├── pdfs/                       # .pdf files
+└── images/                     # Generated images
+```
 
 #### Best Practices
 
-- **Default to workspace**: Unless the user specifies otherwise, always save files in the configured workspace
-- **Use subdirectories**: Organize by project/category to keep files manageable
+- **NEVER use workspace root**: Always create and use appropriate subdirectories
+- **Scripts go to scripts/**: All Python/JavaScript helper scripts
+- **Output goes to type-specific dirs**: presentations/, documents/, etc.
+- **Organize by project**: Use subdirectories for related files
 - **Ask when unclear**: If the user doesn't specify and context doesn't make it clear, ask
 - **Create directories**: Automatically create intermediate directories as needed
 - **Descriptive names**: Use filenames that indicate content and date
@@ -580,6 +608,92 @@ pdftoppm -jpeg -r 150 -f 2 -l 5 project-alpha/template.pdf project-alpha/slides/
 - Write concise code
 - Avoid verbose variable names and redundant operations
 - Avoid unnecessary print statements
+
+## Example: Complete Workflow with Proper File Organization
+
+Here's a complete example of creating a presentation with proper file organization:
+
+### Step 1: Create the Python Script in scripts/ Directory
+
+```python
+# File: scripts/chinese_new_year_eating.py
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+import os
+
+def create_chinese_new_year_eating_ppt():
+    """Create a presentation about Chinese New Year eating customs."""
+    prs = Presentation()
+    
+    # Add title slide
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    
+    title.text = "春节美食文化"
+    subtitle.text = "传统饮食习俗与现代庆祝方式"
+    
+    # Add content slides...
+    # [Your slide content here]
+    
+    # CRITICAL: Save to presentations/ directory, NOT workspace root!
+    output_dir = 'presentations'
+    os.makedirs(output_dir, exist_ok=True)  # Create directory if needed
+    
+    output_path = os.path.join(output_dir, 'chinese_new_year_eating.pptx')
+    prs.save(output_path)
+    
+    print(f"✅ PPTX saved to: {output_path}")
+    return output_path
+
+if __name__ == "__main__":
+    create_chinese_new_year_eating_ppt()
+```
+
+### Step 2: Execute the Script
+
+```bash
+# Navigate to workspace first
+cd /path/to/workspace
+
+# Run the script from scripts/ directory
+python scripts/chinese_new_year_eating.py
+```
+
+### Expected Output Structure
+
+After execution, your workspace should look like:
+
+```
+workspace/
+├── scripts/
+│   └── chinese_new_year_eating.py    ✅ Script in correct location
+├── presentations/
+│   └── chinese_new_year_eating.pptx  ✅ Output in correct location
+└── (NO files in root directory)      ✅ Clean workspace
+```
+
+### WRONG: What NOT to Do
+
+❌ **NEVER do this** - saves to workspace root:
+```python
+# BAD CODE - DON'T DO THIS
+filename = "chinese_new_year_eating.pptx"
+filepath = os.path.join(os.getcwd(), filename)  # Saves to workspace root!
+prs.save(filepath)
+```
+
+❌ **NEVER save scripts in workspace root**:
+```
+workspace/
+├── chinese_new_year_eating.py    ❌ WRONG location
+└── chinese_new_year_eating.pptx  ❌ WRONG location
+```
+
+This creates clutter and treats the workspace as a dumping ground.
 
 ## Dependencies
 
