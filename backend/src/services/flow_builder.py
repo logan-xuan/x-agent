@@ -379,6 +379,12 @@ class FlowBuilder:
             'service': 100,
             'plugin': 150,
             'tool': 150,
+            'skill': 160,
+            'command': 170,
+            'memory_store': 180,
+            'memory_query': 190,
+            'react_loop': 200,
+            'plan_mode': 210,
             'default': 100,
         }
         
@@ -458,6 +464,45 @@ class FlowBuilder:
         if len(label) <= max_length:
             return label
         return label[:max_length - 3] + "..."
+
+    def _get_operation_display_name(self, operation_type: str) -> str:
+        """Get a clean display name for an operation type."""
+        operation_names = {
+            'tool_call': 'Tool Call',
+            'skill_call': 'Skill Call',
+            'command': 'Command',
+            'memory_store': 'Memory Store',
+            'memory_query': 'Memory Query',
+            'react_loop': 'ReAct Loop',
+            'plan_mode': 'Plan Mode',
+        }
+        return operation_names.get(operation_type, operation_type.replace('_', ' ').title())
+
+    def _get_detailed_operation_label(self, operation_type: str, event_data: dict, event_name: str) -> str:
+        """Get a detailed label for specialized operations."""
+        if operation_type == 'tool_call':
+            tool_name = event_data.get('tool_name', 'Unknown Tool')
+            return f"Tool: {tool_name}"
+        elif operation_type == 'skill_call':
+            skill_name = event_data.get('skill_name', 'Unknown Skill')
+            return f"Skill: {skill_name}"
+        elif operation_type == 'command':
+            command = event_data.get('command', 'Command Executed')
+            return f"Cmd: {command[:30]}..." if command and len(command) > 30 else f"Cmd: {command}"
+        elif operation_type == 'memory_store':
+            memory_type = event_data.get('memory_type', 'Memory')
+            return f"Store {memory_type}"
+        elif operation_type == 'memory_query':
+            query = event_data.get('query', 'Memory Query')
+            return f"Query: {query[:30]}..." if query and len(query) > 30 else f"Query: {query}"
+        elif operation_type == 'react_loop':
+            step_type = event_data.get('step_type', 'Step')
+            return f"ReAct {step_type.title()}"
+        elif operation_type == 'plan_mode':
+            plan_action = event_data.get('plan_action', 'Plan Action')
+            return f"Plan: {plan_action[:30]}..." if plan_action and len(plan_action) > 30 else f"Plan: {plan_action}"
+        else:
+            return self._truncate_label(event_name, 50)
 
 
 # Global instance cache

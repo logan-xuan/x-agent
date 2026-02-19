@@ -277,3 +277,107 @@ async def analyze_trace(
             exc_info=True,
         )
         raise HTTPException(status_code=500, detail=f"Failed to analyze trace: {str(e)}")
+
+
+class NodeDetailsResponse(BaseModel):
+    """Detailed information for a specific node."""
+    node_id: str
+    trace_id: str
+    node_type: str
+    label: str
+    timestamp: str | None = None
+    source: str | None = None
+    operation_type: str | None = None
+    metadata: dict[str, Any]
+
+
+@router.get("/{trace_id}/node-details/{node_id}", response_model=NodeDetailsResponse)
+async def get_node_details(
+    trace_id: str,
+    node_id: str,
+    log_dir: str = Query(default="logs", description="Log directory path")
+) -> NodeDetailsResponse:
+    """Get detailed information for a specific node in the trace.
+
+    Args:
+        trace_id: Trace ID to query
+        node_id: Specific node ID to get details for
+        log_dir: Directory containing log files
+
+    Returns:
+        Detailed information about the specific node
+    """
+    try:
+        # Resolve log directory path
+        backend_dir = Path(__file__).parent.parent.parent.parent
+        log_path = (backend_dir / log_dir).resolve()
+
+        logger.info(
+            f"Fetching node details",
+            extra={
+                'trace_id': trace_id,
+                'node_id': node_id,
+                'log_dir': str(log_path),
+            }
+        )
+
+        # Parse logs
+        parser = get_log_parser(str(log_path))
+        timeline_data = parser.build_timeline(trace_id)
+        timeline = timeline_data.get('timeline', [])
+
+        # Build flow to get node information
+        flow_builder = get_flow_builder(log_dir=str(log_path))
+        flow_data = flow_builder.build_flow(trace_id, detail_level="detailed")  # type: ignore
+
+        # Find the specific node by ID
+        node = None
+        for flow_node in flow_data['nodes']:
+            if flow_node['id'] == node_id:
+                node = flow_node
+                break
+
+        if not node:
+            raise HTTPException(status_code=404, detail=f"Node {node_id} not found in trace {trace_id}")
+
+        # Get the corresponding timeline event for detailed data
+        timeline_event = None
+        for event in timeline:
+            # We need to map nodes back to timeline events based on their characteristics
+            # Since the mapping isn't direct, we'll return the node's data directly
+            if node.get('data', {}).get('timestamp') == event.get('timestamp'):
+                timeline_event = event
+                break
+
+        # Construct the metadata by combining node data with timeline event data
+        node_data = node.get('data', {})
+        event_data = timeline_event.get('data', {}) if timeline_event else {}
+
+        # Merge the data (prioritize node data)
+        combined_metadata = {**event_data, **node_data}
+
+        return NodeDetailsResponse(
+            node_id=node_id,
+            trace_id=trace_id,
+            node_type=node.get('type', 'default'),
+            label=node.get('data', {}).get('label', node.get('label', '')),
+            timestamp=node.get('data', {}).get('timestamp'),
+            source=node.get('data', {}).get('source'),
+            operation_type=node.get('data', {}).get('operation_type'),
+            metadata=combined_metadata,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch node details",
+            extra={
+                'trace_id': trace_id,
+                'node_id': node_id,
+                'error': str(e),
+                'error_type': type(e).__name__,
+            },
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to fetch node details: {str(e)}")
