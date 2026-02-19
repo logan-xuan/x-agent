@@ -133,7 +133,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from .memory.vector_store import get_vector_store
     from .memory.embedder import get_embedder
     
-    workspace_path = config.workspace.path
+    # Handle ~ expansion and absolute/relative paths correctly
+    raw_workspace_path = config.workspace.path
+    expanded_workspace_path = Path(raw_workspace_path).expanduser()
+    if expanded_workspace_path.is_absolute():
+        workspace_path = str(expanded_workspace_path.resolve())
+    else:
+        backend_dir = Path(__file__).parent
+        workspace_path = str((backend_dir / raw_workspace_path).resolve())
+    
     _file_watcher = get_file_watcher(workspace_path)
     
     # Get dependencies for sync
