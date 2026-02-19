@@ -13,6 +13,7 @@ import json
 import os
 import random
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -115,22 +116,57 @@ class ONNXEmbedder:
             return None
     
     def _download_and_load_default_model(self, ort: Any, providers: list[str]) -> Any:
-        """Download and load the default ONNX model."""
+        """Download and load the default ONNX model with caching."""
         cache_dir = Path.home() / ".cache" / "x-agent" / "models"
         cache_dir.mkdir(parents=True, exist_ok=True)
         
         model_file = cache_dir / "all-MiniLM-L6-v2.onnx"
+        config_file = cache_dir / "model_config.json"  # For caching metadata
         
-        if not model_file.exists():
-            logger.info("Downloading ONNX model...", extra={"url": self.DEFAULT_MODEL_URL})
+        # Check if model exists and is valid (with cache validation)
+        if model_file.exists():
+            # Try to load config to verify model is valid
+            if config_file.exists():
+                try:
+                    import json
+                    with open(config_file, 'r') as f:
+                        config = json.load(f)
+                    # Verify model file size matches (basic integrity check)
+                    if config.get('model_size') == model_file.stat().st_size:
+                        logger.debug("Using cached ONNX model", extra={"path": str(model_file)})
+                        return ort.InferenceSession(str(model_file), providers=providers)
+                except Exception as e:
+                    logger.debug("Cache validation failed, re-downloading", extra={"error": str(e)})
+            
+            # If we get here, cache is invalid but model file exists
+            logger.info("Found existing model file, attempting to load without validation")
             try:
-                urllib.request.urlretrieve(self.DEFAULT_MODEL_URL, model_file)
-                logger.info("ONNX model downloaded", extra={"path": str(model_file)})
+                session = ort.InferenceSession(str(model_file), providers=providers)
+                # Cache is valid if we can load the model
+                return session
             except Exception as e:
-                logger.error("Failed to download model", extra={"error": str(e)})
-                return None
+                logger.warning("Failed to load cached model, will re-download", extra={"error": str(e)})
         
-        return ort.InferenceSession(str(model_file), providers=providers)
+        # Download model only if not cached or cache invalid
+        logger.info("Downloading ONNX model...", extra={"url": self.DEFAULT_MODEL_URL})
+        try:
+            urllib.request.urlretrieve(self.DEFAULT_MODEL_URL, model_file)
+            model_size = model_file.stat().st_size
+            logger.info("ONNX model downloaded", extra={"path": str(model_file), "size": model_size})
+            
+            # Save config for future cache validation
+            import json
+            with open(config_file, 'w') as f:
+                json.dump({
+                    'model_url': self.DEFAULT_MODEL_URL,
+                    'model_size': model_size,
+                    'downloaded_at': datetime.utcnow().isoformat()
+                }, f)
+            
+            return ort.InferenceSession(str(model_file), providers=providers)
+        except Exception as e:
+            logger.error("Failed to download model", extra={"error": str(e)})
+            return None
     
     def _tokenize(self, text: str) -> dict[str, np.ndarray]:
         """Tokenize text for ONNX model.
