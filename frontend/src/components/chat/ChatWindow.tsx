@@ -17,6 +17,7 @@ interface ChatWindowProps {
   isLoading?: boolean;
   isConnecting?: boolean;
   onSendMessage: (content: string) => void;
+  onToolConfirm?: (toolCallId: string, confirmationId?: string, command?: string) => void;
   connectionStatus?: 'connected' | 'connecting' | 'disconnected';
   onOpenSettings?: () => void;
   onNewSession?: () => void;
@@ -30,6 +31,7 @@ export function ChatWindow({
   isLoading = false,
   isConnecting = false,
   onSendMessage,
+  onToolConfirm,
   connectionStatus = 'disconnected',
   onOpenSettings,
   onNewSession,
@@ -156,6 +158,7 @@ export function ChatWindow({
               streamingContent={streamingContent}
               streamingModel={streamingModel}
               isLoading={isLoading}
+              onToolConfirm={onToolConfirm}
             />
           </div>
         </div>

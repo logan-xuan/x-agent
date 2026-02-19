@@ -1,12 +1,17 @@
 """Context compression manager - main entry point."""
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import datetime
+from uuid import uuid4
 
 from ...config.models import CompressionConfig
 from ...utils.logger import get_logger
 from .compressor import CompressionResult, ContextCompressor
 from .token_counter import TokenCounter
+from ...models.compression import CompressionEvent
+from ...services.storage import get_storage_service
 
 logger = get_logger(__name__)
 
@@ -138,11 +143,11 @@ class ContextCompressionManager:
         messages: list[dict]
     ) -> PreparedContext:
         """Execute compression flow.
-        
+
         Args:
             session_id: Session identifier
             messages: Messages to compress
-            
+
         Returns:
             Compressed context
         """
@@ -157,17 +162,89 @@ class ContextCompressionManager:
                 summary=None,
                 total_tokens=self.token_counter.count_messages(messages)
             )
-        
+
         # 1. Compress
         result = await self.compressor.compress(
             messages,
             self.config.retention_count
         )
-        
+
+        # 2. Store compression event to track history
+        await self._store_compression_event(
+            session_id=session_id,
+            original_messages=messages,
+            compressed_result=result
+        )
+
+    async def _store_compression_event(
+        self,
+        session_id: str,
+        original_messages: list[dict],
+        compressed_result: CompressionResult
+    ) -> None:
+        """Store compression event to database for audit and analysis.
+
+        Args:
+            session_id: Session identifier
+            original_messages: Original messages before compression
+            compressed_result: Result of compression operation
+        """
+        try:
+            from datetime import datetime
+            import uuid
+
+            # Generate unique ID for this compression event
+            event_id = f"comp-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:8]}"
+
+            # Prepare compression event data
+            compression_event = CompressionEvent(
+                id=event_id,
+                session_id=session_id,
+                original_message_count=len(original_messages),
+                compressed_message_count=len(compressed_result.compressed_messages),
+                original_token_count=compressed_result.original_token_count,
+                compressed_token_count=compressed_result.compressed_token_count,
+                compression_ratio=(
+                    (compressed_result.original_token_count - compressed_result.compressed_token_count) /
+                    compressed_result.original_token_count
+                    if compressed_result.original_token_count > 0 else 0
+                ),
+                original_messages=json.dumps(original_messages, ensure_ascii=False),
+                compressed_messages=json.dumps(compressed_result.compressed_messages, ensure_ascii=False),
+                archived_message_count=len(compressed_result.archived_messages),
+                retained_message_count=len(compressed_result.recent_messages)
+            )
+
+            # Store in database
+            storage = get_storage_service()
+            async with storage.session() as db:
+                db.add(compression_event)
+                await db.commit()
+
+            logger.info(
+                "Compression event stored to database",
+                extra={
+                    "event_id": event_id,
+                    "session_id": session_id,
+                    "original_message_count": len(original_messages),
+                    "compressed_message_count": len(compressed_result.compressed_messages),
+                }
+            )
+
+        except Exception as e:
+            logger.error(
+                "Failed to store compression event",
+                extra={
+                    "session_id": session_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+            )
+
         # Note: Summary is NOT stored to memory files to avoid duplication.
         # SmartMemoryService already analyzes and records important content in real-time.
         # The summary generated here is only used for LLM context understanding.
-        
+
         logger.info(
             "Compression completed",
             extra={
@@ -178,7 +255,7 @@ class ContextCompressionManager:
                 "retained_count": len(result.recent_messages),
             }
         )
-        
+
         return PreparedContext(
             messages=result.compressed_messages,
             summary=result.summary,

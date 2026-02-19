@@ -8,14 +8,15 @@ interface MessageInputProps {
   placeholder?: string;
 }
 
-export function MessageInput({ 
-  onSend, 
+export function MessageInput({
+  onSend,
   disabled = false,
-  placeholder = '输入消息...' 
+  placeholder = '输入消息...'
 }: MessageInputProps) {
   const [message, setMessage] = useState('');
+  const [isComposing, setIsComposing] = useState(false); // Track IME composition state
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  
+
   // Auto-resize textarea
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -24,12 +25,12 @@ export function MessageInput({
       textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
     }
   }, [message]);
-  
+
   // Focus textarea on mount
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
-  
+
   const handleSend = () => {
     const trimmedMessage = message.trim();
     if (trimmedMessage && !disabled) {
@@ -41,16 +42,25 @@ export function MessageInput({
       }
     }
   };
-  
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Send on Enter (without Shift)
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Send on Enter (without Shift) but only when not composing (IME input)
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       e.preventDefault();
       handleSend();
     }
   };
-  
+
   const canSend = message.trim().length > 0 && !disabled;
+
+  // Handle composition events for IME input (Chinese, Japanese, Korean, etc.)
+  const handleCompositionStart = () => {
+    setIsComposing(true);
+  };
+
+  const handleCompositionEnd = () => {
+    setIsComposing(false);
+  };
   
   return (
     <div className="p-2 sm:p-4">
@@ -62,10 +72,12 @@ export function MessageInput({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             placeholder={placeholder}
             disabled={disabled}
             rows={1}
-            className="mobile-input w-full resize-none rounded-2xl border border-gray-300 dark:border-gray-600 
+            className="mobile-input w-full resize-none rounded-2xl border border-gray-300 dark:border-gray-600
                        bg-gray-50 dark:bg-gray-800 px-3 sm:px-4 py-2.5 sm:py-3 pr-10 sm:pr-12
                        text-gray-900 dark:text-gray-100 placeholder-gray-500
                        focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
@@ -85,7 +97,7 @@ export function MessageInput({
         <button
           onClick={handleSend}
           disabled={!canSend}
-          className="touch-target flex-shrink-0 w-11 h-11 sm:w-12 sm:h-12 rounded-full 
+          className="touch-target flex-shrink-0 w-11 h-11 sm:w-12 sm:h-12 rounded-full
                      bg-blue-600 hover:bg-blue-700 active:bg-blue-800
                      disabled:bg-gray-300 disabled:dark:bg-gray-700 disabled:cursor-not-allowed
                      text-white transition-colors

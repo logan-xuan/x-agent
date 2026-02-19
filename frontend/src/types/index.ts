@@ -3,6 +3,26 @@
 /** Message role types */
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+/** Tool call status */
+export type ToolCallStatus = 'pending' | 'executing' | 'completed' | 'error' | 'needs_confirmation' | 'blocked';
+
+/** Tool call interface */
+export interface ToolCall {
+  id: string;
+  name: 'run_in_terminal' | 'get_terminal_output' | 'kill_process';
+  arguments: Record<string, unknown>;
+  status: ToolCallStatus;
+  result?: {
+    success: boolean;
+    output?: string;
+    error?: string;
+    requires_confirmation?: boolean;
+    is_blocked?: boolean;
+    confirmation_id?: string;
+    command?: string;
+  };
+}
+
 /** Chat message interface */
 export interface Message {
   id: string;
@@ -14,6 +34,7 @@ export interface Message {
     model?: string;
     tokens?: number;
   };
+  tool_calls?: ToolCall[];
 }
 
 /** Chat session interface */
@@ -31,6 +52,8 @@ export type WebSocketMessageType =
   | 'assistant_start'
   | 'assistant_chunk'
   | 'assistant_end'
+  | 'tool_call'
+  | 'tool_result'
   | 'error';
 
 /** WebSocket message interface */
@@ -46,6 +69,21 @@ export interface WebSocketMessage {
     model?: string;
     tokens?: number;
   };
+  // Tool call fields
+  name?: string;
+  arguments?: Record<string, unknown>;
+  tool_call?: ToolCall;
+  tool_call_id?: string;
+  result?: {
+    success: boolean;
+    output?: string;
+    error?: string;
+    requires_confirmation?: boolean;
+    is_blocked?: boolean;
+    confirmation_id?: string;
+    command?: string;
+  };
+  trace_id?: string;
 }
 
 /** API response wrapper */
@@ -303,6 +341,34 @@ export interface AnalysisInsight {
   description: string;
   location?: string | null;
   severity?: string | null;  // low, medium, high
+}
+
+/** Compression record interface */
+export interface CompressionRecord {
+  id: string;
+  sessionId: string;
+  originalMessageCount: number;
+  compressedMessageCount: number;
+  originalTokenCount: number;
+  compressedTokenCount: number;
+  compressionRatio: number;
+  compressionTime: string;
+  originalMessages: Array<{
+    role: string;
+    content: string;
+    timestamp?: string;
+  }>;
+  compressedMessages: Array<{
+    role: string;
+    content: string;
+    timestamp?: string;
+  }>;
+}
+
+/** Compression record query response */
+export interface CompressionRecordQueryResponse {
+  records: CompressionRecord[];
+  total: number;
 }
 
 /** Trace analysis request */

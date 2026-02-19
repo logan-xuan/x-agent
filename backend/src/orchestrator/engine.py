@@ -332,6 +332,61 @@ class Orchestrator:
             "recommended_skill": analysis.recommended_skill,
         }
         
+        # Step 0.5: Parse Skill Command (Phase 2 - Argument Passing)
+        skill_name, arguments = TaskAnalyzer.parse_skill_command(user_message)
+        if skill_name:
+            logger.info(
+                "Skill command detected",
+                extra={
+                    "session_id": session_id,
+                    "skill_name": skill_name,
+                    "arguments": arguments,
+                }
+            )
+            
+            # Get skill metadata
+            skill = self._skill_registry.get_skill_metadata(skill_name)
+            if skill:
+                logger.info(
+                    f"Skill '{skill_name}' loaded",
+                    extra={
+                        "session_id": session_id,
+                        "has_scripts": skill.has_scripts,
+                        "allowed_tools": skill.allowed_tools,
+                        "argument_hint": skill.argument_hint,
+                    }
+                )
+                
+                # Add skill context to messages
+                skill_context_msg = {
+                    "role": "system",
+                    "content": (
+                        f"🔧 **Skill Invocation: {skill_name}**\n\n"
+                        f"**Description**: {skill.description}\n"
+                        f"**Arguments**: {arguments if arguments else '(none)'}\n"
+                        f"**Available Scripts**: {'Yes' if skill.has_scripts else 'No'}\n\n"
+                        f"You are now executing the '{skill_name}' skill. "
+                        f"Follow the guidelines in this skill's SKILL.md and use the provided arguments.\n\n"
+                        f"---\n"
+                    )
+                }
+            else:
+                logger.warning(
+                    f"Skill '{skill_name}' not found in registry",
+                    extra={"session_id": session_id}
+                )
+                skill_context_msg = {
+                    "role": "system",
+                    "content": (
+                        f"⚠️ **Unknown Skill: {skill_name}**\n\n"
+                        f"The skill '{skill_name}' was not found in the skill registry. "
+                        f"Please check the skill name and try again.\n\n"
+                        f"---\n"
+                    )
+                }
+        else:
+            skill_context_msg = None
+        
         # Step 1: Policy Reload
         policy, reloaded = self.policy_engine.reload_if_changed()
         yield {
@@ -413,7 +468,7 @@ class Orchestrator:
         
         # Step 4: Build Messages (with session history and compression)
         messages, compression_info = await self._build_messages(
-            context, user_message, policy, relevant_memories, session_id, plan_state
+            context, user_message, policy, relevant_memories, session_id, plan_state, skill_context_msg
         )
         
         # Yield compression status event for frontend debugging
@@ -655,6 +710,7 @@ class Orchestrator:
                                 relevant_memories=relevant_memories,
                                 session_id=session_id,
                                 plan_state=plan_state,
+                                skill_context_msg=skill_context_msg,
                             )
                             
                             # Temporarily increase max_iterations for Plan Mode execution
@@ -801,6 +857,7 @@ class Orchestrator:
         relevant_memories: list[str] | None = None,
         session_id: str | None = None,
         plan_state: PlanState | None = None,
+        skill_context_msg: dict | None = None,  # Phase 2 - Skill invocation context
     ) -> tuple[list, dict]:
         """Build message list for LLM with session history and compression.
 
@@ -811,6 +868,7 @@ class Orchestrator:
             relevant_memories: Retrieved relevant memories (from hybrid search)
             session_id: Session ID for loading conversation history
             plan_state: Current plan state (for plan mode)
+            skill_context_msg: Skill invocation context message (Phase 2)
 
         Returns:
             Tuple of (messages list for LLM, compression info dict)
@@ -944,6 +1002,15 @@ class Orchestrator:
 
         # Build system message
         system_message = "\n".join(system_parts) if system_parts else ""
+        
+        # Phase 2: Add skill invocation context (if any)
+        if skill_context_msg:
+            messages.append(skill_context_msg)
+        
+        messages.append({
+            "role": "system",
+            "content": system_message,
+        })
         
         # Load conversation history from session
         history_messages = []

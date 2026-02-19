@@ -1,10 +1,12 @@
 /** Individual message display component */
 
 import { Message } from '../../types';
+import { TerminalCard } from './TerminalCard';
 
 interface MessageItemProps {
   message: Message;
   isStreaming?: boolean;
+  onToolConfirm?: (toolCallId: string, confirmationId?: string, command?: string) => void;
 }
 
 // AI Icon - 未来感神经网络/AI风格
@@ -55,9 +57,10 @@ function UserIcon() {
   );
 }
 
-export function MessageItem({ message, isStreaming = false }: MessageItemProps) {
+export function MessageItem({ message, isStreaming = false, onToolConfirm }: MessageItemProps) {
   const isUser = message.role === 'user';
-  
+  const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
+
   return (
     <div
       className={`flex w-full mb-4 gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
@@ -66,7 +69,7 @@ export function MessageItem({ message, isStreaming = false }: MessageItemProps) 
       <div className="flex-shrink-0 mt-1">
         {isUser ? <UserIcon /> : <AIIcon />}
       </div>
-      
+
       {/* Message bubble */}
       <div
         className={`max-w-[75%] rounded-2xl px-4 py-3 ${
@@ -86,7 +89,7 @@ export function MessageItem({ message, isStreaming = false }: MessageItemProps) 
             </span>
           )}
         </div>
-        
+
         {/* Message content */}
         <div className="whitespace-pre-wrap break-words leading-relaxed">
           {message.content}
@@ -94,7 +97,20 @@ export function MessageItem({ message, isStreaming = false }: MessageItemProps) 
             <span className="inline-block w-2 h-4 ml-1 bg-current animate-pulse rounded-sm" />
           )}
         </div>
-        
+
+        {/* Tool calls - Terminal cards */}
+        {hasToolCalls && (
+          <div className="mt-3 space-y-2">
+            {message.tool_calls?.map((toolCall) => (
+              <TerminalCard
+                key={toolCall.id}
+                toolCall={toolCall}
+                onConfirm={(id, confirmationId, command) => onToolConfirm?.(id, confirmationId, command)}
+              />
+            ))}
+          </div>
+        )}
+
         {/* Timestamp */}
         <div className={`text-xs mt-2 ${isUser ? 'text-cyan-100/60' : 'text-gray-400 dark:text-gray-500'}`}>
           {new Date(message.created_at).toLocaleTimeString('zh-CN', {

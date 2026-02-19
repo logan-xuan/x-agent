@@ -53,7 +53,7 @@ export function MemorySearchDebugger({ onError }: MemorySearchDebuggerProps) {
 
   return (
     <div className="flex flex-col h-full p-4">
-      <h3 className="text-lg font-semibold mb-4">记忆搜索调试</h3>
+      <h3 className="text-lg font-semibold mb-4">记忆搜索</h3>
 
       {/* Search Form */}
       <form onSubmit={handleSubmit} className="mb-6 space-y-4">

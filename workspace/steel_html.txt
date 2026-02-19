@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>钢铁是怎样炼成的</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .slide { margin-bottom: 40px; padding: 20px; border: 1px solid #ddd; }
+        h1 { color: #2c3e50; text-align: center; }
+        h2 { color: #34495e; }
+        p { line-height: 1.6; }
+        ul { margin: 10px 0; padding-left: 20px; }
+        li { margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <div class="slide">
+        <h1>钢铁是怎样炼成的</h1>
+        <p style="text-align: center;">——保尔·柯察金的成长历程</p>
+    </div>
+    
+    <div class="slide">
+        <h2>作者简介</h2>
+        <p><strong>尼古拉·奥斯特洛夫斯基</strong>（1904-1936）</p>
+        <ul>
+            <li>苏联作家、革命者</li>
+            <li>亲身经历了十月革命和国内战争</li>
+            <li>全身瘫痪、双目失明后仍坚持创作</li>
+            <li>代表作《钢铁是怎样炼成的》影响了几代人</li>
+        </ul>
+    </div>
+    
+    <div class="slide">
+        <h2>主人公保尔·柯察金</h2>
+        <ul>
+            <li>出身于贫困工人家庭</li>
+            <li>从小饱尝生活的苦难</li>
+            <li>在朱赫来的引导下走上革命道路</li>
+            <li>以惊人的毅力克服重重困难</li>
+        </ul>
+    </div>
+    
+    <div class="slide">
+        <h2>成长历程</h2>
+        <ol>
+            <li>童年时期：反抗神父，参加革命活动</li>
+            <li>青年时期：投身革命，英勇作战</li>
+            <li>建设时期：参与铁路建设，艰苦奋斗</li>
+            <li>磨难时期：疾病缠身，意志坚定</li>
+        </ol>
+    </div>
+    
+    <div class="slide">
+        <h2>经典片段</h2>
+        <p>"人最宝贵的是生命，生命对每个人只有一次。人的一生应当这样度过：当他回首往事的时候，不因虚度年华而悔恨，也不因碌碌无为而羞愧。"</p>
+        <p>——保尔·柯察金</p>
+    </div>
+    
+    <div class="slide">
+        <h2>主题思想</h2>
+        <ul>
+            <li>革命理想主义精神</li>
+            <li>坚韧不拔的意志品质</li>
+            <li>为理想献身的人生观</li>
+            <li>集体主义价值观</li>
+        </ul>
+    </div>
+    
+    <div class="slide">
+        <h2>文学价值</h2>
+        <ul>
+            <li>现实主义与浪漫主义相结合</li>
+            <li>人物形象鲜明生动</li>
+            <li>情节曲折感人</li>
+            <li>激励了一代又一代读者</li>
+        </ul>
+    </div>
+    
+    <div class="slide">
+        <h2>社会影响</h2>
+        <ul>
+            <li>在中国影响深远，是几代人的精神食粮</li>
+            <li>被翻译成多种语言传播世界</li>
+            <li>改编为电影、电视剧等多种艺术形式</li>
+            <li>至今仍有重要的教育意义</li>
+        </ul>
+    </div>
+    
+    <div class="slide">
+        <h2>现代启示</h2>
+        <ul>
+            <li>面对困难要有坚强的意志</li>
+            <li>人生应有崇高的理想追求</li>
+            <li>奉献精神值得学习</li>
+            <li>珍惜今天的幸福生活</li>
+        </ul>
+    </div>
+    
+    <div class="slide">
+        <h2>总结</h2>
+        <p>《钢铁是怎样炼成的》不仅是一部优秀的文学作品，更是一部人生的教科书。保尔的精神品质激励着我们勇敢面对生活中的各种挑战，努力实现自己的人生价值。</p>
+        <p style="text-align: center; margin-top: 30px;"><em>让我们向保尔学习，锻造自己钢铁般的意志！</em></p>
+    </div>
+</body>
+</html>

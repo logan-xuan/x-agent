@@ -20,6 +20,7 @@ from ..core.agent import Agent
 from ..core.context import AgentContext, ContextSource, set_current_context, clear_current_context, get_current_context
 from ..memory.md_sync import get_md_sync
 from ..services.smart_memory import get_smart_memory_service
+from ..tools.manager import ToolManager
 from ..utils.logger import get_logger
 
 router = APIRouter()
@@ -168,7 +169,130 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                     "trace_id": message_context.trace_id,
                 })
                 continue
-            
+
+            # Handle tool confirmation from client
+            if message.get("type") == "tool_confirm":
+                tool_call_id = message.get("tool_call_id")
+                confirmation_id = message.get("confirmation_id")
+                command = message.get("command")
+                
+                if tool_call_id or confirmation_id:
+                    # Set confirmation in the terminal tool module
+                    from ..tools.builtin.terminal import set_confirmation_confirmed
+                    if confirmation_id:
+                        set_confirmation_confirmed(confirmation_id)
+                    
+                    # Also store in agent context for backwards compatibility
+                    if tool_call_id:
+                        agent.set_tool_confirmation(tool_call_id, True)
+                    
+                    logger.info(
+                        f"Tool confirmation received: confirmation_id={confirmation_id}, tool_call_id={tool_call_id}",
+                        extra={
+                            "trace_id": message_context.trace_id,
+                            "tool_call_id": tool_call_id,
+                            "confirmation_id": confirmation_id,
+                        }
+                    )
+                    
+                    # If command is provided, re-execute it with confirmation
+                    if command and confirmation_id:
+                        logger.info(
+                            f"Re-executing confirmed command: {command}",
+                            extra={
+                                "trace_id": message_context.trace_id,
+                                "confirmation_id": confirmation_id,
+                                "command": command,
+                            }
+                        )
+                        
+                        # Execute the command with confirmation
+                        try:
+                            from ..tools.builtin import get_builtin_tools
+                            tool_manager = ToolManager()
+                            # Register built-in tools
+                            for tool in get_builtin_tools():
+                                tool_manager.register(tool)
+                            
+                            # Execute with confirmation
+                            result = await tool_manager.execute("run_in_terminal", {
+                                "command": command,
+                                "confirmed": True,
+                                "confirmation_id": confirmation_id,
+                            })
+                            
+                            # Send tool_call event
+                            await websocket.send_json({
+                                "type": "tool_call",
+                                "tool_call_id": f"confirmed_{confirmation_id}",
+                                "name": "run_in_terminal",
+                                "arguments": {"command": command},
+                                "trace_id": message_context.trace_id,
+                            })
+                            
+                            # Send tool_result event
+                            await websocket.send_json({
+                                "type": "tool_result",
+                                "tool_call_id": f"confirmed_{confirmation_id}",
+                                "tool_name": "run_in_terminal",
+                                "success": result.success,
+                                "output": result.output[:500] if result.output else "",
+                                "error": result.error,
+                                "result": {
+                                    "success": result.success,
+                                    "output": result.output,
+                                    "error": result.error,
+                                },
+                                "trace_id": message_context.trace_id,
+                            })
+                            
+                            # Now pass the result to LLM for continued processing
+                            # Build a context message about what was executed
+                            context_message = f"[用户已确认执行高危命令]\n命令: {command}\n执行结果: {'成功' if result.success else '失败'}"
+                            if result.output:
+                                context_message += f"\n输出: {result.output[:1000]}"
+                            if result.error:
+                                context_message += f"\n错误: {result.error}"
+                            
+                            # Call agent to process the confirmed command result
+                            logger.info(
+                                "Passing confirmed command result to LLM",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "command": command,
+                                    "success": result.success,
+                                }
+                            )
+                            
+                            stream = await agent.chat(
+                                session_id=session_id,
+                                user_message=context_message,
+                                stream=True
+                            )
+                            
+                            # Stream LLM response
+                            async for chunk in stream:
+                                if isinstance(chunk, dict):
+                                    chunk["trace_id"] = message_context.trace_id
+                                    await websocket.send_json(chunk)
+                                    await asyncio.sleep(0.01)
+                            
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to execute confirmed command: {e}",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "command": command,
+                                }
+                            )
+                            await websocket.send_json({
+                                "type": "error",
+                                "error": f"执行确认命令失败: {str(e)}",
+                                "session_id": session_id,
+                                "trace_id": message_context.trace_id,
+                            })
+                continue
+
             # Handle chat message
             user_content = message.get("content", "").strip()
             if not user_content:
@@ -205,6 +329,18 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                     if isinstance(chunk, dict):
                         chunk["trace_id"] = message_context.trace_id
                         
+                        # Debug: log the full chunk before sending
+                        chunk_type = chunk.get("type")
+                        if chunk_type in ("tool_call", "tool_result", "awaiting_confirmation"):
+                            logger.info(
+                                "Sending chunk to frontend",
+                                extra={
+                                    "type": chunk_type,
+                                    "tool_call_id": chunk.get("tool_call_id"),
+                                    "tool_name": chunk.get("name") or chunk.get("tool_name"),
+                                }
+                            )
+                        
                         # Handle different event types
                         chunk_type = chunk.get("type")
                         
@@ -229,6 +365,7 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                 extra={
                                     "trace_id": message_context.trace_id,
                                     "tool_name": chunk.get("name"),
+                                    "tool_call_id": chunk.get("tool_call_id"),
                                     "arguments": chunk.get("arguments"),
                                 }
                             )
@@ -240,7 +377,10 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                 extra={
                                     "trace_id": message_context.trace_id,
                                     "tool_name": chunk.get("tool_name"),
+                                    "tool_call_id": chunk.get("tool_call_id"),
                                     "success": chunk.get("success"),
+                                    "has_result": "result" in chunk,
+                                    "result_requires_confirmation": chunk.get("result", {}).get("requires_confirmation") if chunk.get("result") else None,
                                 }
                             )
                         

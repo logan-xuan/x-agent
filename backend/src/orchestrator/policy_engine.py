@@ -208,56 +208,53 @@ class PolicyEngine:
     def build_system_prompt_guidelines(self) -> str:
         """Build soft guidelines for System Prompt injection.
 
-        Formats all soft guidelines from AGENTS.md into a single
+        Formats only P0-level content from AGENTS.md into a single
         prompt section that can be injected into the LLM's system prompt.
-        Also includes P0 hard constraints that should be explicitly known to the LLM.
-        Only includes essential guidelines that are beneficial for LLM
-        understanding while minimizing token usage.
+        This dynamically analyzes AGENTS.md to identify P0 paragraphs and sentences.
+        Only includes truly essential P0 content for LLM understanding.
 
         Returns:
-            Formatted string with all soft guidelines and P0 hard constraints
+            Formatted string with only P0-level content
         """
         parts: list[str] = []
 
         # Add header
         parts.append("# 行为准则")
-        parts.append("以下是你需要遵循的行为规范：")
+        parts.append("以下是你需要遵循的行为规范（P0级硬约束）：")
 
-        # Add each soft guideline with optimization
-        # Only include specific sections that are essential for LLM behavior
-        essential_sections = ["首次启动"]
-
-        for rule in self.policy.soft_guidelines:
-            if rule.prompt_text and any(essential in rule.source_section for essential in essential_sections):
-                # Only include essential guidelines for LLM
-                parts.append(f"\n{rule.prompt_text}")
-
-        # Add identity rules (these are also prompt-injected)
-        # Only include "首次启动" related identity rules
+        # Add identity rules to ensure "首次启动" appears at the beginning (as it sets foundational behavior)
         for rule in self.policy.identity_rules:
             if rule.prompt_text and "首次启动" in rule.source_section:
                 parts.append(f"\n{rule.prompt_text}")
 
-        # Add P0 hard constraints that should be explicitly known to LLM
-        # These are critical safety/security constraints that need dual protection:
-        # 1. Known to LLM in system prompt (first line of defense)
-        # 2. Enforced by PolicyEngine at runtime (fallback protection)
-        p0_hard_constraint_sections = ["安全准则"]
-        for rule in self.policy.hard_constraints:
-            if rule.prompt_text and any(p0_section in rule.source_section for p0_section in p0_hard_constraint_sections):
-                parts.append(f"\n{rule.prompt_text}")
+        # Look for any rules that have P0 indicators in their source section names
+        # This dynamically identifies any section marked with P0 markers
+        for rule in self.policy.hard_constraints + self.policy.soft_guidelines:
+            if rule.prompt_text:
+                # Check if the section name contains P0-level markers
+                section_lower = rule.source_section.lower()
+                has_p0_marker = ("p0" in section_lower or "(p0)" in section_lower or
+                                 "p0级" in rule.source_section or "优先级p0" in rule.source_section)
+
+                if has_p0_marker:
+                    parts.append(f"\n{rule.prompt_text}")
+
+                # Also check if the prompt text itself contains P0 indicators
+                elif any(indicator in rule.prompt_text.lower() for indicator in ["p0", "(p0)", "p0级", "p0层面", "最高优先级", "优先级p0"]):
+                    parts.append(f"\n{rule.prompt_text}")
 
         guidelines = "\n".join(parts)
 
         # Further optimize by limiting length if too large
-        if len(guidelines) > 500:  # Further reduced limit to ~500 characters
-            guidelines = guidelines[:500] + "\n... (内容截断以优化性能)"
+        if len(guidelines) > 800:  # Increased slightly to allow more P0 content
+            guidelines = guidelines[:800] + "\n... (内容截断以优化性能)"
 
         logger.debug(
             "System prompt guidelines built",
             extra={
                 "length": len(guidelines),
-                "guidelines_summary": guidelines[:200] + ("..." if len(guidelines) > 200 else "")
+                "guidelines_summary": guidelines[:200] + ("..." if len(guidelines) > 200 else ""),
+                "parts_count": len(parts)
             }
         )
 

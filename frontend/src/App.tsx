@@ -21,6 +21,7 @@ function App() {
     streamingModel,
     connectionStatus,
     sendMessage,
+    confirmToolCall,
     createSession,
     loadHistory,
   } = useChat({ sessionId: null });
@@ -80,6 +81,7 @@ function App() {
       isLoading={isLoading}
       isConnecting={!isInitialized}
       onSendMessage={sendMessage}
+      onToolConfirm={confirmToolCall}
       connectionStatus={connectionStatus}
       onOpenSettings={() => setView('settings')}
       onNewSession={async () => {

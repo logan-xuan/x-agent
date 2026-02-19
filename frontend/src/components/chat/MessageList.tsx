@@ -9,13 +9,15 @@ interface MessageListProps {
   streamingContent?: string;
   streamingModel?: string;
   isLoading?: boolean;
+  onToolConfirm?: (toolCallId: string, confirmationId?: string, command?: string) => void;
 }
 
-export function MessageList({ 
-  messages, 
-  streamingContent, 
+export function MessageList({
+  messages,
+  streamingContent,
   streamingModel,
-  isLoading = false 
+  isLoading = false,
+  onToolConfirm,
 }: MessageListProps) {
   const listEndRef = useRef<HTMLDivElement>(null);
   
@@ -59,12 +61,20 @@ export function MessageList({
       
       {/* Message list */}
       {messages.map((message) => (
-        <MessageItem key={message.id} message={message} />
+        <MessageItem
+          key={message.id}
+          message={message}
+          onToolConfirm={onToolConfirm}
+        />
       ))}
-      
+
       {/* Streaming message */}
       {streamingMessage && (
-        <MessageItem message={streamingMessage} isStreaming />
+        <MessageItem
+          message={streamingMessage}
+          isStreaming
+          onToolConfirm={onToolConfirm}
+        />
       )}
       
       {/* Loading indicator */}

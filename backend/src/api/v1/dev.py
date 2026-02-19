@@ -1,6 +1,7 @@
 """Developer mode API endpoints for debugging and prompt testing."""
 
 import json
+import subprocess
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -20,6 +21,9 @@ logger = get_logger(__name__)
 
 # Path to prompt log file
 PROMPT_LOG_PATH = Path(__file__).parent.parent.parent.parent / "logs" / "prompt-llm.log"
+
+# Path to backend root (for running tests)
+BACKEND_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 class PromptTestRequest(BaseModel):
@@ -265,4 +269,241 @@ async def test_prompt_stream(request: PromptTestRequest) -> StreamingResponse:
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
         }
+    )
+
+
+# =============================================================================
+# Compression Test APIs
+# =============================================================================
+
+class CompressionTestRequest(BaseModel):
+    """Compression test request model."""
+    test_type: str  # "token_counter" | "compressor"
+
+
+class CompressionTestResponse(BaseModel):
+    """Compression test response model."""
+    success: bool
+    test_type: str
+    output: str
+    duration_ms: int
+    error: str | None = None
+
+
+@router.post("/compression-test", response_model=CompressionTestResponse)
+async def run_compression_test(request: CompressionTestRequest) -> CompressionTestResponse:
+    """Run compression-related unit tests.
+    
+    Args:
+        request: Test request with test_type ("token_counter" or "compressor")
+        
+    Returns:
+        Test execution results with output
+    """
+    start_time = time.time()
+    
+    # Validate test type
+    valid_tests = ["token_counter", "compressor"]
+    if request.test_type not in valid_tests:
+        return CompressionTestResponse(
+            success=False,
+            test_type=request.test_type,
+            output="",
+            duration_ms=0,
+            error=f"Invalid test type. Must be one of: {', '.join(valid_tests)}"
+        )
+    
+    # Map test type to test file
+    test_files = {
+        "token_counter": "tests/unit/test_token_counter.py",
+        "compressor": "tests/unit/test_compressor.py",
+    }
+    
+    test_file = test_files[request.test_type]
+    test_path = BACKEND_ROOT / test_file
+    
+    # Check if test file exists
+    if not test_path.exists():
+        return CompressionTestResponse(
+            success=False,
+            test_type=request.test_type,
+            output="",
+            duration_ms=0,
+            error=f"Test file not found: {test_file}"
+        )
+    
+    try:
+        # Run pytest with verbose output
+        result = subprocess.run(
+            ["python", "-m", "pytest", str(test_path), "-v"],
+            cwd=BACKEND_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60  # 60 second timeout
+        )
+        
+        duration_ms = int((time.time() - start_time) * 1000)
+        
+        # Combine stdout and stderr
+        output = result.stdout
+        if result.stderr:
+            output += "\n\n=== STDERR ===\n" + result.stderr
+        
+        return CompressionTestResponse(
+            success=result.returncode == 0,
+            test_type=request.test_type,
+            output=output,
+            duration_ms=duration_ms,
+            error=None if result.returncode == 0 else f"Tests failed with exit code {result.returncode}"
+        )
+        
+    except subprocess.TimeoutExpired:
+        duration_ms = int((time.time() - start_time) * 1000)
+        return CompressionTestResponse(
+            success=False,
+            test_type=request.test_type,
+            output="",
+            duration_ms=duration_ms,
+            error="Test execution timed out (60s)"
+        )
+    except Exception as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.error("Compression test failed", extra={"error": str(e), "test_type": request.test_type})
+        return CompressionTestResponse(
+            success=False,
+            test_type=request.test_type,
+            output="",
+            duration_ms=duration_ms,
+            error=f"Failed to run tests: {str(e)}"
+        )
+
+
+@router.get("/compression-test/list")
+async def list_compression_tests() -> dict[str, Any]:
+    """List available compression tests.
+
+    Returns:
+        List of available test types
+    """
+    return {
+        "tests": [
+            {
+                "id": "token_counter",
+                "name": "Token计数器测试",
+                "description": "测试TokenCounter的计数准确性，包括中英文、边界条件",
+                "file": "tests/unit/test_token_counter.py"
+            },
+            {
+                "id": "compressor",
+                "name": "压缩器测试",
+                "description": "测试ContextCompressor的压缩逻辑、消息列表构建",
+                "file": "tests/unit/test_compressor.py"
+            }
+        ]
+    }
+
+
+# =============================================================================
+# Compression Record Query APIs
+# =============================================================================
+
+class CompressionRecordQueryResponse(BaseModel):
+    """Compression record query response model."""
+    records: list[dict]
+    total: int
+
+
+# =============================================================================
+# Compression Record Query APIs
+# =============================================================================
+
+from typing import Any, Dict, List
+from pydantic import BaseModel
+from fastapi import Query
+from sqlalchemy import select
+import json
+from datetime import datetime
+
+from ...models.compression import CompressionEvent
+from ...services.storage import get_storage_service
+
+
+class CompressionRecord(BaseModel):
+    """Individual compression record."""
+    id: str
+    sessionId: str
+    originalMessageCount: int
+    compressedMessageCount: int
+    originalTokenCount: int
+    compressedTokenCount: int
+    compressionRatio: float
+    compressionTime: str
+    originalMessages: List[Dict[str, Any]]
+    compressedMessages: List[Dict[str, Any]]
+
+
+class CompressionRecordQueryResponse(BaseModel):
+    """Compression record query response model."""
+    records: List[CompressionRecord]
+    total: int
+
+
+@router.get("/compression-records", response_model=CompressionRecordQueryResponse)
+async def query_compression_records(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+) -> CompressionRecordQueryResponse:
+    """Query compression history records.
+
+    Args:
+        limit: Maximum number of records to return (default: 20, max: 100)
+        offset: Offset for pagination (default: 0)
+
+    Returns:
+        List of compression records with pagination info
+    """
+    storage = get_storage_service()
+
+    async with storage.session() as db:
+        # Query compression events with pagination
+        result = await db.execute(
+            select(CompressionEvent)
+            .order_by(CompressionEvent.compression_time.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        events = result.scalars().all()
+
+        # Count total records for pagination
+        count_result = await db.execute(select(CompressionEvent))
+        total = len(count_result.scalars().all())
+
+        # Convert to response format
+        records = []
+        for event in events:
+            try:
+                original_messages = json.loads(event.original_messages) if event.original_messages else []
+                compressed_messages = json.loads(event.compressed_messages) if event.compressed_messages else []
+            except json.JSONDecodeError:
+                # If JSON parsing fails, use empty arrays
+                original_messages = []
+                compressed_messages = []
+
+            record = CompressionRecord(
+                id=event.id,
+                sessionId=event.session_id,
+                originalMessageCount=event.original_message_count,
+                compressedMessageCount=event.compressed_message_count,
+                originalTokenCount=event.original_token_count,
+                compressedTokenCount=event.compressed_token_count,
+                compressionRatio=event.compression_ratio,
+                compressionTime=event.compression_time.isoformat() if event.compression_time else "",
+                originalMessages=original_messages,
+                compressedMessages=compressed_messages
+            )
+            records.append(record)
+
+    return CompressionRecordQueryResponse(
+        records=records,
+        total=total
     )
