@@ -757,7 +757,7 @@ Only install if the package is NOT found. This prevents unnecessary re-installat
 
 **BEFORE** creating any presentation, follow this checklist:
 
-1. **Check dependencies FIRST** (prevents 90% of failures):
+1. **Check Python dependencies FIRST** (prevents 90% of failures):
    ```bash
    # Check if python-pptx is installed
    pip show python-pptx
@@ -771,15 +771,34 @@ Only install if the package is NOT found. This prevents unnecessary re-installat
    pip install --user python-pptx
    ```
 
-2. **Verify installation succeeded**:
+2. **Check Node.js dependencies** (if using html2pptx workflow):
    ```bash
-   # Quick verification command
-   python -c "from pptx import Presentation; print('✅ python-pptx ready')"
+   # Check if pptxgenjs is installed globally
+   npm list -g pptxgenjs
+   
+   # Expected output if installed:
+   # /path/to/node_modules
+   # └── pptxgenjs@3.x.x
+   
+   # If NOT installed, install with:
+   npm install -g pptxgenjs
+   
+   # ⚠️ IMPORTANT: Do NOT run npm install every time!
+   # Only install if the package is NOT found.
    ```
 
-3. **Create target directories**:
+3. **Verify installation succeeded**:
    ```bash
-   # Ensure output directories exist
+   # Quick verification command for Python
+   python -c "from pptx import Presentation; print('✅ python-pptx ready')"
+   
+   # Quick verification for Node.js
+   node -e "const pptxgen = require('pptxgenjs'); console.log('✅ pptxgenjs ready')"
+   ```
+
+4. **Create target directories**:
+   ```bash
+   # Ensure output directories exist in workspace (NOT backend!)
    mkdir -p workspace/scripts workspace/presentations
    ```
 

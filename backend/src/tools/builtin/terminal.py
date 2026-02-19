@@ -677,6 +677,16 @@ class RunInTerminalTool(BaseTool):
                             "📦 [DEPENDENCY INSTALL] Package already installed - informed LLM to skip reinstallation",
                             extra={"command": command}
                         )
+                    
+                    # npm: Check if package was already installed
+                    # npm output: "up to date" means already installed
+                    if 'npm' in command and 'install' in command:
+                        if 'up to date' in stdout_str.lower() or 'already' in stdout_str.lower():
+                            output += "\n\n⚠️  NOTE: npm package is already installed! No need to install again."
+                            logger.info(
+                                "📦 [DEPENDENCY INSTALL] npm package already installed - informed LLM to skip reinstallation",
+                                extra={"command": command}
+                            )
                     # =====================================================================
                 else:
                     logger.error(
