@@ -160,6 +160,14 @@ export function MessageInput({
               onSelect={handleSkillSelect}
               onClose={() => setShowSkillMenu(false)}
               anchorPosition={menuPosition}
+              searchQuery={(() => {
+                // Extract text after last /
+                const lastSlashIndex = message.lastIndexOf('/');
+                if (lastSlashIndex !== -1) {
+                  return message.substring(lastSlashIndex + 1).trim();
+                }
+                return '';
+              })()}
             />
           )}
           

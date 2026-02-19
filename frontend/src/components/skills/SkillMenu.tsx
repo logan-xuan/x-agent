@@ -6,12 +6,36 @@ interface SkillMenuProps {
   onSelect: (skillName: string) => void;
   onClose: () => void;
   anchorPosition?: { x: number; y: number };
+  searchQuery?: string; // Search query from input
 }
 
-export function SkillMenu({ skills, onSelect, onClose, anchorPosition }: SkillMenuProps) {
+export function SkillMenu({ skills, onSelect, onClose, anchorPosition, searchQuery = '' }: SkillMenuProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
-  const filteredSkills = skills.filter(s => s.user_invocable);
+  
+  // Filter skills based on search query (fuzzy match)
+  const filteredSkills = skills
+    .filter(s => s.user_invocable)
+    .filter(skill => {
+      if (!searchQuery) return true;
+      
+      const query = searchQuery.toLowerCase();
+      const name = skill.name.toLowerCase();
+      const description = skill.description?.toLowerCase() || '';
+      
+      // Fuzzy matching: check if query matches any part of skill name or description
+      return name.includes(query) || 
+             description.includes(query) ||
+             // Match initials (e.g., "pp" matches "pptx")
+             name.split(/[-_]/).some(part => part.startsWith(query)) ||
+             // Match consecutive characters
+             Array.from(name).filter(char => query.includes(char)).length >= query.length * 0.5;
+    });
+  
+  // Reset selection when filter changes
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [searchQuery]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -65,11 +89,16 @@ export function SkillMenu({ skills, onSelect, onClose, anchorPosition }: SkillMe
     >
       <div className="p-2 border-b border-gray-200 dark:border-gray-700">
         <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          可用技能 ({filteredSkills.length})
+          可用技能 {searchQuery && `(匹配 "${searchQuery}")`} ({filteredSkills.length})
         </div>
         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
           使用 ↑↓ 导航，Enter 选择，Esc 关闭
         </div>
+        {searchQuery && filteredSkills.length === 0 && (
+          <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+            未找到匹配的技能，试试其他关键词？
+          </div>
+        )}
       </div>
       
       <div className="py-1">
