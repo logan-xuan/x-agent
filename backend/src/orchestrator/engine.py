@@ -117,6 +117,12 @@ class Orchestrator:
             tool_manager=self._tool_manager,
         )
         
+        # Skill registry for discovering and managing skills
+        self._skill_registry = SkillRegistry(self.workspace_path)
+        
+        # Phase 2: Store current skill context for tool restrictions
+        self._current_skill_context: Any = None
+        
         # Task planning components
         from ..config.manager import ConfigManager
         
@@ -347,6 +353,9 @@ class Orchestrator:
             # Get skill metadata
             skill = self._skill_registry.get_skill_metadata(skill_name)
             if skill:
+                # Phase 2: Set current skill context for tool restrictions
+                self._current_skill_context = skill
+                
                 logger.info(
                     f"Skill '{skill_name}' loaded",
                     extra={
@@ -386,6 +395,8 @@ class Orchestrator:
                 }
         else:
             skill_context_msg = None
+            # Clear skill context for non-skill commands
+            self._current_skill_context = None
         
         # Step 1: Policy Reload
         policy, reloaded = self.policy_engine.reload_if_changed()
@@ -491,6 +502,7 @@ class Orchestrator:
                 messages,
                 tools=self._tool_manager.get_all_tools(),
                 session_id=session_id,
+                skill_context=self._current_skill_context,  # Phase 2 - Pass skill context for tool restrictions
             ):
                 event_type = event.get("type")
                 
@@ -723,6 +735,7 @@ class Orchestrator:
                                     messages,
                                     tools=self._tool_manager.get_all_tools(),
                                     session_id=session_id,
+                                    skill_context=self._current_skill_context,  # Phase 2
                                 ):
                                     event_type = event.get("type")
                                     

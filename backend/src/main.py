@@ -267,6 +267,7 @@ def create_app() -> FastAPI:
     from .api.v1.stats import router as stats_router
     from .api.v1.memory import router as memory_router
     from .api.v1.trace import router as trace_router
+    from .api.v1.skills import router as skills_router
     from .api.websocket import router as websocket_router
     
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
@@ -278,6 +279,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
     app.include_router(dev_router, prefix="/api/v1", tags=["Developer"])
     app.include_router(trace_router, prefix="/api/v1", tags=["Trace"])
+    app.include_router(skills_router, prefix="/api/v1", tags=["Skills"])
     app.include_router(websocket_router, prefix="/ws", tags=["WebSocket"])
     
     return app
