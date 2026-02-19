@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Button } from '../ui/Button';
-import { queryCompressionRecords, type CompressionRecordQueryResponse } from '../../services/api';
+import { queryCompressionRecords } from '../../services/api';
 
 interface CompressionRecord {
   id: string;

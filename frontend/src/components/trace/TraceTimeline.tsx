@@ -338,7 +338,7 @@ function TraceTimeline({ traceData, onEventSelect }: TraceTimelineProps) {
             没有找到匹配的事件
           </div>
         ) : (
-          allEvents.map((event, index) => {
+          allEvents.map((event) => {
             const isExpanded = expandedEvents.has(event.id);
             const eventColorClass = getEventColor(event.eventType);
 
