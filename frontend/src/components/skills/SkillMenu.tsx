@@ -21,7 +21,10 @@ export function SkillMenu({ skills, onSelect, onClose, anchorPosition, searchQue
       
       const query = searchQuery.toLowerCase();
       const name = skill.name.toLowerCase();
-      const description = skill.description?.toLowerCase() || '';
+      // Safely handle description - could be string or object
+      const description = typeof skill.description === 'string' 
+        ? skill.description.toLowerCase() 
+        : '';
       
       // Fuzzy matching: check if query matches any part of skill name or description
       return name.includes(query) || 
