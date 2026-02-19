@@ -573,7 +573,8 @@ class RunInTerminalTool(BaseTool):
             if is_background:
                 return await self._execute_background(command, cwd)
             else:
-                return await self._execute_foreground(command, cwd, timeout)
+                # Pass is_install_command to foreground execution for logging
+                return await self._execute_foreground(command, cwd, timeout, is_install_command)
         
         except Exception as e:
             # ===== ADD DETAILED ERROR LOGGING FOR INSTALL FAILURES =====
@@ -602,6 +603,7 @@ class RunInTerminalTool(BaseTool):
         command: str,
         cwd: Path,
         timeout: int,
+        is_install_command: bool = False,  # Added for dependency installation logging
     ) -> ToolResult:
         """Execute command in foreground (blocking).
         
@@ -609,6 +611,7 @@ class RunInTerminalTool(BaseTool):
             command: Command to execute
             cwd: Working directory
             timeout: Timeout in seconds
+            is_install_command: Whether this is a dependency installation command
             
         Returns:
             ToolResult with output
