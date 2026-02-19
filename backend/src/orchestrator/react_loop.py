@@ -496,20 +496,23 @@ class ReActLoop:
             r'移动.*文件|move.*file|rename.*file',
             r'读取.*文件|read.*file|open.*file',
             
-            # PPT/Document creation
+            # PPT/Document creation - expanded patterns
             r'创建.*PPT|create.*PPT|make.*presentation|generate.*PPT',
-            r'创建.*文档 | create.*document|make.*doc',
+            r'创建.*文档|create.*document|make.*doc',
             r'生成.*PPT|generate.*presentation',
             r'制作.*幻灯片|make.*slides',
-            r'写.*脚本 | write.*script|create.*script',
+            r'制作.*PPT|制作一个.*PPT',  # "制作PPT" or "制作一个PPT"
+            r'做.*PPT|做一个.*PPT',  # "做PPT" or "做一个PPT"
+            r'需要.*PPT|需要制作.*PPT',  # "需要PPT" or "需要制作PPT"
+            r'写.*脚本|write.*script|create.*script',
             
             # Code execution
             r'运行.*代码|run.*code|execute.*script',
             r'执行.*命令|execute.*command|run.*command',
             
             # Terminal operations
-            r'安装.*库 | install.*package|pip install',
-            r'创建目录 | create.*directory|mkdir',
+            r'安装.*库|install.*package|pip install',
+            r'创建目录|create.*directory|mkdir',
             
             # Web search
             r'搜索.*信息|search.*information|look up',

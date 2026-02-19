@@ -65,6 +65,7 @@ class AnalysisRequest(BaseModel):
     """Request for trace analysis."""
     focus_areas: list[str] = Field(default_factory=list, description="Areas to focus on: performance, error, llm_usage")
     include_suggestions: bool = Field(default=True, description="Include optimization suggestions")
+    force_reanalyze: bool = Field(default=False, description="Force re-analysis even if cached result exists")
 
 
 class Insight(BaseModel):
@@ -212,12 +213,12 @@ async def analyze_trace(
     log_dir: str = Query(default="logs", description="Log directory path")
 ) -> AnalysisResponse:
     """Analyze trace with LLM to identify issues and optimization opportunities.
-    
+
     Args:
         trace_id: Trace ID to analyze
         request: Analysis request with options
         log_dir: Directory containing log files
-        
+
     Returns:
         Analysis result with insights and suggestions
     """
@@ -227,24 +228,26 @@ async def analyze_trace(
             extra={
                 'trace_id': trace_id,
                 'focus_areas': request.focus_areas,
+                'force_reanalyze': request.force_reanalyze,
             }
         )
-        
+
         # Resolve log directory path
         backend_dir = Path(__file__).parent.parent.parent.parent
         log_path = (backend_dir / log_dir).resolve()
-        
+
         # Use trace analyzer for LLM-based analysis
         from ...main import get_llm_router
         llm_router = get_llm_router()
         analyzer = get_trace_analyzer(llm_router=llm_router, log_dir=str(log_path))
-        
+
         # Perform analysis
         result = await analyzer.analyze(
             trace_id,
             focus_areas=request.focus_areas,
+            force_reanalyze=request.force_reanalyze,
         )
-        
+
         # Convert insights to Insight model
         insights = [
             Insight(
@@ -256,13 +259,13 @@ async def analyze_trace(
             )
             for insight in result.get('insights', [])
         ]
-        
+
         return AnalysisResponse(
             analysis=result.get('analysis', ''),
             insights=insights,
             suggestions=result.get('suggestions', []),
         )
-    
+
     except Exception as e:
         logger.error(
             f"Failed to analyze trace",
