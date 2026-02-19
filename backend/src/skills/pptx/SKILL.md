@@ -734,3 +734,193 @@ Only install if the package is NOT found. This prevents unnecessary re-installat
 3. **Install once**: After successful installation, assume the package remains available
 4. **Don't re-install unnecessarily**: If a package was installed earlier in the conversation, do not install it again unless there's a specific error indicating it's missing
 5. **Handle confirmation delays**: After requesting user confirmation for installation, wait for the result before proceeding. Do not assume failure if the response is delayed.
+
+## Execution Best Practices
+
+### Pre-flight Checklist (P0 Priority)
+
+**BEFORE** creating any presentation, follow this checklist:
+
+1. **Check dependencies FIRST** (prevents 90% of failures):
+   ```bash
+   # Check if python-pptx is installed
+   pip show python-pptx
+   
+   # Expected output if installed:
+   # Name: python-pptx
+   # Version: 1.x.x
+   # ...
+   
+   # If NOT installed (returncode != 0), install with:
+   pip install --user python-pptx
+   ```
+
+2. **Verify installation succeeded**:
+   ```bash
+   # Quick verification command
+   python -c "from pptx import Presentation; print('✅ python-pptx ready')"
+   ```
+
+3. **Create target directories**:
+   ```bash
+   # Ensure output directories exist
+   mkdir -p workspace/scripts workspace/presentations
+   ```
+
+### Error Handling Patterns
+
+**Common errors and their solutions:**
+
+1. **ImportError: No module named 'pptx'**
+   ```python
+   # ❌ WRONG - Don't just try to run the script
+   try:
+       from pptx import Presentation
+   except ImportError:
+       # This will fail silently
+       pass
+   
+   # ✅ CORRECT - Check and install proactively
+   import subprocess
+   import sys
+   
+   def ensure_dependencies():
+       """Check and install dependencies if needed."""
+       try:
+           from pptx import Presentation
+           return True
+       except ImportError:
+           print("Installing python-pptx...")
+           subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "python-pptx"])
+           return True
+   ```
+
+2. **FileNotFoundError: [Errno 2] No such file or directory**
+   ```python
+   # ✅ Always create directories before writing files
+   import os
+   
+   output_dir = 'presentations'
+   os.makedirs(output_dir, exist_ok=True)  # Create if not exists
+   output_path = os.path.join(output_dir, 'presentation.pptx')
+   ```
+
+3. **PermissionError: [Errno 13] Permission denied**
+   ```python
+   # ✅ Use --user flag for pip installations
+   # pip install --user python-pptx
+   
+   # ✅ Or check file permissions
+   import os
+   import stat
+   
+   # Make script executable if needed
+   os.chmod(script_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+   ```
+
+### Fallback Strategies
+
+**If primary method fails, have backup plans:**
+
+1. **If python-pptx fails completely:**
+   - Option A: Use HTML + Sharp workflow (see html2pptx.md)
+   - Option B: Generate markdown outline for manual editing
+   - Option C: Provide step-by-step instructions for user
+
+2. **If file creation fails:**
+   - Try alternative paths (current directory, /tmp, etc.)
+   - Ask user for preferred location
+   - Generate content but let user save manually
+
+3. **If execution timeout occurs:**
+   - Break into smaller steps
+   - Create simpler version first
+   - Provide partial results
+
+### Step-by-Step Execution Flow
+
+**For complex tasks, use incremental approach:**
+
+```python
+def create_presentation_safe():
+    """Create PPTX with safety checks at each step."""
+    
+    # Step 1: Verify environment
+    print("Step 1: Checking environment...")
+    if not check_python_version(3, 8):
+        raise Exception("Python 3.8+ required")
+    
+    # Step 2: Check/install dependencies
+    print("Step 2: Verifying dependencies...")
+    ensure_dependencies()
+    
+    # Step 3: Create test slide (quick validation)
+    print("Step 3: Creating test slide...")
+    test_prs = Presentation()
+    test_prs.slides.add_slide(test_prs.slide_layouts[0])
+    test_path = '/tmp/test.pptx'
+    test_prs.save(test_path)
+    
+    # Step 4: Verify test succeeded
+    print("Step 4: Verifying test output...")
+    if not os.path.exists(test_path):
+        raise Exception("Test failed - cannot create PPTX")
+    
+    # Step 5: Create full presentation
+    print("Step 5: Creating final presentation...")
+    prs = create_full_presentation()
+    
+    # Step 6: Save and verify
+    print("Step 6: Saving and validating...")
+    output_path = 'presentations/final.pptx'
+    os.makedirs('presentations', exist_ok=True)
+    prs.save(output_path)
+    
+    # Step 7: Final validation
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print(f"✅ Success! File saved to: {output_path}")
+        return output_path
+    else:
+        raise Exception("Final validation failed")
+```
+
+### Testing Guidelines
+
+**Before delivering to user, verify:**
+
+1. **File exists**: `os.path.exists(output_path)`
+2. **File size > 0**: `os.path.getsize(output_path) > 0`
+3. **Can be opened**: Try opening with python-pptx
+4. **Slide count correct**: Verify expected number of slides
+5. **Content present**: Spot-check key slides
+
+```python
+def validate_presentation(filepath, expected_slides=None):
+    """Validate PPTX file integrity."""
+    from pptx import Presentation
+    
+    # Check file exists
+    if not os.path.exists(filepath):
+        return False, "File does not exist"
+    
+    # Check file size
+    size = os.path.getsize(filepath)
+    if size == 0:
+        return False, "File is empty"
+    if size < 1024:  # Less than 1KB suspicious
+        return False, f"File too small: {size} bytes"
+    
+    # Try to open
+    try:
+        prs = Presentation(filepath)
+    except Exception as e:
+        return False, f"Cannot open file: {e}"
+    
+    # Check slide count
+    actual_slides = len(prs.slides)
+    if expected_slides and actual_slides != expected_slides:
+        return False, f"Expected {expected_slides} slides, got {actual_slides}"
+    
+    # All checks passed
+    return True, f"Valid PPTX with {actual_slides} slides"
+```
