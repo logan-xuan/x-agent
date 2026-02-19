@@ -971,6 +971,30 @@ class Orchestrator:
                 "✅ 用户：'帮我创建一个 PPT'\n"
                 "✅ AI：[思考后调用 read_file 读取技能文档] → [调用 write_file 创建脚本] → [调用 run_in_terminal 执行脚本] → 'PPT 已创建完成，保存在 /path/to/file.pptx'"
             )
+            
+            # ===== SPECIAL EMPHASIS FOR PPT GENERATION =====
+            system_parts.append(
+                "\n\n# ⚠️ 特别警告：PPT 生成的常见错误\n"
+                "**当用户说'制作 PPT'、'创建演示文稿'、'生成幻灯片'时：**\n"
+                "1. ❌ **绝对不要**使用 `fs.writeFileSync('xxx.txt', content)` 创建 .txt 文件\n"
+                "2. ✅ **必须**使用 PptxGenJS 的 `pptx.writeFile()` 方法生成 .pptx 文件\n"
+                "3. ❌ **不要**只创建"内容大纲"或"脚本文件"就声称完成了 PPT\n"
+                "4. ✅ **必须**生成实际的 .pptx 二进制文件（可以在 PowerPoint 中打开）\n\n"
+                "**判断标准：**\n"
+                "- 如果生成的文件不能在 PowerPoint/Keynote 中直接打开 = ❌ 失败\n"
+                "- 如果生成的文件是 .pptx 格式且可以在 PowerPoint 中打开 = ✅ 成功\n\n"
+                "**正确示例：**\n"
+                "```javascript\n"
+                "const pptx = new PptxGenJS();\n"
+                "pptx.addSlide().addText('标题', { fontSize: 36 });\n"
+                "await pptx.writeFile({ fileName: 'presentations/demo.pptx' }); // 生成真正的 PPTX 文件\n"
+                "```\n\n"
+                "**错误示例（严禁出现）：**\n"
+                "```javascript\n"
+                "fs.writeFileSync('presentation-outline.txt', '第 1 页：标题...'); // 这只是文本文件，不是 PPT！\n"
+                "console.log('PPT 已创建'); // 错误的声明！\n"
+                "```"
+            )
         
         # ===== Inject Skills (after tools) =====
         skills = self._skill_registry.list_all_skills()
