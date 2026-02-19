@@ -667,6 +667,17 @@ class RunInTerminalTool(BaseTool):
                             "stderr_length": len(stderr_str),
                         }
                     )
+                    
+                    # ===== SMART DETECTION: Check if package was already installed =====
+                    # This prevents LLM from thinking installation failed when it's actually OK
+                    if 'pip' in command and 'Requirement already satisfied' in stdout_str:
+                        # Add a clear note to prevent LLM confusion
+                        output += "\n\n⚠️  NOTE: Package is already installed! No need to install again."
+                        logger.info(
+                            "📦 [DEPENDENCY INSTALL] Package already installed - informed LLM to skip reinstallation",
+                            extra={"command": command}
+                        )
+                    # =====================================================================
                 else:
                     logger.error(
                         "❌ [DEPENDENCY INSTALL] Installation failed with non-zero exit code",
