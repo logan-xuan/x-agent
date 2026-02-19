@@ -16,6 +16,7 @@ Security features:
 
 import asyncio
 import shlex
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,84 @@ SENSITIVE_COMMANDS = {
     "passwd",
     "chpasswd",
 }
+
+# Global store for pending confirmations (tool_call_id -> command)
+# This is used to verify that user has confirmed the command
+_pending_confirmations: dict[str, dict[str, Any]] = {}
+
+
+def generate_confirmation_id() -> str:
+    """Generate a unique confirmation ID."""
+    return f"confirm_{uuid.uuid4().hex[:12]}"
+
+
+def store_pending_confirmation(confirmation_id: str, command: str, tool_call_id: str) -> None:
+    """Store a pending confirmation for later verification."""
+    _pending_confirmations[confirmation_id] = {
+        "command": command,
+        "tool_call_id": tool_call_id,
+        "confirmed": False,
+    }
+    logger.info(
+        "Stored pending confirmation",
+        extra={"confirmation_id": confirmation_id, "command": command}
+    )
+
+
+def set_confirmation_confirmed(confirmation_id: str) -> bool:
+    """Mark a confirmation as confirmed by user."""
+    if confirmation_id in _pending_confirmations:
+        _pending_confirmations[confirmation_id]["confirmed"] = True
+        logger.info(
+            "Confirmation marked as confirmed",
+            extra={"confirmation_id": confirmation_id}
+        )
+        return True
+    return False
+
+
+def verify_and_consume_confirmation(confirmation_id: str, command: str) -> bool:
+    """Verify and consume a confirmation.
+    
+    Returns True if the confirmation is valid and matches the command.
+    The confirmation is consumed (removed) after verification.
+    """
+    if confirmation_id not in _pending_confirmations:
+        logger.warning(
+            "Confirmation not found",
+            extra={"confirmation_id": confirmation_id}
+        )
+        return False
+    
+    pending = _pending_confirmations[confirmation_id]
+    
+    # Verify command matches
+    if pending["command"] != command:
+        logger.warning(
+            "Confirmation command mismatch",
+            extra={
+                "confirmation_id": confirmation_id,
+                "expected": pending["command"],
+                "actual": command
+            }
+        )
+        return False
+    
+    # Check if confirmed
+    if not pending["confirmed"]:
+        logger.warning(
+            "Confirmation not yet approved by user",
+            extra={"confirmation_id": confirmation_id}
+        )
+        return False
+    
+    # Consume the confirmation
+    del _pending_confirmations[confirmation_id]
+    logger.info(
+        "Confirmation verified and consumed",
+        extra={"confirmation_id": confirmation_id, "command": command}
+    )
+    return True
 
 
 class RunInTerminalTool(BaseTool):
@@ -169,11 +248,11 @@ class RunInTerminalTool(BaseTool):
     def description(self) -> str:
         return (
             "Execute a shell command in the terminal. "
-            "Returns the command output. "
-            "Common use cases: listing files (ls), searching (grep), "
-            "file operations (cp, mv, mkdir), git commands, npm/yarn/pip operations, "
-            "running scripts. "
-            "Dangerous commands like 'rm' are blocked for safety."
+            "Use this tool to perform file operations (delete, copy, move), run scripts, git commands, etc. "
+            "IMPORTANT: Always call this tool directly when you need to execute a command. "
+            "If a command requires user confirmation (e.g., rm, npm install), the system will automatically "
+            "show a confirmation dialog to the user. Do NOT ask the user for confirmation yourself - "
+            "just call the tool and the system will handle the confirmation flow."
         )
     
     @property
@@ -213,16 +292,25 @@ class RunInTerminalTool(BaseTool):
                 required=False,
                 default=False,
             ),
+            ToolParameter(
+                name="confirmation_id",
+                type=ToolParameterType.STRING,
+                description="The confirmation ID received from previous high-risk command response. Required when confirmed=true.",
+                required=False,
+                default="",
+            ),
         ]
     
     def _extract_command(self, command: str) -> str:
         """Extract the base command from a command string.
         
+        This extracts the first command in the string (preserving sudo/su).
+        
         Args:
             command: Full command string
             
         Returns:
-            Base command name
+            Base command name (including sudo/su if present)
         """
         # Handle command chains (&&, ||, ;)
         for separator in ["&&", "||", ";"]:
@@ -235,40 +323,74 @@ class RunInTerminalTool(BaseTool):
             if not parts:
                 return ""
             
-            # Handle sudo/su prefix
-            base_cmd = parts[0]
-            if base_cmd in ("sudo", "su") and len(parts) > 1:
-                base_cmd = parts[1]
-            
-            # Remove path prefix if present
-            return Path(base_cmd).name
+            # Return the first part (preserves sudo/su for blocking)
+            return Path(parts[0]).name
         except ValueError:
             # If shlex fails, simple split
             return command.strip().split()[0] if command.strip() else ""
     
-    def _is_command_allowed(self, command: str) -> tuple[bool, str | None]:
-        """Check if a command is allowed to execute.
+    def _extract_target_command(self, command: str) -> str:
+        """Extract the target command being executed (after sudo/su).
+        
+        This is used to check the actual command being run after sudo/su.
+        
+        Args:
+            command: Full command string
+            
+        Returns:
+            Target command name (the command after sudo/su)
+        """
+        # Handle command chains
+        for separator in ["&&", "||", ";"]:
+            if separator in command:
+                command = command.split(separator)[0]
+        
+        try:
+            parts = shlex.split(command.strip())
+            if not parts:
+                return ""
+            
+            base_cmd = parts[0]
+            # Handle sudo/su prefix - return the actual command being executed
+            if base_cmd in ("sudo", "su") and len(parts) > 1:
+                return Path(parts[1]).name
+            
+            return Path(base_cmd).name
+        except ValueError:
+            return command.strip().split()[0] if command.strip() else ""
+    
+    def _check_command_status(self, command: str) -> tuple[str, str | None]:
+        """Check command status and return appropriate action.
         
         Args:
             command: Command string to check
             
         Returns:
-            Tuple of (is_allowed, error_message)
+            Tuple of (status, message) where status is:
+            - 'allowed': Command can execute directly
+            - 'blocked': Command is in blacklist (permanently blocked)
+            - 'high_risk': Command requires user confirmation
         """
         base_cmd = self._extract_command(command)
         
         if not base_cmd:
-            return False, "Empty command"
+            return 'blocked', "Empty command"
         
-        # Check blacklist
-        if base_cmd in self.blacklist:
-            return False, f"Command '{base_cmd}' is blocked for safety reasons"
-        
-        # Check sensitive commands
+        # Check sensitive commands (always blocked)
         if base_cmd in SENSITIVE_COMMANDS:
-            return False, f"Command '{base_cmd}' requires elevated privileges and is blocked"
+            return 'blocked', f"Command '{base_cmd}' requires elevated privileges and is blocked"
         
-        return True, None
+        # Check blacklist (blocked but can be shown to user)
+        if base_cmd in self.blacklist:
+            return 'blocked', f"Command '{base_cmd}' is blocked for safety reasons. This command cannot be executed."
+        
+        # Check high-risk commands (requires confirmation)
+        # Use target command (after sudo/su) for high-risk check
+        target_cmd = self._extract_target_command(command)
+        if target_cmd in self.high_risk_commands:
+            return 'high_risk', f"Command '{target_cmd}' is high-risk and requires your confirmation"
+        
+        return 'allowed', None
     
     def _is_high_risk_command(self, command: str) -> tuple[bool, str | None]:
         """Check if a command is high-risk and requires user confirmation.
@@ -321,6 +443,7 @@ class RunInTerminalTool(BaseTool):
         timeout: int = 60,
         is_background: bool = False,
         confirmed: bool = False,
+        confirmation_id: str = "",
     ) -> ToolResult:
         """Execute a shell command.
         
@@ -330,36 +453,75 @@ class RunInTerminalTool(BaseTool):
             timeout: Timeout in seconds
             is_background: Whether to run in background
             confirmed: Whether user has confirmed high-risk command execution
+            confirmation_id: The confirmation ID for verification
             
         Returns:
             ToolResult with command output or error
         """
-        # Validate command
-        is_allowed, error = self._is_command_allowed(command)
-        if not is_allowed:
+        # Check command status
+        status, message = self._check_command_status(command)
+        
+        # Handle blocked commands (blacklist) - show to user but cannot execute
+        if status == 'blocked':
             logger.warning(
                 "Blocked command execution",
-                extra={"command": command, "reason": error}
-            )
-            return ToolResult.error_result(error or "Command not allowed")
-        
-        # Check for high-risk commands
-        is_high_risk, warning = self._is_high_risk_command(command)
-        if is_high_risk and not confirmed:
-            logger.warning(
-                "High-risk command requires confirmation",
-                extra={"command": command, "warning": warning}
+                extra={"command": command, "reason": message}
             )
             return ToolResult.error_result(
-                f"{warning}. Set 'confirmed=true' to execute this command.",
-                requires_confirmation=True,
+                message or "Command not allowed",
+                is_blocked=True,
                 command=command,
             )
         
-        if is_high_risk and confirmed:
+        # Handle high-risk commands - require user confirmation with verification
+        if status == 'high_risk':
+            if not confirmed:
+                # Generate a new confirmation ID and store it
+                new_confirmation_id = generate_confirmation_id()
+                store_pending_confirmation(new_confirmation_id, command, "")
+                
+                logger.warning(
+                    "High-risk command requires confirmation",
+                    extra={
+                        "command": command,
+                        "warning": message,
+                        "confirmation_id": new_confirmation_id,
+                    }
+                )
+                return ToolResult.error_result(
+                    f"{message}. Click 'Confirm' to execute this command.",
+                    requires_confirmation=True,
+                    command=command,
+                    confirmation_id=new_confirmation_id,
+                )
+            
+            # Verify the confirmation ID
+            if not confirmation_id:
+                logger.warning(
+                    "High-risk command missing confirmation_id",
+                    extra={"command": command}
+                )
+                return ToolResult.error_result(
+                    "High-risk command requires valid confirmation_id. "
+                    "Please click 'Confirm' in the UI to authorize this command.",
+                    requires_confirmation=True,
+                    command=command,
+                )
+            
+            if not verify_and_consume_confirmation(confirmation_id, command):
+                logger.warning(
+                    "High-risk command confirmation verification failed",
+                    extra={"command": command, "confirmation_id": confirmation_id}
+                )
+                return ToolResult.error_result(
+                    "Invalid or expired confirmation. Please click 'Confirm' in the UI to authorize this command.",
+                    requires_confirmation=True,
+                    command=command,
+                )
+            
             logger.info(
                 "High-risk command confirmed by user",
-                extra={"command": command}
+                extra={"command": command, "confirmation_id": confirmation_id}
             )
         
         # Validate working directory
@@ -385,9 +547,27 @@ class RunInTerminalTool(BaseTool):
                 "working_dir": str(cwd),
                 "is_background": is_background,
                 "timeout": timeout,
-                "is_high_risk": is_high_risk,
+                "status": status,
             }
         )
+        
+        # ===== ADD DETAILED LOGGING FOR DEPENDENCY INSTALLATION DEBUGGING =====
+        is_install_command = 'pip install' in command or 'npm install' in command
+        if is_install_command:
+            from datetime import datetime
+            logger.info(
+                "🔍 [DEPENDENCY INSTALL] Starting dependency installation",
+                extra={
+                    "install_type": "pip" if 'pip' in command else "npm",
+                    "command": command,
+                    "timestamp": datetime.now().isoformat(),
+                    "requires_confirmation": status == 'high_risk',
+                    "already_confirmed": confirmed,
+                    "confirmation_id": confirmation_id if confirmed else None,
+                    "working_dir": str(cwd),
+                }
+            )
+        # =======================================================================
         
         try:
             if is_background:
@@ -396,6 +576,21 @@ class RunInTerminalTool(BaseTool):
                 return await self._execute_foreground(command, cwd, timeout)
         
         except Exception as e:
+            # ===== ADD DETAILED ERROR LOGGING FOR INSTALL FAILURES =====
+            if is_install_command:
+                from datetime import datetime
+                logger.error(
+                    "❌ [DEPENDENCY INSTALL] Installation failed with exception",
+                    extra={
+                        "install_type": "pip" if 'pip' in command else "npm",
+                        "command": command,
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat(),
+                        "exception_type": type(e).__name__,
+                    }
+                )
+            # ================================================================
+            
             logger.error(
                 "Command execution failed",
                 extra={"command": command, "error": str(e)}
@@ -453,6 +648,34 @@ class RunInTerminalTool(BaseTool):
                 was_truncated = True
             
             success = process.returncode == 0
+            
+            # ===== ADD DETAILED LOGGING FOR INSTALL RESULTS =====
+            if is_install_command:
+                from datetime import datetime
+                if success:
+                    logger.info(
+                        "✅ [DEPENDENCY INSTALL] Installation completed successfully",
+                        extra={
+                            "install_type": "pip" if 'pip' in command else "npm",
+                            "command": command,
+                            "returncode": process.returncode,
+                            "timestamp": datetime.now().isoformat(),
+                            "stdout_length": len(stdout_str),
+                            "stderr_length": len(stderr_str),
+                        }
+                    )
+                else:
+                    logger.error(
+                        "❌ [DEPENDENCY INSTALL] Installation failed with non-zero exit code",
+                        extra={
+                            "install_type": "pip" if 'pip' in command else "npm",
+                            "command": command,
+                            "returncode": process.returncode,
+                            "timestamp": datetime.now().isoformat(),
+                            "error_preview": stderr_str[:200] if stderr_str else stdout_str[:200],
+                        }
+                    )
+            # ===================================================
             
             logger.info(
                 "Command completed",
