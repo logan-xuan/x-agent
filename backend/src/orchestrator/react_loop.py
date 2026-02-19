@@ -513,6 +513,12 @@ class ReActLoop:
             
             # Web search
             r'搜索.*信息|search.*information|look up',
+            
+            # Skill commands (CRITICAL: These MUST trigger tool calls)
+            r'/pptx\s+',  # /pptx command followed by whitespace
+            r'/xlsx\s+',  # /xlsx command
+            r'/pdf\s+',   # /pdf command
+            r'/skill\s+', # /skill command
         ]
         
         import re
