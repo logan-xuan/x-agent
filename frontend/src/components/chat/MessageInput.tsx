@@ -109,8 +109,16 @@ export function MessageInput({
       return;
     }
     
-    // Send on Enter (without Shift) but only when not composing (IME input)
+    // Handle Enter key
     if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+      // If skill menu is open, prevent send - user should select skill first
+      if (showSkillMenu) {
+        e.preventDefault();
+        // Don't close menu automatically - let user navigate with arrows or click
+        return;
+      }
+      
+      // Normal send behavior when menu is closed
       e.preventDefault();
       handleSend();
     }
