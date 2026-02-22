@@ -8,7 +8,7 @@ Adds milestone validation for hybrid scheduling.
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..utils.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -27,6 +27,7 @@ class PlanState:
         iteration_count: ReAct 迭代次数
         replan_count: 重规划次数（防止无限循环）
         milestones_validated: 已验证的里程碑列表
+        structured_plan: StructuredPlan v2.0 对象（可选）
     """
     original_plan: str
     current_step: int = 1
@@ -37,6 +38,7 @@ class PlanState:
     iteration_count: int = 0
     replan_count: int = 0  # 新增：重规划次数
     milestones_validated: list[str] = field(default_factory=list)  # 新增：已验证里程碑
+    structured_plan: Any = None  # 新增：StructuredPlan v2.0 引用
     
     def __post_init__(self):
         """初始化后计算总步骤数"""
@@ -285,9 +287,9 @@ class PlanContext:
         Returns:
             tuple[bool, str]: (是否通过，消息)
         """
-        from .milestone_validator import get_milestone_validator
-            
-        validator = get_milestone_validator()
+        # Use old MilestoneValidator for v1.0 plans (backward compatibility)
+        from . import milestone_validator as legacy_milestone_validator
+        validator = legacy_milestone_validator.get_milestone_validator()
         result = validator.validate(milestone_name, context)
             
         if result.passed:

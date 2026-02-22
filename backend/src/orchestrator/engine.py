@@ -28,7 +28,12 @@ from .react_loop import (
 from .guards import SessionGuard, ResponseGuard
 from .task_analyzer import TaskAnalyzer, get_task_analyzer
 from .light_planner import LightPlanner, get_light_planner
+from .structured_planner import StructuredPlanner, get_structured_planner
 from .plan_context import PlanContext, PlanState, get_plan_context
+# Use relative imports within the orchestrator package
+from .models.plan import StructuredPlan, ToolConstraints
+from .validators.tool_validator import ToolConstraintValidator
+from .validators.milestone_validator import MilestoneValidator
 from ..config.manager import ConfigManager
 from ..memory.context_builder import ContextBuilder, get_context_builder
 from ..memory.hybrid_search import HybridSearch, get_hybrid_search
@@ -42,7 +47,7 @@ from ..services.smart_memory import get_smart_memory_service
 from ..services.skill_registry import SkillRegistry, get_skill_registry
 from ..tools.manager import ToolManager, get_tool_manager
 from ..tools.builtin import get_builtin_tools
-from ..utils.logger import get_logger
+from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from ..core.session import SessionManager
@@ -137,6 +142,9 @@ class Orchestrator:
         
         self._light_planner: LightPlanner | None = None
         
+        # Structured Planner for v2.0 (optional, used when skill is specified)
+        self._structured_planner: StructuredPlanner | None = None
+        
         # Plan context manager (uses config from x-agent.yaml)
         from ..config.models import PlanConfig
         
@@ -148,6 +156,12 @@ class Orchestrator:
             plan_config = PlanConfig()
         
         self._plan_context = PlanContext(config=plan_config)
+        
+        # Tool constraint validator (will be initialized per request when needed)
+        self._tool_validator: ToolConstraintValidator | None = None
+        
+        # Milestone validator (will be initialized per request when needed)
+        self._milestone_validator: MilestoneValidator | None = None
         
         # Skill registry (for discovering and managing skills)
         from ..services.skill_registry import get_skill_registry
@@ -210,6 +224,15 @@ class Orchestrator:
         if self._light_planner is None:
             self._light_planner = LightPlanner(self._llm_router)
         return self._light_planner
+    
+    def _get_structured_planner(self) -> StructuredPlanner:
+        """Get or create structured planner instance."""
+        if self._structured_planner is None:
+            self._structured_planner = StructuredPlanner(
+                llm_router=self._llm_router,
+                skill_registry=self._skill_registry,
+            )
+        return self._structured_planner
     
     def _search_relevant_memory(
         self,
@@ -314,11 +337,17 @@ class Orchestrator:
                 "session_id": session_id,
                 "session_type": session_type.value,
                 "message_length": len(user_message),
+                "user_message_preview": user_message[:100] if len(user_message) > 100 else user_message,
             }
         )
         
+        # ===== CRITICAL DEBUG LOGS =====
+        logger.info(f"[PROCESS_REQUEST_START] session={session_id}, message={user_message[:100]}")
+        
         # Step 0: Task Analysis (fast rule-based, no LLM call)
+        logger.info(f"[TASK_ANALYSIS_START] Analyzing message: {user_message[:50]}...")
         analysis = self._task_analyzer.analyze(user_message)
+        logger.info(f"[TASK_ANALYSIS_DONE] complexity={analysis.complexity}, needs_plan={analysis.needs_plan}, matched_skills={analysis.matched_skills}")
         logger.info(
             "Task analysis completed",
             extra={
@@ -340,7 +369,10 @@ class Orchestrator:
         }
         
         # Step 0.5: Parse Skill Command (Phase 2 - Argument Passing)
+        logger.info(f"[SKILL_PARSE_START] Parsing skill command from: {user_message[:50]}...")
         skill_name, arguments = TaskAnalyzer.parse_skill_command(user_message)
+        logger.info(f"[SKILL_PARSE_RESULT] skill_name={skill_name}, arguments={arguments}")
+        
         if skill_name:
             logger.info(
                 "Skill command detected",
@@ -351,11 +383,22 @@ class Orchestrator:
                 }
             )
             
-            # Get skill metadata
-            skill = self._skill_registry.get_skill_metadata(skill_name)
+            # Get skill metadata - CRITICAL DEBUG POINT
+            logger.info(f"[SKILL_METADATA_START] Getting metadata for skill: {skill_name}")
+            try:
+                skill = self._skill_registry.get_skill_metadata(skill_name)
+                logger.info(f"[SKILL_METADATA_RESULT] skill type={type(skill).__name__}, has_scripts={skill.has_scripts if skill else None}")
+            except Exception as e:
+                logger.error(f"[SKILL_METADATA_ERROR] Failed to get skill metadata: {e}", exc_info=True)
+                raise
+            
             if skill:
                 # Phase 2: Set current skill context for tool restrictions
                 self._current_skill_context = skill
+                
+                # Debug: Check skill attributes
+                logger.info(f"[SKILL_CHECK] skill.name={skill.name}, type(skill.description)={type(skill.description).__name__}, skill.description={skill.description[:50] if skill.description else None}...")
+                logger.info(f"[SKILL_CHECK] skill.has_scripts={skill.has_scripts}, skill.allowed_tools={skill.allowed_tools}, skill.argument_hint={skill.argument_hint}")
                 
                 logger.info(
                     f"Skill '{skill_name}' loaded",
@@ -442,32 +485,79 @@ class Orchestrator:
         
         # Step 3.6: Generate Plan (if needed)
         plan_state: PlanState | None = None
+        structured_plan: StructuredPlan | None = None
+        
         if analysis.needs_plan:
             try:
-                light_planner = self._get_light_planner()
-                plan_text = await light_planner.generate(
-                    goal=user_message,
-                    tools=[t.name for t in self._tool_manager.get_all_tools()],
-                )
-                plan_state = PlanState(
-                    original_plan=plan_text,
-                    current_step=1,
-                    total_steps=plan_text.count("\n") + 1,
-                    completed_steps=[],
-                    failed_count=0,
-                    last_adjustment=None,
-                )
-                logger.info(
-                    "Plan generated for complex task",
-                    extra={
-                        "session_id": session_id,
-                        "plan_steps": plan_state.total_steps,
-                        "plan_preview": plan_text[:100],
-                    }
-                )
+                # Check if skill is specified - use Structured Planner v2.0
+                if skill_name and analysis.matched_skills:
+                    logger.info(
+                        "Using StructuredPlanner v2.0 for skill-based task",
+                        extra={
+                            "session_id": session_id,
+                            "skill_name": skill_name,
+                        }
+                    )
+                    structured_planner = self._get_structured_planner()
+                    structured_plan = await structured_planner.generate(
+                        goal=user_message,
+                        skill_name=skill_name,
+                    )
+                    
+                    # Initialize validators
+                    self._tool_validator = ToolConstraintValidator(structured_plan)
+                    self._milestone_validator = MilestoneValidator(structured_plan)
+                    
+                    # Convert to PlanState for backward compatibility
+                    plan_text = structured_plan.to_prompt()
+                    plan_state = PlanState(
+                        original_plan=plan_text,
+                        current_step=1,
+                        total_steps=len(structured_plan.steps),
+                        completed_steps=[],
+                        failed_count=0,
+                        last_adjustment=None,
+                        structured_plan=structured_plan,  # Store reference
+                    )
+                    
+                    logger.info(
+                        "StructuredPlan v2.0 generated",
+                        extra={
+                            "session_id": session_id,
+                            "skill_binding": structured_plan.skill_binding,
+                            "tool_constraints": structured_plan.tool_constraints,
+                            "steps_count": len(structured_plan.steps),
+                            "milestones_count": len(structured_plan.milestones),
+                        }
+                    )
+                else:
+                    # Fallback to LightPlanner v1.0
+                    light_planner = self._get_light_planner()
+                    plan_text = await light_planner.generate(
+                        goal=user_message,
+                        tools=[t.name for t in self._tool_manager.get_all_tools()],
+                    )
+                    plan_state = PlanState(
+                        original_plan=plan_text,
+                        current_step=1,
+                        total_steps=plan_text.count("\n") + 1,
+                        completed_steps=[],
+                        failed_count=0,
+                        last_adjustment=None,
+                    )
+                    logger.info(
+                        "LightPlan v1.0 generated",
+                        extra={
+                            "session_id": session_id,
+                            "plan_steps": plan_state.total_steps,
+                            "plan_preview": plan_text[:100],
+                        }
+                    )
+                
                 yield {
                     "type": ORCH_EVENT_PLAN_GENERATED,
                     "plan": plan_text,
+                    "is_structured": structured_plan is not None,
                 }
             except Exception as e:
                 logger.warning(
@@ -524,18 +614,58 @@ class Orchestrator:
                     }
                 elif event_type == "tool_call":
                     tool_call_id = event.get("tool_call_id")
+                    tool_name = event.get("name")
+                    
+                    # ===== StructuredPlan v2.0: Tool Constraint Validation =====
+                    if self._tool_validator and hasattr(self._tool_validator, 'plan'):
+                        is_allowed, reason = self._tool_validator.is_tool_allowed(tool_name)
+                        
+                        if not is_allowed:
+                            logger.warning(
+                                "Tool constraint violation detected",
+                                extra={
+                                    "session_id": session_id,
+                                    "tool_name": tool_name,
+                                    "reason": reason,
+                                    "violation_count": self._tool_validator.violation_count,
+                                }
+                            )
+                            
+                            # Emit error event to inform LLM
+                            yield {
+                                "type": ORCH_EVENT_ERROR,
+                                "error": f"工具使用限制：{reason}",
+                            }
+                            
+                            # Check if we should trigger replan
+                            if self._tool_validator.should_trigger_replan():
+                                logger.info(
+                                    "Replan triggered due to repeated tool constraint violations",
+                                    extra={
+                                        "session_id": session_id,
+                                        "violation_count": self._tool_validator.violation_count,
+                                    }
+                                )
+                                yield {
+                                    "type": ORCH_EVENT_PLAN_ADJUSTMENT,
+                                    "reason": f"LLM 多次违反工具约束（{self._tool_validator.violation_count}次违规）",
+                                }
+                            
+                            # Skip this tool call - continue to next iteration
+                            continue
+                    
                     logger.info(
                         "Emitting tool_call event",
                         extra={
                             "tool_call_id": tool_call_id,
-                            "name": event.get("name"),
+                            "name": tool_name,
                             "raw_event_keys": list(event.keys()),
                         }
                     )
                     yield {
                         "type": ORCH_EVENT_TOOL_CALL,
                         "tool_call_id": tool_call_id,
-                        "name": event.get("name"),
+                        "name": tool_name,
                         "arguments": event.get("arguments"),
                     }
                 elif event_type == "tool_result":
@@ -554,28 +684,82 @@ class Orchestrator:
                             output=output,
                         )
                         
-                        # Check if this step requires milestone validation
-                        current_step_desc = self._get_current_step_description(plan_state)
-                        if current_step_desc and self._plan_context.should_validate_milestone(current_step_desc):
-                            # Perform milestone validation
-                            validation_context = self._build_validation_context(tool_name, output)
-                            passed, msg = self._plan_context.validate_milestone(
-                                plan_state,
-                                milestone_name=current_step_desc,
-                                context=validation_context,
-                            )
-                            
-                            if not passed:
-                                logger.warning(
-                                    "Milestone validation failed",
-                                    extra={
-                                        "session_id": session_id,
-                                        "milestone": current_step_desc,
-                                        "reason": msg,
-                                    }
+                        # ===== StructuredPlan v2.0: Milestone Validation =====
+                        if self._milestone_validator and hasattr(self._milestone_validator, 'plan'):
+                            try:
+                                # Use new MilestoneValidator for structured plans
+                                validation_passed, validation_msg = self._milestone_validator.check_and_advance(
+                                    tool_name=tool_name,
+                                    success=success,
+                                    output=output,
                                 )
-                                # Mark as failure to trigger replan if needed
-                                plan_state.failed_count += 1
+                                
+                                if validation_passed:
+                                    logger.info(
+                                        "Milestone validation passed",
+                                        extra={
+                                            "session_id": session_id,
+                                            "message": validation_msg,
+                                            "current_step": self._milestone_validator.current_step_index + 1,
+                                            "total_steps": len(self._milestone_validator.plan.steps),
+                                        }
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Milestone validation failed",
+                                        extra={
+                                            "session_id": session_id,
+                                            "reason": validation_msg,
+                                        }
+                                    )
+                                    plan_state.failed_count += 1
+                            except Exception as e:
+                                logger.warning(
+                                    "MilestoneValidator error, falling back to PlanContext validation",
+                                    extra={"error": str(e)}
+                                )
+                                # Fallback to old PlanContext validation
+                                current_step_desc = self._get_current_step_description(plan_state)
+                                if current_step_desc and self._plan_context.should_validate_milestone(current_step_desc):
+                                    validation_context = self._build_validation_context(tool_name, output)
+                                    passed, msg = self._plan_context.validate_milestone(
+                                        plan_state,
+                                        milestone_name=current_step_desc,
+                                        context=validation_context,
+                                    )
+                                    
+                                    if not passed:
+                                        logger.warning(
+                                            "Milestone validation failed (fallback)",
+                                            extra={
+                                                "session_id": session_id,
+                                                "milestone": current_step_desc,
+                                                "reason": msg,
+                                            }
+                                        )
+                                        plan_state.failed_count += 1
+                        else:
+                            # Fallback to old PlanContext validation for v1.0 plans
+                            current_step_desc = self._get_current_step_description(plan_state)
+                            if current_step_desc and self._plan_context.should_validate_milestone(current_step_desc):
+                                validation_context = self._build_validation_context(tool_name, output)
+                                passed, msg = self._plan_context.validate_milestone(
+                                    plan_state,
+                                    milestone_name=current_step_desc,
+                                    context=validation_context,
+                                )
+                                
+                                if not passed:
+                                    logger.warning(
+                                        "Milestone validation failed",
+                                        extra={
+                                            "session_id": session_id,
+                                            "milestone": current_step_desc,
+                                            "reason": msg,
+                                        }
+                                    )
+                                    # Mark as failure to trigger replan if needed
+                                    plan_state.failed_count += 1
                         
                         # Check if we need to re-plan
                         need_replan, reason = self._plan_context.should_replan(plan_state)
@@ -887,6 +1071,11 @@ class Orchestrator:
         Returns:
             Tuple of (messages list for LLM, compression info dict)
         """
+        # ===== CRITICAL DEBUG LOGS =====
+        logger.info(f"[BUILD_MESSAGES_START] context type={type(context).__name__}, skill_context_msg type={type(skill_context_msg).__name__ if skill_context_msg else None}")
+        if skill_context_msg:
+            logger.info(f"[BUILD_MESSAGES] skill_context_msg content preview: {skill_context_msg.get('content', '')[:100]}...")
+        
         messages = []
         system_parts = []
         
@@ -978,7 +1167,7 @@ class Orchestrator:
                 "**当用户说'制作 PPT'、'创建演示文稿'、'生成幻灯片'时：**\n"
                 "1. ❌ **绝对不要**使用 `fs.writeFileSync('xxx.txt', content)` 创建 .txt 文件\n"
                 "2. ✅ **必须**使用 PptxGenJS 的 `pptx.writeFile()` 方法生成 .pptx 文件\n"
-                "3. ❌ **不要**只创建"内容大纲"或"脚本文件"就声称完成了 PPT\n"
+                "3. ❌ **不要**只创建\"内容大纲\"或\"脚本文件\"就声称完成了 PPT\n"
                 "4. ✅ **必须**生成实际的 .pptx 二进制文件（可以在 PowerPoint 中打开）\n\n"
                 "**判断标准：**\n"
                 "- 如果生成的文件不能在 PowerPoint/Keynote 中直接打开 = ❌ 失败\n"
@@ -997,68 +1186,170 @@ class Orchestrator:
             )
         
         # ===== Inject Skills (after tools) =====
-        skills = self._skill_registry.list_all_skills()
-        if skills:
-            # Filter skills that LLM can auto-trigger
-            llm_callable_skills = [
-                s for s in skills 
-                if not s.disable_model_invocation and s.user_invocable
-            ]
+        # Optimization: If a specific skill is already being invoked via skill_context_msg,
+        # skip injecting all skills to avoid redundancy and save tokens
+        logger.info(f"[SKILL_INJECT_START] skill_context_msg exists={bool(skill_context_msg)}")
+        if not skill_context_msg:  # Only inject all skills if no specific skill is being invoked
+            logger.info(f"[SKILL_LIST_START] Getting all skills from registry")
+            try:
+                skills = self._skill_registry.list_all_skills()
+                logger.info(f"[SKILL_LIST_RESULT] Found {len(skills)} skills total")
+            except Exception as e:
+                logger.error(f"[SKILL_LIST_ERROR] Failed to list skills: {e}", exc_info=True)
+                raise
+            
+            if skills:
+                # Filter skills that LLM can auto-trigger
+                llm_callable_skills = [
+                    s for s in skills 
+                    if not s.disable_model_invocation and s.user_invocable
+                ]
+                        
+                if llm_callable_skills:
+                    # Limit to prevent token overflow
+                    MAX_SKILLS = 20
+                    MAX_DESC_LENGTH = 100
+                        
+                    display_skills = llm_callable_skills[:MAX_SKILLS]
+                    skill_descriptions = []
+                        
+                    logger.info(f"[SKILL_ITER_START] Iterating over {len(display_skills)} skills")
+                    for idx, skill in enumerate(display_skills):
+                        # Debug each skill's attributes
+                        logger.info(f"[SKILL_{idx}] name={skill.name}, description type={type(skill.description).__name__}, description len={len(skill.description) if skill.description else 0}")
+                        desc = skill.description[:MAX_DESC_LENGTH] if skill.description else ""
+                        # Only include skill name and description (path removed to save tokens)
+                        # LLM can still access skill files via read_file with skill name
+                        skill_desc = f"{skill.name}({desc})"
+                        skill_descriptions.append(skill_desc)
+                        
+                    system_parts.append(
+                        f"\n# 可用技能\n你还可以使用以下技能：{', '.join(skill_descriptions)}"
+                    )
+                        
+                    # Add usage instructions (simplified, without path examples)
+                    system_parts.append(
+                        "\n\n**技能使用说明**："
+                        "技能是以目录形式组织的知识包。每个技能包含："
+                        "\n- SKILL.md：详细的使用指南和工作流程（通过 read_file 读取）"
+                        "\n- scripts/：可直接运行的示例代码（通过 run_in_terminal 执行）"
+                        "\n- references/：参考资料和文档（按需加载）"
+                        "\n- assets/：模板和资源文件（直接使用）"
+                        "\n\n你可以通过 read_file 工具读取任何技能的文件来学习如何使用它。"
+                        "当需要执行脚本时，使用 run_in_terminal 工具。"
+                    )
                     
-            if llm_callable_skills:
-                # Limit to prevent token overflow
-                MAX_SKILLS = 20
-                MAX_DESC_LENGTH = 100
+                    # ===== SPECIAL BINDINGS: Skill-specific CLI commands =====
+                    # Inject explicit CLI binding instructions for skills that require specific tools
+                    
+                    # 1. browser-automation → agent-browser CLI
+                    browser_skill = next((s for s in display_skills if s.name == "browser-automation"), None)
+                    if browser_skill:
+                        system_parts.append(
+                            "\n\n# ⚠️ 关键规则：browser-automation 技能专用命令\n"
+                            "**当用户调用 `/browser-automation` 或要求浏览器自动化操作时：**\n"
+                            "1. **必须使用 `run_in_terminal` 执行 `agent-browser` CLI 命令**\n"
+                            "2. **绝对不要使用 `web_search` 工具或普通的 `curl` 命令** - 这些无法实现真正的浏览器自动化\n"
+                            "3. **npm 包名**: `agent-browser` (Vercel Labs 开发)，**不是** `@browser-use/agent-browser`\n"
+                            "4. **正确的命令格式**：\n"
+                            "   - `agent-browser open <URL>` - 打开网页\n"
+                            "   - `agent-browser snapshot` - 查看可交互元素\n"
+                            "   - `agent-browser click <element_id>` - 点击元素\n"
+                            "   - `agent-browser type <element_id> <text>` - 输入文本\n"
+                            "   - `agent-browser screenshot` - 截图\n"
+                            "   - `agent-browser get <data_type>` - 获取数据\n"
+                            "\n\n**错误示例（绝对禁止）**：\n"
+                            "❌ 使用 `web_search` 工具搜索信息\n"
+                            "❌ 使用 `curl https://...` 抓取网页\n"
+                            "❌ 声称'已打开浏览器'但没有调用 `agent-browser` 命令\n"
+                            "❌ 执行 `npm install -g @browser-use/agent-browser` - 这是错误的包！\n\n"
+                            "**正确示例**：\n"
+                            "✅ 用户：'/browser-automation 打开 baidu.com'\n"
+                            "✅ AI：[调用 run_in_terminal] `agent-browser open https://baidu.com`\n"
+                            "✅ AI：[等待工具返回结果后] '已成功打开百度网站'"
+                        )
+                    
+                    # 2. pptx → web-artifacts-builder skill (if exists)
+                    pptx_skill = next((s for s in display_skills if s.name == "pptx"), None)
+                    if pptx_skill:
+                        system_parts.append(
+                            "\n\n# ⚠️ 关键规则：pptx 技能专用工具\n"
+                            "**当用户要求制作 PPT、创建演示文稿时：**\n"
+                            "1. **必须使用 `write_file` 创建 Node.js 脚本**\n"
+                            "2. **必须使用 PptxGenJS 库的 `pptx.writeFile()` 方法**\n"
+                            "3. **生成的文件必须是 .pptx 格式**（能在 PowerPoint 中打开）\n"
+                            "4. **绝对不要只创建 .txt 文本文件就声称完成了 PPT**\n\n"
+                            "**错误示例（绝对禁止）**：\n"
+                            "❌ `fs.writeFileSync('outline.txt', '第 1 页：标题...')` - 这只是文本文件\n"
+                            "❌ 声称'PPT 已创建'但生成的是 .txt 文件\n\n"
+                            "**正确示例**：\n"
+                            "✅ 使用 PptxGenJS：`await pptx.writeFile({ fileName: 'demo.pptx' })`"
+                        )
                         
-                display_skills = llm_callable_skills[:MAX_SKILLS]
-                skill_descriptions = []
-                        
-                for skill in display_skills:
-                    desc = skill.description[:MAX_DESC_LENGTH]
-                    # Include path information for file access (convert Path to string)
-                    skill_desc = f"{skill.name}(路径:{str(skill.path)}, {desc})"
-                    skill_descriptions.append(skill_desc)
-                        
-                system_parts.append(
-                    f"\n# 可用技能\n你还可以使用以下技能：{', '.join(skill_descriptions)}"
-                )
-                        
-                # Add usage instructions with path guidance
-                system_parts.append(
-                    "\n\n**技能使用说明**："
-                    "技能是以目录形式组织的知识包。每个技能包含："
-                    "\n- SKILL.md：详细的使用指南和工作流程（通过 read_file 读取，使用上面提供的路径）"
-                    "\n- scripts/：可直接运行的示例代码（通过 run_in_terminal 执行）"
-                    "\n- references/：参考资料和文档（按需加载）"
-                    "\n- assets/：模板和资源文件（直接使用）"
-                    "\n\n你可以通过 read_file 工具读取任何技能的文件来学习如何使用它。"
-                    "**重要：**使用上面提供的技能路径来访问技能文件，例如要读取 pptx 技能的 SKILL.md，使用路径：/path/to/pptx/SKILL.md"
-                    "当需要执行脚本时，使用 run_in_terminal 工具。"
-                )
-                        
-                logger.info(
-                    f"Injected {len(display_skills)} skills into system prompt",
-                    extra={
-                        "session_id": session_id,
-                        "skill_names": [s.name for s in display_skills],
-                        "total_skills": len(skills),
-                    }
-                )
+                    logger.info(
+                        f"Injected {len(display_skills)} skills into system prompt",
+                        extra={
+                            "session_id": session_id,
+                            "skill_names": [s.name for s in display_skills],
+                            "total_skills": len(skills),
+                        }
+                    )
         
         # Inject plan context (for complex tasks)
         if plan_state:
-            plan_context_text = self._plan_context.build_react_context(plan_state)
-            system_parts.append(f"\n# 执行计划\n{plan_context_text}")
-            system_parts.append("\n# 规划提示\n按计划逐步执行，如遇到困难可灵活调整。完成一步后在思考中说明进度。")
-            system_parts.append("\n# 效率优化提示\n**重要：**为提升执行效率，你可以在一轮思考中并行调用多个独立的工具（例如同时搜索多个关键词、同时读取多个文件），而不是逐一执行。只有当工具之间有依赖关系时才需要顺序执行。")
-            logger.info(
-                "Plan context injected into ReAct",
-                extra={
-                    "session_id": session_id,
-                    "current_step": plan_state.current_step,
-                    "total_steps": plan_state.total_steps,
-                }
-            )
+            # Check if we have a structured plan v2.0
+            if hasattr(plan_state, 'structured_plan') and plan_state.structured_plan:
+                structured_plan = plan_state.structured_plan
+                
+                # Inject structured plan with skill binding and tool constraints
+                plan_prompt = structured_plan.to_prompt()
+                system_parts.append(f"\n# 📋 结构化执行计划 v{structured_plan.version}\n{plan_prompt}")
+                
+                # Add explicit tool constraint instructions
+                if structured_plan.tool_constraints:
+                    if structured_plan.tool_constraints.allowed:
+                        allowed_tools = ', '.join(structured_plan.tool_constraints.allowed)
+                        system_parts.append(f"\n\n# ⚠️ **工具限制（必须遵守）**\n你**只能**使用以下工具：{allowed_tools}\n**禁止使用其他任何工具！**")
+                    
+                    if structured_plan.tool_constraints.forbidden:
+                        forbidden_tools = ', '.join(structured_plan.tool_constraints.forbidden)
+                        system_parts.append(f"\n\n# ❌ **禁止工具（绝对不可使用）**\n你**绝对不能**使用以下工具：{forbidden_tools}\n**违反此规则将导致任务失败！**")
+                
+                # Add skill-specific CLI binding instructions
+                if structured_plan.skill_binding == 'browser-automation':
+                    system_parts.append(
+                        "\n\n# 🔧 **技能绑定：browser-automation**\n"
+                        "**你必须使用 `run_in_terminal` 执行 `agent-browser` CLI 命令：**\n"
+                        "- ✅ `agent-browser open <URL>` - 打开网页\n"
+                        "- ✅ `agent-browser snapshot` - 查看元素\n"
+                        "- ✅ `agent-browser click <id>` - 点击元素\n"
+                        "- ✅ `agent-browser type <id> <text>` - 输入文本\n"
+                        "- ❌ **禁止使用 `web_search` 工具** - 它无法实现浏览器自动化\n"
+                    )
+                
+                logger.info(
+                    "StructuredPlan v2.0 injected into ReAct",
+                    extra={
+                        "session_id": session_id,
+                        "skill_binding": structured_plan.skill_binding,
+                        "tool_constraints": structured_plan.tool_constraints,
+                        "steps_count": len(structured_plan.steps),
+                    }
+                )
+            else:
+                # Fallback to v1.0 plan context
+                plan_context_text = self._plan_context.build_react_context(plan_state)
+                system_parts.append(f"\n# 执行计划\n{plan_context_text}")
+                system_parts.append("\n# 规划提示\n按计划逐步执行，如遇到困难可灵活调整。完成一步后在思考中说明进度。")
+                system_parts.append("\n# 效率优化提示\n**重要：**为提升执行效率，你可以在一轮思考中并行调用多个独立的工具（例如同时搜索多个关键词、同时读取多个文件），而不是逐一执行。只有当工具之间有依赖关系时才需要顺序执行。")
+                logger.info(
+                    "LightPlan v1.0 injected into ReAct",
+                    extra={
+                        "session_id": session_id,
+                        "current_step": plan_state.current_step,
+                        "total_steps": plan_state.total_steps,
+                    }
+                )
 
         # Add relevant memories (from hybrid search) - more precise than loading all
         if relevant_memories:
@@ -1071,14 +1362,17 @@ class Orchestrator:
         # Build system message
         system_message = "\n".join(system_parts) if system_parts else ""
         
-        # Phase 2: Add skill invocation context (if any)
+        # Phase 2: Add skill invocation context (if any) as the FIRST system message
         if skill_context_msg:
             messages.append(skill_context_msg)
         
-        messages.append({
-            "role": "system",
-            "content": system_message,
-        })
+        # Add the main system message with behavior guidelines, tools, skills, etc.
+        # Note: Only add once to avoid duplication
+        if system_message:
+            messages.append({
+                "role": "system",
+                "content": system_message,
+            })
         
         # Load conversation history from session
         history_messages = []
@@ -1104,8 +1398,7 @@ class Orchestrator:
         # Note: user_message is NOT appended here because it's already saved
         # in the database by Agent._chat_with_orchestrator_streaming before
         # calling Orchestrator.process_request
-        if system_message:
-            messages.append({"role": "system", "content": system_message})
+        # Note: system_message has already been added above, do NOT add it again
         
         # ===== CRITICAL FIX: Prevent context pollution from previous tasks =====
         # If there are many history messages, add a clear separator to indicate

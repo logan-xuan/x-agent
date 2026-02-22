@@ -78,13 +78,21 @@ class Agent:
 
         # Initialize Orchestrator if enabled
         if self._use_orchestrator:
-            from ..orchestrator.engine import Orchestrator
-            self._orchestrator = Orchestrator(
-                workspace_path=self._resolved_workspace_path,
-                llm_router=self._llm_router,
-                session_manager=self._session_manager,
-            )
-            logger.info("Agent initialized with Orchestrator")
+            # Lazy import to avoid circular dependency
+            try:
+                from ..orchestrator.engine import Orchestrator
+                self._orchestrator = Orchestrator(
+                    workspace_path=self._resolved_workspace_path,
+                    llm_router=self._llm_router,
+                    session_manager=self._session_manager,
+                )
+                logger.info("Agent initialized with Orchestrator")
+            except Exception as e:
+                logger.error(
+                    "Failed to initialize Orchestrator",
+                    extra={"error": str(e), "exc_info": True}
+                )
+                raise
         
         # Initialize context compression manager
         self._compression_manager = ContextCompressionManager(
