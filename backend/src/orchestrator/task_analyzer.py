@@ -117,6 +117,21 @@ class TaskAnalyzer:
                 recommended_skill=None,
             )
         
+        # ===== 关键修复：检测 /command 格式的技能调用 =====
+        # 当用户直接使用 /command 调用技能时，强制触发 Plan Mode
+        skill_name, arguments = self.parse_skill_command(user_message)
+        if skill_name:
+            # 用户明确调用了技能命令，这通常是复杂任务
+            # Fix: matched_skills must be list of dicts, not list of strings
+            return TaskAnalysis(
+                complexity="complex",
+                confidence=0.8,
+                indicators=[f"skill_command_detected: {skill_name}"],
+                needs_plan=True,
+                matched_skills=[{"name": skill_name}],  # Fix: Wrap in dict
+                recommended_skill={"name": skill_name, "arguments": arguments},
+            )
+        
         score = 0.0
         indicators = []
         

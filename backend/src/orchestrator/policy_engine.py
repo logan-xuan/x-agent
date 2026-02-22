@@ -13,7 +13,7 @@ from typing import Any
 
 from .policy_parser import PolicyParser, PolicyBundle, Rule, RuleType
 from ..memory.models import SessionType
-from ..utils.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

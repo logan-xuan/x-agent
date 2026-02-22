@@ -19,7 +19,7 @@ from typing import Any, Callable
 from ..services.llm.router import LLMRouter
 from ..tools.base import BaseTool, ToolResult
 from ..tools.manager import ToolManager
-from ..utils.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -222,8 +222,10 @@ class ReActLoop:
                         )
                         
                         # Check if this requires user confirmation - stop the loop
-                        requires_confirmation = result.metadata.get("requires_confirmation", False)
-                        is_blocked = result.metadata.get("is_blocked", False)
+                        # Fix: Ensure metadata is a dict before accessing
+                        metadata_dict = result.metadata if isinstance(result.metadata, dict) else {}
+                        requires_confirmation = metadata_dict.get("requires_confirmation", False)
+                        is_blocked = metadata_dict.get("is_blocked", False)
                         
                         # Emit tool_result event
                         logger.info(
@@ -248,8 +250,9 @@ class ReActLoop:
                                 "error": result.error,
                                 "requires_confirmation": requires_confirmation,
                                 "is_blocked": is_blocked,
-                                "confirmation_id": result.metadata.get("confirmation_id", ""),
-                                "command": result.metadata.get("command", ""),
+                                # Fix: Ensure metadata is a dict before accessing
+                                "confirmation_id": result.metadata.get("confirmation_id", "") if isinstance(result.metadata, dict) else "",
+                                "command": result.metadata.get("command", "") if isinstance(result.metadata, dict) else "",
                             },
                         }
                         
@@ -260,15 +263,15 @@ class ReActLoop:
                                 "ReAct loop paused - awaiting user confirmation",
                                 extra={
                                     "tool_call_id": tool_call.id,
-                                    "confirmation_id": result.metadata.get("confirmation_id"),
+                                    "confirmation_id": metadata_dict.get("confirmation_id"),
                                 }
                             )
                             # Emit a waiting event to tell frontend to wait for user
                             yield {
                                 "type": "awaiting_confirmation",
                                 "tool_call_id": tool_call.id,
-                                "confirmation_id": result.metadata.get("confirmation_id"),
-                                "command": result.metadata.get("command"),
+                                "confirmation_id": metadata_dict.get("confirmation_id"),
+                                "command": metadata_dict.get("command"),
                             }
                             # Don't continue the loop - wait for user action
                             return
@@ -522,6 +525,8 @@ class ReActLoop:
             r'/xlsx\s+',  # /xlsx command
             r'/pdf\s+',   # /pdf command
             r'/skill\s+', # /skill command
+            r'/browser-automation\s+',  # /browser-automation command
+            r'/browser\s+',  # /browser shorthand command
         ]
         
         import re
