@@ -416,11 +416,20 @@ class Orchestrator:
                 
                 # CLI command patterns (NOT natural language)
                 cli_command_patterns = [
-                    r'^open\s+https?://',  # open <url>
-                    r'^get\s+text\s+',      # get text <selector>
-                    r'^click\s+',           # click <selector>
-                    r'^screenshot',         # screenshot
-                    r'^close',              # close
+                    r'^open\s+https?://',      # open https://example.com
+                    r'^open\s+www\.',          # open www.example.com
+                    r'^open\s+[a-z0-9.-]+\.',  # open example.com (domain pattern)
+                    r'^get\s+text\s+',         # get text <selector>
+                    r'^click\s+',              # click <selector>
+                    r'^screenshot',            # screenshot
+                    r'^close',                 # close
+                    r'^fill\s+',               # fill <selector> <value>
+                    r'^type\s+',               # type <selector> <value>
+                    r'^navigate',              # navigate
+                    r'^back',                  # back
+                    r'^forward',               # forward
+                    r'^reload',                # reload
+                    r'^snapshot',              # snapshot
                 ]
                 
                 is_cli_command = any(re.match(pattern, arguments.strip()) for pattern in cli_command_patterns)
@@ -429,12 +438,46 @@ class Orchestrator:
                 natural_language_indicators = [
                     '帮我', '请', '想要', '需要',  # Request indicators
                     '获取.*内容', '打开.*网页', '点击.*按钮',  # Chinese verb-object phrases
+                    '搜索', '并', '然后', '最后',  # Multi-step indicators
+                    '数据', '信息', '结果',  # Data extraction indicators
                 ]
+                
+                # Check if there's additional natural language after CLI command
+                has_natural_language_suffix = False
+                if is_cli_command:
+                    # Try to detect if there's natural language after the CLI command
+                    # e.g., "open www.baidu.com 搜索今日天气" → should use ReAct
+                    cli_match = None
+                    for pattern in cli_command_patterns:
+                        match = re.match(pattern, arguments.strip())
+                        if match:
+                            cli_match = match
+                            break
+                    
+                    if cli_match:
+                        # Extract the part after the CLI command
+                        remaining_text = arguments[cli_match.end():].strip()
+                        if remaining_text:
+                            # Check if remaining text contains natural language
+                            has_natural_language_suffix = any(
+                                indicator in remaining_text 
+                                for indicator in natural_language_indicators
+                            )
+                            
+                            if has_natural_language_suffix:
+                                logger.info(
+                                    "Natural language suffix detected after CLI command",
+                                    extra={
+                                        "skill_name": skill_name,
+                                        "cli_command": arguments[:cli_match.end()],
+                                        "natural_suffix": remaining_text,
+                                    }
+                                )
                 
                 is_natural_language = (
                     not is_cli_command and  # Not a CLI command
                     any(indicator in arguments for indicator in natural_language_indicators)
-                )
+                ) or has_natural_language_suffix
                 
                 if is_natural_language:
                     logger.info(
@@ -495,6 +538,7 @@ class Orchestrator:
                 )
                 
                 # Add skill context to messages
+                messages = []  # Initialize messages list for building message history
                 skill_context_msg = {
                     "role": "system",
                     "content": (
@@ -513,21 +557,9 @@ class Orchestrator:
                         "role": "system",
                         "content": (
                             f"⚡ **CLI Command Format Important**:\n\n"
-                            f"The argument `{arguments}` starts with a CLI command pattern (e.g., 'open https://', 'get text', 'click').\n"
-                            f"This will be executed directly via FAST PATH using `agent-browser` CLI tool.\n\n"
-                            f"**Available CLI Commands**:\n"
-                            f"- `open <url>` - Navigate to URL\n"
-                            f"- `get text <selector>` - Extract text content\n"
-                            f"- `get html <selector>` - Extract HTML\n"
-                            f"- `click <selector>` - Click element\n"
-                            f"- `fill <selector> <value>` - Fill form field\n"
-                            f"- `type <selector> <text>` - Type text\n"
-                            f"- `screenshot [path]` - Take screenshot\n"
-                            f"- `snapshot` - Get accessibility tree\n"
-                            f"- `wait <condition>` - Wait for condition\n"
-                            f"- `close` - Close browser\n\n"
-                            f"**Do NOT use curl or wget to fetch web pages**. Use the agent-browser CLI commands above instead.\n"
-                            f"Example: Use `agent-browser open https://example.com` NOT `curl https://example.com`\n\n"
+                            f"The argument `{arguments}` starts with a CLI command pattern.\n"
+                            f"Use the appropriate CLI tool for this skill as documented in its SKILL.md file.\n\n"
+                            f"**Available Commands**: Refer to the skill's documentation for exact command format.\n\n"
                             f"---\n"
                         )
                     }
@@ -1255,6 +1287,29 @@ class Orchestrator:
             # Add explicit instruction for tool usage
             system_parts.append("\n# 工具使用规则\n**重要：当用户要求执行任何操作时，你必须立即调用相应的工具，而不是用文字询问用户确认。**\n例如：\n- 用户要求删除文件 → 直接调用 run_in_terminal 工具执行 rm 命令\n- 用户要求创建目录 → 直接调用 run_in_terminal 工具执行 mkdir 命令\n- 用户要求移动文件 → 直接调用 run_in_terminal 工具执行 mv 命令\n\n不要用文字询问用户是否确认。如果操作需要用户确认，系统会自动处理确认流程。")
             
+            # ===== CRITICAL: Time awareness requirement =====
+            system_parts.append(
+                "\n\n# ⏰ **关键规则：时间敏感性查询的强制要求**\n"
+                "**当用户问题中包含以下时间词时：**\n"
+                "- \"今天\"、\"今日\"、\"此刻\"、\"现在\"\n"
+                "- \"明天\"、\"明日\"、\"后天\"\n"
+                "- \"昨天\"、\"昨日\"、\"前天\"\n"
+                "- \"本周\"、\"本周 X\"、\"下周\"\n"
+                "- \"当前\"、\"目前\"、\"最近\"\n"
+                "- \"早上\"、\"下午\"、\"晚上\"（指当天）\n\n"
+                "**你必须严格遵守以下步骤：**\n"
+                "1️⃣ **第一步：必须立即调用 `get_current_time` 工具获取准确的当前日期和时间**\n"
+                "2️⃣ **第二步：基于获取到的实际日期，再进行后续查询（如天气、新闻等）**\n"
+                "3️⃣ **绝对禁止假设自己知道当前日期** - 你没有内置的时间概念\n"
+                "4️⃣ **绝对禁止跳过时间确认步骤** - 这是强制性要求，不是可选项\n\n"
+                "**错误示例（严禁出现）：**\n"
+                "❌ 用户：'今天杭州天气怎么样'\n"
+                "❌ AI：[直接调用 web_search 查询\"今天杭州天气\"] ← **没有先获取日期！**\n\n"
+                "**正确示例：**\n"
+                "✅ 用户：'今天杭州天气怎么样'\n"
+                "✅ AI：[调用 get_current_time] → 获取到\"2026-02-23\" → [调用 web_search 查询\"2026 年 2 月 23 日杭州天气\"]"
+            )
+            
             # ===== SCHEME 2: Enhanced tool call enforcement =====
             system_parts.append(
                 "\n\n# 关键规则：杜绝幻觉性完成声明\n"
@@ -1352,34 +1407,7 @@ class Orchestrator:
                     # ===== SPECIAL BINDINGS: Skill-specific CLI commands =====
                     # Inject explicit CLI binding instructions for skills that require specific tools
                     
-                    # 1. browser-automation → agent-browser CLI
-                    browser_skill = next((s for s in display_skills if s.name == "browser-automation"), None)
-                    if browser_skill:
-                        system_parts.append(
-                            "\n\n# ⚠️ 关键规则：browser-automation 技能专用命令\n"
-                            "**当用户调用 `/browser-automation` 或要求浏览器自动化操作时：**\n"
-                            "1. **必须使用 `run_in_terminal` 执行 `agent-browser` CLI 命令**\n"
-                            "2. **绝对不要使用 `web_search` 工具或普通的 `curl` 命令** - 这些无法实现真正的浏览器自动化\n"
-                            "3. **npm 包名**: `agent-browser` (Vercel Labs 开发)，**不是** `@browser-use/agent-browser`\n"
-                            "4. **正确的命令格式**：\n"
-                            "   - `agent-browser open <URL>` - 打开网页\n"
-                            "   - `agent-browser snapshot` - 查看可交互元素\n"
-                            "   - `agent-browser click <element_id>` - 点击元素\n"
-                            "   - `agent-browser type <element_id> <text>` - 输入文本\n"
-                            "   - `agent-browser screenshot` - 截图\n"
-                            "   - `agent-browser get <data_type>` - 获取数据\n"
-                            "\n\n**错误示例（绝对禁止）**：\n"
-                            "❌ 使用 `web_search` 工具搜索信息\n"
-                            "❌ 使用 `curl https://...` 抓取网页\n"
-                            "❌ 声称'已打开浏览器'但没有调用 `agent-browser` 命令\n"
-                            "❌ 执行 `npm install -g @browser-use/agent-browser` - 这是错误的包！\n\n"
-                            "**正确示例**：\n"
-                            "✅ 用户：'/browser-automation 打开 baidu.com'\n"
-                            "✅ AI：[调用 run_in_terminal] `agent-browser open https://baidu.com`\n"
-                            "✅ AI：[等待工具返回结果后] '已成功打开百度网站'"
-                        )
-                    
-                    # 2. pptx → web-artifacts-builder skill (if exists)
+                    # 1. pptx → web-artifacts-builder skill (if exists)
                     pptx_skill = next((s for s in display_skills if s.name == "pptx"), None)
                     if pptx_skill:
                         system_parts.append(
@@ -1425,16 +1453,13 @@ class Orchestrator:
                         forbidden_tools = ', '.join(structured_plan.tool_constraints.forbidden)
                         system_parts.append(f"\n\n# ❌ **禁止工具（绝对不可使用）**\n你**绝对不能**使用以下工具：{forbidden_tools}\n**违反此规则将导致任务失败！**")
                 
-                # Add skill-specific CLI binding instructions
-                if structured_plan.skill_binding == 'browser-automation':
+                # Add skill-specific CLI binding instructions for pptx skill
+                if structured_plan.skill_binding == 'pptx':
                     system_parts.append(
-                        "\n\n# 🔧 **技能绑定：browser-automation**\n"
-                        "**你必须使用 `run_in_terminal` 执行 `agent-browser` CLI 命令：**\n"
-                        "- ✅ `agent-browser open <URL>` - 打开网页\n"
-                        "- ✅ `agent-browser snapshot` - 查看元素\n"
-                        "- ✅ `agent-browser click <id>` - 点击元素\n"
-                        "- ✅ `agent-browser type <id> <text>` - 输入文本\n"
-                        "- ❌ **禁止使用 `web_search` 工具** - 它无法实现浏览器自动化\n"
+                        "\n\n# 🔧 **技能绑定：pptx**\n"
+                        "**你必须使用 `write_file` 创建 Node.js 脚本，并使用 PptxGenJS 库：**\n"
+                        "- ✅ 使用 `PptxGenJS`的`pptx.writeFile()` 方法生成.pptx 文件\n"
+                        "- ❌ **禁止只创建.txt 文本文件就声称完成了 PPT** - 必须生成真正的.pptx 二进制文件\n"
                     )
                 
                 logger.info(
@@ -1716,9 +1741,9 @@ async def _execute_skill_directly(
     )
     
     # Build CLI command from skill name and arguments
-    # For browser-automation: arguments become the CLI command
-    # Example: "open https://example.com" → "agent-browser open https://example.com"
-    cli_command = f"agent-browser {arguments}"
+    # The CLI command format depends on the specific skill
+    # Example: "input.pdf output.docx" → "pdftotext input.pdf output.docx"
+    cli_command = f"{skill.name}-cli {arguments}"  # Placeholder - actual command depends on skill
     
     logger.info(
         "Executing CLI command",
