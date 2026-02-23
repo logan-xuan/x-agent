@@ -11,6 +11,7 @@ The Orchestrator is the central coordinator that:
 This is the main entry point for processing user requests.
 """
 
+import re
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -370,7 +371,28 @@ class Orchestrator:
         
         # Step 0.5: Parse Skill Command (Phase 2 - Argument Passing)
         logger.info(f"[SKILL_PARSE_START] Parsing skill command from: {user_message[:50]}...")
+        
+        # Try exact /command format first
         skill_name, arguments = TaskAnalyzer.parse_skill_command(user_message)
+        
+        # If not /command format, try fuzzy matching with skill names
+        if not skill_name:
+            # Get available skills from registry cache
+            all_skills = self._skill_registry.list_all_skills()
+            if all_skills:
+                available_skills = [skill.name for skill in all_skills]
+                extracted_skill, remaining_msg = TaskAnalyzer.extract_skill_name(user_message, available_skills)
+                if extracted_skill:
+                    skill_name = extracted_skill
+                    arguments = remaining_msg
+                    logger.info(
+                        "Skill name detected via fuzzy matching (without slash)",
+                        extra={
+                            "skill_name": skill_name,
+                            "arguments": arguments,
+                        }
+                    )
+        
         logger.info(f"[SKILL_PARSE_RESULT] skill_name={skill_name}, arguments={arguments}")
         
         if skill_name:
@@ -383,6 +405,68 @@ class Orchestrator:
                 }
             )
             
+            # ===== FAST PATH: Direct skill execution =====
+            # If user explicitly invoked a skill with /command, skip complex planning
+            # and execute directly using the skill's CLI binding
+            # Note: Only trigger FAST PATH for simple CLI commands, not natural language
+            if skill_name and arguments:
+                # Check if arguments look like natural language (need semantic understanding)
+                # If so, fall through to ReAct loop for proper interpretation
+                # CRITICAL: Must distinguish between CLI commands and natural language
+                
+                # CLI command patterns (NOT natural language)
+                cli_command_patterns = [
+                    r'^open\s+https?://',  # open <url>
+                    r'^get\s+text\s+',      # get text <selector>
+                    r'^click\s+',           # click <selector>
+                    r'^screenshot',         # screenshot
+                    r'^close',              # close
+                ]
+                
+                is_cli_command = any(re.match(pattern, arguments.strip()) for pattern in cli_command_patterns)
+                
+                # Natural language indicators
+                natural_language_indicators = [
+                    '帮我', '请', '想要', '需要',  # Request indicators
+                    '获取.*内容', '打开.*网页', '点击.*按钮',  # Chinese verb-object phrases
+                ]
+                
+                is_natural_language = (
+                    not is_cli_command and  # Not a CLI command
+                    any(indicator in arguments for indicator in natural_language_indicators)
+                )
+                
+                if is_natural_language:
+                    logger.info(
+                        "Natural language detected, using ReAct loop for interpretation",
+                        extra={
+                            "skill_name": skill_name,
+                            "arguments": arguments,
+                        }
+                    )
+                    # Fall through to normal ReAct path
+                else:
+                    # Get skill metadata
+                    skill = self._skill_registry.get_skill_metadata(skill_name)
+                    
+                    # Check if this is a CLI-bound skill (has run_in_terminal in allowed_tools)
+                    # This includes skills without scripts but with CLI tool access
+                    if skill and ('run_in_terminal' in (skill.allowed_tools or [])):
+                        logger.info(
+                            "FAST PATH: Direct skill execution (bypassing ReAct loop)",
+                            extra={
+                                "skill_name": skill.name,
+                                "has_scripts": skill.has_scripts,
+                                "allowed_tools": skill.allowed_tools,
+                            }
+                        )
+                        
+                        # Execute skill's CLI command directly
+                        async for event in _execute_skill_directly(self._tool_manager, skill, arguments, session_id):
+                            yield event
+                        return
+            
+            # Fall back to normal path for skills without scripts or complex tasks
             # Get skill metadata - CRITICAL DEBUG POINT
             logger.info(f"[SKILL_METADATA_START] Getting metadata for skill: {skill_name}")
             try:
@@ -420,9 +504,35 @@ class Orchestrator:
                         f"**Available Scripts**: {'Yes' if skill.has_scripts else 'No'}\n\n"
                         f"You are now executing the '{skill_name}' skill. "
                         f"Follow the guidelines in this skill's SKILL.md and use the provided arguments.\n\n"
-                        f"---\n"
                     )
                 }
+                
+                # Add CLI command format guidance for skills with run_in_terminal
+                if 'run_in_terminal' in (skill.allowed_tools or []):
+                    cli_guidance_msg = {
+                        "role": "system",
+                        "content": (
+                            f"⚡ **CLI Command Format Important**:\n\n"
+                            f"The argument `{arguments}` starts with a CLI command pattern (e.g., 'open https://', 'get text', 'click').\n"
+                            f"This will be executed directly via FAST PATH using `agent-browser` CLI tool.\n\n"
+                            f"**Available CLI Commands**:\n"
+                            f"- `open <url>` - Navigate to URL\n"
+                            f"- `get text <selector>` - Extract text content\n"
+                            f"- `get html <selector>` - Extract HTML\n"
+                            f"- `click <selector>` - Click element\n"
+                            f"- `fill <selector> <value>` - Fill form field\n"
+                            f"- `type <selector> <text>` - Type text\n"
+                            f"- `screenshot [path]` - Take screenshot\n"
+                            f"- `snapshot` - Get accessibility tree\n"
+                            f"- `wait <condition>` - Wait for condition\n"
+                            f"- `close` - Close browser\n\n"
+                            f"**Do NOT use curl or wget to fetch web pages**. Use the agent-browser CLI commands above instead.\n"
+                            f"Example: Use `agent-browser open https://example.com` NOT `curl https://example.com`\n\n"
+                            f"---\n"
+                        )
+                    }
+                    # Insert after skill_context_msg
+                    messages.insert(len(messages), cli_guidance_msg)
             else:
                 logger.warning(
                     f"Skill '{skill_name}' not found in registry",
@@ -1576,3 +1686,95 @@ def reset_orchestrator() -> None:
     """Reset the global orchestrator instance."""
     global _orchestrator
     _orchestrator = None
+
+
+async def _execute_skill_directly(
+    tool_manager,
+    skill,
+    arguments: str,
+    session_id: str
+) -> AsyncGenerator[dict, None]:
+    """Execute skill's CLI command directly without ReAct loop.
+    
+    Args:
+        tool_manager: ToolManager instance
+        skill: SkillMetadata object
+        arguments: Skill arguments string (will be used as CLI command arguments)
+        session_id: Session ID for logging
+        
+    Yields:
+        Event dictionaries
+    """
+    from src.models.skill import SkillMetadata
+    
+    logger.info(
+        "Direct skill execution started",
+        extra={
+            "skill_name": skill.name,
+            "arguments": arguments,
+        }
+    )
+    
+    # Build CLI command from skill name and arguments
+    # For browser-automation: arguments become the CLI command
+    # Example: "open https://example.com" → "agent-browser open https://example.com"
+    cli_command = f"agent-browser {arguments}"
+    
+    logger.info(
+        "Executing CLI command",
+        extra={
+            "command": cli_command,
+            "skill_name": skill.name,
+        }
+    )
+    
+    try:
+        # Execute CLI command directly
+        result = await tool_manager.execute(
+            "run_in_terminal",
+            {"command": cli_command},
+            skill_context=skill,
+        )
+        
+        # Yield tool call event
+        yield {
+            "type": ORCH_EVENT_TOOL_CALL,
+            "tool_call_id": f"direct_{skill.name}",
+            "name": "run_in_terminal",
+            "arguments": {"command": cli_command},
+        }
+        
+        # Yield tool result event
+        yield {
+            "type": ORCH_EVENT_TOOL_RESULT,
+            "tool_call_id": f"direct_{skill.name}",
+            "tool_name": "run_in_terminal",
+            "success": result.success,
+            "output": result.output,
+            "error": result.error,
+        }
+        
+        # Yield final answer
+        if result.success:
+            yield {
+                "type": ORCH_EVENT_FINAL,
+                "content": f"✅ 技能 '{skill.name}' 执行成功:\n\n{result.output}",
+            }
+        else:
+            yield {
+                "type": ORCH_EVENT_FINAL,
+                "content": f"❌ 技能 '{skill.name}' 执行失败:\n\n{result.error or result.output}",
+            }
+            
+    except Exception as e:
+        logger.error(
+            "Direct skill execution failed",
+            extra={
+                "skill_name": skill.name,
+                "error": str(e),
+            }
+        )
+        yield {
+            "type": ORCH_EVENT_ERROR,
+            "error": f"技能执行失败：{str(e)}",
+        }
