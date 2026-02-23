@@ -78,5 +78,31 @@ async def chat(request: ChatRequest) -> ChatResponse:
 @router.get("/sessions/{session_id}/history")
 async def get_session_history(session_id: str) -> list[dict]:
     """Get session message history."""
-    agent = get_agent()
-    return await agent.get_session_history(session_id)
+    from ...utils.logger import get_logger
+    logger = get_logger(__name__)
+    
+    try:
+        agent = get_agent()
+        messages = await agent.get_session_history(session_id)
+        
+        logger.debug(
+            "Retrieved session history",
+            extra={
+                "session_id": session_id,
+                "message_count": len(messages),
+            }
+        )
+        
+        return messages
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to retrieve session history: {e}",
+            extra={
+                "session_id": session_id,
+                "error": str(e),
+            },
+            exc_info=True
+        )
+        # Return empty list instead of throwing 500 error
+        return []

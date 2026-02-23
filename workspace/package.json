@@ -1,7 +1,18 @@
 {
   "dependencies": {
     "html2pptx": "^0.0.5",
+    "jspdf": "^4.2.0",
     "pptxgenjs": "^4.0.1",
     "puppeteer": "^24.37.4"
-  }
+  },
+  "name": "workspace",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
 }

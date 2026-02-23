@@ -98,6 +98,44 @@ class TaskAnalyzer:
         
         return skill_name, arguments
     
+    @staticmethod
+    def extract_skill_name(user_message: str, available_skills: list[str] | None = None) -> tuple[str, str]:
+        """从用户消息中提取技能名称（支持有/和无/的情况）
+        
+        Args:
+            user_message: 用户消息
+            available_skills: 可用技能列表（可选），用于精确匹配
+            
+        Returns:
+            (skill_name, remaining_message) 元组
+            - 如果匹配到技能，返回 (技能名，剩余消息)
+            - 如果没有匹配，返回 ("", user_message)
+            
+        Examples:
+            >>> extract_skill_name("/pdf convert file.pdf")
+            ('pdf', 'convert file.pdf')
+            
+            >>> extract_skill_name("pptx create presentation")
+            ('pptx', 'create presentation')
+        """
+        # 先尝试 /command 格式
+        skill_name, remaining = TaskAnalyzer.parse_skill_command(user_message)
+        if skill_name:
+            return skill_name, remaining
+        
+        # 尝试模糊匹配：检查消息是否以某个技能名开头
+        if available_skills:
+            words = user_message.split()
+            if words:
+                first_word = words[0].lower()
+                for skill in available_skills:
+                    if skill.lower() == first_word:
+                        # 匹配成功，返回技能名和剩余消息
+                        remaining_msg = ' '.join(words[1:]) if len(words) > 1 else ""
+                        return skill, remaining_msg
+        
+        return "", user_message
+    
     def analyze(self, user_message: str) -> TaskAnalysis:
         """分析任务复杂度
         
@@ -131,6 +169,30 @@ class TaskAnalyzer:
                 matched_skills=[{"name": skill_name}],  # Fix: Wrap in dict
                 recommended_skill={"name": skill_name, "arguments": arguments},
             )
+        
+        # ===== 新增：支持无斜杠的技能名称匹配 =====
+        # 即使用户没有输入 /，只要消息以技能名开头，也识别为技能调用
+        if self.skills_config and self.skills_config.registered:
+            available_skills = [skill.name for skill in self.skills_config.registered]
+            extracted_skill, remaining_msg = self.extract_skill_name(user_message, available_skills)
+            
+            if extracted_skill:
+                logger.info(
+                    "Skill name detected without slash prefix",
+                    extra={
+                        "skill_name": extracted_skill,
+                        "original_message": user_message,
+                        "remaining_message": remaining_msg,
+                    }
+                )
+                return TaskAnalysis(
+                    complexity="complex",
+                    confidence=0.8,
+                    indicators=[f"skill_name_detected: {extracted_skill}"],
+                    needs_plan=True,
+                    matched_skills=[{"name": extracted_skill}],
+                    recommended_skill={"name": extracted_skill, "arguments": remaining_msg},
+                )
         
         score = 0.0
         indicators = []

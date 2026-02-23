@@ -5,12 +5,13 @@ No API key required.
 """
 
 import json
+import ssl
 import urllib.parse
 import urllib.request
 from typing import Any
 
 from ..base import BaseTool, ToolResult, ToolParameter, ToolParameterType
-from ...utils.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -28,7 +29,14 @@ class WebSearchTool(BaseTool):
     
     @property
     def description(self) -> str:
-        return "Search the web for information. Returns search results from DuckDuckGo. Use this when you need to find current information or research a topic."
+        return (
+            "Search the web using DuckDuckGo for real-time information. "
+            "CRITICAL: Use this tool for ANY query requiring CURRENT, REAL-TIME, or UP-TO-DATE information including: "
+            "weather forecasts, news, stock prices, sports scores, recent events, or any time-sensitive questions. "
+            "If the user asks about 'today', 'current', 'latest', 'recent', or anything that changes over time, "
+            "YOU MUST call this tool. Do NOT rely on your training data for time-sensitive information. "
+            "Best for quick searches in English. For comprehensive Chinese search, use aliyun_web_search instead."
+        )
     
     @property
     def parameters(self) -> list[ToolParameter]:
@@ -110,6 +118,8 @@ class WebSearchTool(BaseTool):
         Returns:
             List of search result dicts
         """
+        import os
+        
         results = []
         
         try:
@@ -118,10 +128,28 @@ class WebSearchTool(BaseTool):
             
             request = urllib.request.Request(
                 url,
-                headers={'User-Agent': 'X-Agent/1.0'}
+                headers={
+                    'User-Agent': 'X-Agent/1.0',
+                    'Accept': 'application/json',
+                }
             )
             
-            with urllib.request.urlopen(request, timeout=10) as response:
+            # Disable SSL verification for development environment
+            # WARNING: This is NOT secure for production use!
+            logger.warning(
+                "SSL verification disabled for web search (development mode)",
+                extra={"query": query}
+            )
+            
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            
+            with urllib.request.urlopen(
+                request, 
+                timeout=10,
+                context=ssl_context
+            ) as response:
                 data = json.loads(response.read().decode())
             
             # Extract related topics

@@ -112,7 +112,7 @@ class MilestoneValidator:
             return True, None
         
         elif check_type == "url_contains":
-            # 检查 URL 是否包含特定参数（用于 browser-automation）
+            # 检查 URL 是否包含特定参数（通用检查）
             if not value:
                 return False, f"里程碑 '{milestone.name}' 缺少必需的 value 字段"
             

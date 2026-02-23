@@ -287,6 +287,41 @@ class ToolsConfig(BaseModel):
     )
 
 
+class AliyunOpensearchSearchParams(BaseModel):
+    """Aliyun OpenSearch search parameters."""
+    
+    default_top_k: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Default number of search results to return"
+    )
+    query_rewrite: bool = Field(
+        default=True,
+        description="Whether to enable query rewriting using LLM"
+    )
+    content_type: Literal["snippet", "full"] = Field(
+        default="snippet",
+        description="Content type: 'snippet' for summary or 'full' for complete content"
+    )
+
+
+class AliyunOpensearchConfig(BaseModel):
+    """Aliyun OpenSearch configuration.
+    
+    Provides high-quality Chinese real-time search capability.
+    """
+    
+    api_key: str = Field(..., description="API Key from Aliyun console")
+    host: str = Field(..., description="Service host URL (public or VPC)")
+    workspace: str = Field(default="default", description="Workspace name")
+    enabled: bool = Field(default=True, description="Whether to enable Aliyun OpenSearch")
+    search_params: AliyunOpensearchSearchParams = Field(
+        default_factory=AliyunOpensearchSearchParams,
+        description="Search parameter configuration"
+    )
+
+
 class Config(BaseModel):
     """Root configuration model."""
     
@@ -299,6 +334,7 @@ class Config(BaseModel):
     compression: CompressionConfig = Field(default_factory=CompressionConfig, description="Context compression config")
     plan: PlanConfig = Field(default_factory=PlanConfig, description="Plan mode config")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills metadata config")
+    aliyun_opensearch: AliyunOpensearchConfig = Field(default_factory=AliyunOpensearchConfig, description="Aliyun OpenSearch config")
     
     @field_validator("models")
     @classmethod

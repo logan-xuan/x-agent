@@ -37,7 +37,7 @@ class StructuredPlanner:
 {tools}
 
 ## 输出要求
-1. 如果用户使用了 /command 格式（如 /browser-automation），必须：
+1. 如果用户使用了 /command 格式（如 /pdf），必须：
    - 将该技能名称填入 skill_binding 字段
    - 从技能的 allowed_tools 中提取工具白名单
    - 生成对应的 skill_command
@@ -55,51 +55,42 @@ class StructuredPlanner:
 4. 为关键节点定义 milestones
 
 ## 示例输入
-"/browser-automation 打开 https://www.baidu.com 搜索今日港股并获取前 10 信息"
+"/pdf convert document.pdf to word"
 
 ## 示例输出（JSON 格式）
 {{
   "version": "2.0",
-  "goal": "打开百度并搜索今日港股获取前 10 条信息",
-  "skill_binding": "browser-automation",
+  "goal": "将 PDF 文档转换为 Word 格式",
+  "skill_binding": "pdf",
   "tool_constraints": {{
-    "allowed": ["run_in_terminal"],
+    "allowed": ["run_in_terminal", "read_file"],
     "forbidden": ["web_search"]
   }},
   "steps": [
     {{
       "id": "step_1",
-      "name": "打开百度首页",
-      "skill_command": "agent-browser open https://www.baidu.com",
-      "tool": "run_in_terminal",
-      "expected_output": "浏览器已打开百度首页"
+      "name": "读取 PDF 文件",
+      "tool": "read_file",
+      "expected_output": "PDF 文件内容已加载"
     }},
     {{
       "id": "step_2",
-      "name": "搜索今日港股",
-      "skill_command": "agent-browser search '今日港股'",
+      "name": "转换文件格式",
+      "skill_command": "pdftotext input.pdf output.docx",
       "tool": "run_in_terminal",
-      "expected_output": "显示搜索结果页面"
-    }},
-    {{
-      "id": "step_3",
-      "name": "提取前 10 条信息",
-      "skill_command": "agent-browser extract --selector '.result' --limit 10",
-      "tool": "run_in_terminal",
-      "expected_output": "JSON 格式的港股数据列表"
+      "expected_output": "Word 格式文件已生成"
     }}
   ],
   "milestones": [
     {{
-      "name": "浏览器已启动",
+      "name": "PDF 已读取",
       "after_step": "step_1",
       "check_type": "tool_output"
     }},
     {{
-      "name": "搜索已完成",
+      "name": "转换已完成",
       "after_step": "step_2",
-      "check_type": "url_contains",
-      "value": "wd="
+      "check_type": "file_exists"
     }}
   ]
 }}

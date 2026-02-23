@@ -71,7 +71,7 @@ export interface WebSocketMessage {
   type: WebSocketMessageType;
   session_id: string;
   content?: string;
-  error?: {
+  error?: string | {
     code: string;
     message: string;
   };
@@ -105,6 +105,10 @@ export interface WebSocketMessage {
     tool_call_id?: string;
   };
   trace_id?: string;
+  // Additional fields for message completion
+  is_finished?: boolean;
+  role?: 'assistant' | 'user';
+  model?: string;
 }
 
 /** API response wrapper */

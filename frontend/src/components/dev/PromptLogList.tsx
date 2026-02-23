@@ -19,7 +19,7 @@ export function PromptLogList({ onError, onViewTrace }: PromptLogListProps) {
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await getPromptLogs(20);
+      const response = await getPromptLogs(30);
       setLogs(response.logs);
     } catch (err) {
       onError?.(err instanceof Error ? err.message : 'Failed to fetch logs');

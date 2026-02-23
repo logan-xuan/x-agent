@@ -74,7 +74,7 @@ class SkillParser:
                 disable_model_invocation=metadata_dict.get('disable-model-invocation', False),
                 user_invocable=metadata_dict.get('user-invocable', True),
                 argument_hint=metadata_dict.get('argument-hint'),
-                allowed_tools=metadata_dict.get('allowed-tools'),
+                allowed_tools=metadata_dict.get('allowed_tools'),  # Use underscore to match SKILL.md format
                 context=metadata_dict.get('context'),
                 license=metadata_dict.get('license'),
             )
@@ -136,9 +136,15 @@ class SkillParser:
         except yaml.YAMLError as e:
             raise SkillParseError(f"Invalid YAML: {e}") from e
         
+        # Fix: Ensure metadata is a dict before accessing
+        if metadata is None:
+            raise SkillParseError(
+                f"YAML frontmatter is empty or invalid: {file_path}"
+            )
+        
         if not isinstance(metadata, dict):
             raise SkillParseError(
-                f"YAML frontmatter must be a mapping: {file_path}"
+                f"YAML frontmatter must be a mapping (key: value pairs), got {type(metadata).__name__}: {file_path}"
             )
         
         # Validate required fields

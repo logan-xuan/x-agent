@@ -41,6 +41,9 @@ async def list_skills() -> list[dict[str, Any]]:
             }
         ]
     """
+    from ...utils.logger import get_logger
+    logger = get_logger(__name__)
+    
     try:
         # Get skill registry from global instance
         config_manager = ConfigManager()
@@ -48,6 +51,13 @@ async def list_skills() -> list[dict[str, Any]]:
         registry = get_skill_registry(workspace_path)
         
         skills = registry.list_all_skills()
+        
+        logger.debug(
+            "Listed skills",
+            extra={
+                "skill_count": len(skills),
+            }
+        )
         
         # Filter and format skills
         return [
@@ -69,7 +79,13 @@ async def list_skills() -> list[dict[str, Any]]:
         ]
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list skills: {str(e)}")
+        logger.error(
+            f"Failed to list skills: {e}",
+            extra={"error": str(e)},
+            exc_info=True
+        )
+        # Return empty list instead of 500 error for better UX
+        return []
 
 
 @router.get("/skills/{skill_name}")

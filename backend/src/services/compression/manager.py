@@ -176,6 +176,13 @@ class ContextCompressionManager:
             compressed_result=result
         )
 
+        # 3. Return prepared context with compressed results
+        return PreparedContext(
+            messages=result.compressed_messages,
+            summary=result.summary,
+            total_tokens=result.compressed_token_count
+        )
+
     async def _store_compression_event(
         self,
         session_id: str,
@@ -249,17 +256,17 @@ class ContextCompressionManager:
             "Compression completed",
             extra={
                 "session_id": session_id,
-                "original_tokens": result.original_token_count,
-                "compressed_tokens": result.compressed_token_count,
-                "archived_count": len(result.archived_messages),
-                "retained_count": len(result.recent_messages),
+                "original_tokens": compressed_result.original_token_count,
+                "compressed_tokens": compressed_result.compressed_token_count,
+                "archived_count": len(compressed_result.archived_messages),
+                "retained_count": len(compressed_result.recent_messages),
             }
         )
 
         return PreparedContext(
-            messages=result.compressed_messages,
-            summary=result.summary,
-            total_tokens=result.compressed_token_count
+            messages=compressed_result.compressed_messages,
+            summary=compressed_result.summary,
+            total_tokens=compressed_result.compressed_token_count
         )
     
     def _check_compression_needed(
