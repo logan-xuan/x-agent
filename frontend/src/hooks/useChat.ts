@@ -136,6 +136,35 @@ export function useChat({
         }
         break;
 
+      case 'final_answer':
+        // Final answer from ReAct loop - treat same as message
+        console.log('[DEBUG] final_answer received:', msg.content);
+        {
+          const finalContent = msg.content || streamingContent;
+
+          // Create the final message with any pending tool calls
+          const assistantMessage: Message = {
+            id: `assistant-${Date.now()}`,
+            session_id: msg.session_id || currentSessionId || '',
+            role: 'assistant',
+            content: finalContent,
+            created_at: new Date().toISOString(),
+            metadata: msg.model ? { model: msg.model } : undefined,
+            tool_calls: pendingToolCallsRef.current.size > 0
+              ? Array.from(pendingToolCallsRef.current.values())
+              : undefined,
+          };
+
+          setMessages(prev => [...prev, assistantMessage]);
+          setStreamingContent('');
+          setStreamingModel('');
+          setIsLoading(false);
+
+          // Clear pending tool calls
+          pendingToolCallsRef.current.clear();
+        }
+        break;
+
       case 'message':
         // Complete message - use the final content from backend
         if (msg.is_finished) {
@@ -305,6 +334,30 @@ export function useChat({
         console.error('Chat error:', errorDisplay);
         setIsLoading(false);
         setStreamingContent('');
+        break;
+
+      case 'reflection':
+        // Reflection event from ReAct loop - display as system message
+        console.log('[DEBUG] reflection received:', msg);
+        {
+          const reflectionContent = `🤔 **反思**: ${(msg as any).content}\n\n💡 **建议**: ${(msg as any).suggestion}`;
+          
+          const reflectionMessage: Message = {
+            id: `reflection-${Date.now()}-${Math.random()}`,
+            session_id: msg.session_id || currentSessionId || '',
+            role: 'system',
+            content: reflectionContent,
+            created_at: new Date().toISOString(),
+            metadata: {
+              log_type: 'info',
+              message: 'ReAct Loop Reflection',
+              reflection_type: (msg as any).reflection_type,
+              failure_details: (msg as any).failure_details,
+            } as any,
+          };
+          
+          setMessages(prev => [...prev, reflectionMessage]);
+        }
         break;
     }
   }, [currentSessionId, streamingContent]);

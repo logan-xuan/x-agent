@@ -1423,6 +1423,30 @@ class Orchestrator:
                             "**正确示例**：\n"
                             "✅ 使用 PptxGenJS：`await pptx.writeFile({ fileName: 'demo.pptx' })`"
                         )
+                    
+                    # 2. pdf → Python reportlab (CRITICAL for Chinese font support)
+                    pdf_skill = next((s for s in display_skills if s.name == "pdf"), None)
+                    if pdf_skill:
+                        system_parts.append(
+                            "\n\n# ⚠️ 关键规则：pdf 技能 - 中文字体支持\n"
+                            "**当用户要求生成包含中文的 PDF 时：**\n"
+                            "1. **必须使用 Python + reportlab 库**\n"
+                            "2. **禁止使用 Node.js PDFKit**（对中文支持差，即使注册字体也会乱码）\n"
+                            "3. **必须注册中文字体**（TTC 字体需指定 `subfontIndex=0`）\n"
+                            "4. **参考 `/pdf` skill 中的示例代码**\n\n"
+                            "**正确做法（Python）**：\n"
+                            "```python\n"
+                            "from reportlab.pdfbase import pdfmetrics\n"
+                            "from reportlab.pdfbase.ttfonts import TTFont\n"
+                            "# 注册中文字体\n"
+                            "font = TTFont('Chinese', '/System/Library/Fonts/STHeiti Light.ttc', subfontIndex=0)\n"
+                            "pdfmetrics.registerFont(font)\n"
+                            "c.setFont('Chinese', 14)\n"
+                            "```\n\n"
+                            "**错误做法（禁止）**：\n"
+                            "❌ Node.js PDFKit - 即使注册字体也会乱码\n"
+                            "❌ 不注册字体直接使用中文 - 会显示为方框或乱码"
+                        )
                         
                     logger.info(
                         f"Injected {len(display_skills)} skills into system prompt",
