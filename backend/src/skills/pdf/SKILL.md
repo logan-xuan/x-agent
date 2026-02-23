@@ -173,6 +173,77 @@ c.line(100, height - 140, 400, height - 140)
 c.save()
 ```
 
+#### ⚠️ CRITICAL: Chinese Font Support
+
+**PROBLEM:** Default reportlab fonts don't support Chinese characters, causing garbled text or empty boxes.
+
+**SOLUTION:** Register Chinese fonts before using them.
+
+```python
+import os
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+def register_chinese_font():
+    """Register macOS system Chinese fonts"""
+    font_paths = [
+        '/System/Library/Fonts/PingFang.ttc',
+        '/System/Library/Fonts/STHeiti Light.ttc',
+        '/System/Library/Fonts/STHeiti Medium.ttc',
+        '/Library/Fonts/Arial Unicode.ttf',
+    ]
+    
+    for font_path in font_paths:
+        if os.path.exists(font_path):
+            try:
+                # TTC fonts require subfontIndex
+                if font_path.endswith('.ttc'):
+                    font = TTFont('Chinese', font_path, subfontIndex=0)
+                else:
+                    font = TTFont('Chinese', font_path)
+                
+                pdfmetrics.registerFont(font)
+                print(f"✅ Registered font: {font_path}")
+                return True
+            except Exception as e:
+                print(f"⚠️  Failed to register {font_path}: {e}")
+                continue
+    
+    print("❌ No Chinese font available")
+    return False
+
+# Create PDF with Chinese text
+def create_chinese_pdf(filename, title):
+    if not register_chinese_font():
+        raise RuntimeError("Failed to register Chinese font")
+    
+    c = canvas.Canvas(filename, pagesize=letter)
+    width, height = letter
+    
+    # Use Chinese font
+    c.setFont('Chinese', 20)
+    c.drawString(100, height - 100, title)
+    
+    c.setFont('Chinese', 14)
+    c.drawString(100, height - 150, '日期: 2026年2月24日')
+    c.drawString(100, height - 170, '地点: 杭州市')
+    
+    c.save()
+    print(f"✅ PDF created: {filename}")
+
+# Example usage
+create_chinese_pdf('chinese_report.pdf', '中文测试报告')
+```
+
+**KEY POINTS:**
+- ✅ TTC fonts (PingFang, STHeiti) MUST specify `subfontIndex=0`
+- ✅ Always call `register_chinese_font()` BEFORE creating Canvas
+- ✅ Use `c.setFont('Chinese', size)` to switch to Chinese font
+- ❌ Node.js PDFKit has poor TTC font support - use Python reportlab instead
+- 📦 Expected file size: 60-70KB (with embedded font)
+
 #### Create PDF with Multiple Pages
 ```python
 from reportlab.lib.pagesizes import letter
