@@ -76,31 +76,33 @@ export function useChat({
     console.log('[WS_MESSAGE] Raw data type:', typeof data);
     console.log('[WS_MESSAGE] Raw data:', JSON.stringify(data, null, 2));
     
-    const msg = data as {
+    // Defensive check: ensure data is a valid object
+    if (!data || typeof data !== 'object') {
+      console.error('[WS_MESSAGE] Invalid message format:', data);
+      return;
+    }
+    
+    const msg = data as Record<string, unknown> & {
       type: string;
       content?: string;
       is_finished?: boolean;
       model?: string;
-      error?: string | object;  // Allow both string and object
+      error?: string | Record<string, unknown>;
       session_id?: string;
-      // Tool call fields
       name?: string;
       arguments?: Record<string, unknown>;
       tool_call_id?: string;
       success?: boolean;
-      result?: any;  // Use any to avoid type errors during debugging
-      // System message fields
+      result?: unknown;
       log_type?: 'cli_command' | 'tool_execution' | 'error' | 'info';
-      log_data?: {
-        command?: string;
-        output?: string;
-        error?: string;
-        duration_ms?: number;
-        success?: boolean;
-        status?: string;
-        tool_call_id?: string;
-      };
+      log_data?: Record<string, unknown>;
     };
+    
+    // Validate message type
+    if (!msg.type || typeof msg.type !== 'string') {
+      console.error('[WS_MESSAGE] Message missing type field:', msg);
+      return;
+    }
 
     console.log('[WS_MESSAGE] Parsed message type:', msg.type);
     console.log('[WS_MESSAGE] Message object:', msg);
@@ -213,8 +215,7 @@ export function useChat({
         
         if (msg.tool_call_id) {
           // Determine status based on result metadata
-          // Fix: Add type check to handle cases where result might be a string or other type
-          const resultData = typeof msg.result === 'object' && msg.result !== null ? msg.result : null;
+          const resultData = typeof msg.result === 'object' && msg.result !== null ? msg.result as Record<string, unknown> : null;
           let newStatus: ToolCall['status'] = msg.success ? 'completed' : 'error';
           
           console.log('[DEBUG] resultData:', resultData);
@@ -235,7 +236,7 @@ export function useChat({
             : {
                 id: msg.tool_call_id,
                 name: 'run_in_terminal' as const,
-                arguments: { command: (resultData?.command as string) || '' },
+                arguments: { command: ((resultData as any)?.command as string) || '' },
                 status: newStatus,
                 result: msg.result as any,
               };
@@ -287,9 +288,21 @@ export function useChat({
         break;
 
       case 'error':
-        // Fix: Add type check for error field - it might be a string or an object
-        const errorMessage = typeof msg.error === 'string' ? msg.error : JSON.stringify(msg.error);
-        console.error('Chat error:', errorMessage);
+        // Fix: Handle both string and object error formats with defensive checks
+        let errorDisplay: string;
+        try {
+          if (typeof msg.error === 'string') {
+            errorDisplay = msg.error;
+          } else if (msg.error && typeof msg.error === 'object') {
+            errorDisplay = (msg.error as any)?.message || JSON.stringify(msg.error);
+          } else {
+            errorDisplay = 'Unknown error occurred';
+          }
+        } catch (e) {
+          errorDisplay = `Error processing error message: ${e}`;
+        }
+        
+        console.error('Chat error:', errorDisplay);
         setIsLoading(false);
         setStreamingContent('');
         break;

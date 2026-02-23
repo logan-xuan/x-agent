@@ -47,14 +47,78 @@ API endpoints are available at:
 ## Project Structure
 
 ```
-src/
-├── config/          # Configuration management
-├── models/          # SQLAlchemy data models
-├── services/        # Business services
-├── utils/           # Utilities
-└── main.py          # Application entry
+backend/
+├── src/               # Source code
+│   ├── config/        # Configuration management
+│   ├── models/        # SQLAlchemy data models
+│   ├── services/      # Business services
+│   ├── utils/         # Utilities
+│   └── main.py        # Application entry
+├── tests/             # Test suites
+│   ├── unit/          # Unit tests
+│   └── integration/   # Integration tests
+├── scripts/           # Utility scripts
+│   ├── testing/       # Test scripts (temporary)
+│   ├── temp/          # Temporary scripts
+│   └── archive/       # Archived scripts
+├── docs/              # Documentation
+│   ├── integration/   # Integration guides
+│   ├── guides/        # How-to guides
+│   ├── references/    # Reference docs
+│   └── reports/       # Test reports
+├── logs/              # Log files
+├── skills/            # Skill definitions
+├── devtools/          # Development tools
+├── x-agent.yaml       # Configuration file
+└── README.md          # This file
 ```
+
+## Testing
+
+Run tests:
+```bash
+# Run all tests
+pytest tests/
+
+# Run unit tests
+pytest tests/unit/
+
+# Run integration tests
+pytest tests/integration/
+```
+
+## Scripts
+
+Utility scripts are organized as follows:
+- `scripts/testing/` - Temporary test scripts for debugging
+- `scripts/temp/` - Temporary utility scripts
+- `scripts/archive/` - Archived scripts for reference
+
+## Documentation
+
+Documentation has been moved to the `docs/` directory:
+- `docs/integration/` - Integration guides (Aliyun OpenSearch, etc.)
+- `docs/guides/` - How-to guides (Log rotation, etc.)
+- `docs/references/` - Reference documentation
+- `docs/reports/` - Test reports and summaries
 
 ## Configuration
 
 See `x-agent.yaml.example` for configuration options.
+
+## Logs
+
+Application logs are stored in `logs/`:
+- `x-agent.log` - Main application log
+- `prompt-llm.log` - LLM interaction logs
+
+## Cleanup
+
+To clean up temporary files:
+```bash
+# Remove old log files
+rm logs/*.log.*
+
+# Remove temporary test scripts
+rm scripts/testing/*.py
+```

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from ...config.manager import ConfigManager
 from ...core.context import get_current_context, set_current_context as set_context, AgentContext
 from ...services.llm.router import LLMRouter
+from ...tools.builtin import AliyunWebSearchTool
 from ...utils.logger import get_logger
 
 router = APIRouter(prefix="/dev", tags=["developer"])
@@ -534,3 +535,109 @@ async def query_compression_records(
         records=records,
         total=total
     )
+
+
+# ============ Web Search Debugging Endpoint (Aliyun OpenSearch) ============
+
+
+class WebSearchRequest(BaseModel):
+    """Web search request model."""
+    query: str
+    max_results: int = 5
+
+
+class WebSearchResult(BaseModel):
+    """Web search result item."""
+    title: str
+    snippet: str
+    url: str
+
+
+class WebSearchResponse(BaseModel):
+    """Web search response model."""
+    success: bool
+    query: str
+    results: list[WebSearchResult]
+    output: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@router.post("/web-search", response_model=WebSearchResponse)
+async def web_search_debug(request: WebSearchRequest) -> WebSearchResponse:
+    """Test web search functionality (Aliyun OpenSearch).
+    
+    Args:
+        request: Web search request with query and max_results
+        
+    Returns:
+        Web search results with raw and formatted output
+    """
+    try:
+        # Create web search tool instance (Aliyun OpenSearch)
+        tool = AliyunWebSearchTool()
+        
+        # Execute search
+        result = await tool.execute(
+            query=request.query,
+            max_results=request.max_results
+        )
+        
+        # Parse results from formatted output
+        parsed_results = []
+        if result.success and result.output:
+            # Try to extract structured data from formatted output
+            lines = result.output.split('\n')
+            current_result = {}
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    if current_result:
+                        parsed_results.append(WebSearchResult(**current_result))
+                        current_result = {}
+                    continue
+                
+                if line.startswith('🔍') or line.startswith('Search results for:') or line.startswith('No results'):
+                    continue
+                
+                # Parse numbered results
+                if '.' in line and '**' in line:
+                    # Title line
+                    title = line.split('**')[1] if '**' in line else line
+                    current_result['title'] = title.replace('**', '')
+                elif line.startswith('🔗') or line.startswith('URL:'):
+                    current_result['url'] = line.replace('🔗', '').replace('URL:', '').strip()
+                elif not line.startswith(str(range(10))) and 'title' in current_result:
+                    # Snippet line
+                    current_result['snippet'] = line
+            
+            # Add last result if exists
+            if current_result and 'title' in current_result:
+                if 'snippet' not in current_result:
+                    current_result['snippet'] = ''
+                if 'url' not in current_result:
+                    current_result['url'] = ''
+                parsed_results.append(WebSearchResult(**current_result))
+        
+        return WebSearchResponse(
+            success=result.success,
+            query=request.query,
+            results=parsed_results,
+            output=result.output,
+            error=result.error,
+            metadata=result.metadata
+        )
+        
+    except Exception as e:
+        logger.error(
+            "Web search debug failed",
+            extra={"query": request.query, "error": str(e)}
+        )
+        return WebSearchResponse(
+            success=False,
+            query=request.query,
+            results=[],
+            error=str(e)
+        )
+

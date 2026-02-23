@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ..base import BaseTool, ToolResult, ToolParameter, ToolParameterType
-from ...utils.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -636,11 +636,24 @@ class RunInTerminalTool(BaseTool):
             stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
             
             # Build result
+            # For known CLI tools (git, npm, pip, node, python, etc.), preserve raw output format
+            # For other commands, add STDOUT/STDERR labels for clarity
+            known_cli_tools = ['git', 'npm', 'pip', 'node', 'python']
+            is_known_cli = any(cmd in command for cmd in known_cli_tools)
+            
             output_parts = []
-            if stdout_str:
-                output_parts.append(f"STDOUT:\n{stdout_str}")
-            if stderr_str:
-                output_parts.append(f"STDERR:\n{stderr_str}")
+            if is_known_cli:
+                # Preserve raw output for known CLI tools
+                if stdout_str:
+                    output_parts.append(stdout_str)
+                if stderr_str:
+                    output_parts.append(stderr_str)
+            else:
+                # Add labels for other commands
+                if stdout_str:
+                    output_parts.append(f"STDOUT:\n{stdout_str}")
+                if stderr_str:
+                    output_parts.append(f"STDERR:\n{stderr_str}")
             
             output = "\n\n".join(output_parts) if output_parts else "Command completed with no output"
             

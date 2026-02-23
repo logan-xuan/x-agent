@@ -212,6 +212,29 @@ class ReActLoop:
                                 "event_tool_call_id": tool_call_event.get("tool_call_id"),
                             }
                         )
+                        
+                        # ===== PHASE 2: Tool Constraint Validation BEFORE execution =====
+                        # Check if this tool is allowed based on skill_context
+                        if skill_context and hasattr(skill_context, 'allowed_tools') and skill_context.allowed_tools:
+                            if tool_call.name not in skill_context.allowed_tools:
+                                logger.warning(
+                                    "Tool call blocked by skill constraints (ReAct Loop)",
+                                    extra={
+                                        "tool_name": tool_call.name,
+                                        "allowed_tools": skill_context.allowed_tools,
+                                        "skill_name": getattr(skill_context, 'name', 'unknown'),
+                                    }
+                                )
+                                
+                                # Add system message to inform LLM about the constraint
+                                working_messages.append({
+                                    "role": "system",
+                                    "content": f"⚠️ 工具 '{tool_call.name}' 不可用。当前技能 '{skill_context.name}' 只允许使用以下工具：{skill_context.allowed_tools}。请选择允许的工具重新尝试。"
+                                })
+                                
+                                # Skip this tool call - don't execute it
+                                continue
+                        
                         yield tool_call_event
                         
                         # Execute tool
@@ -328,6 +351,18 @@ class ReActLoop:
                         })
                         # Continue to next iteration to let LLM try again
                         continue
+                
+                # ===== NEW: Check if LLM repeatedly violated tool constraints =====
+                # If LLM keeps trying forbidden tools, provide explicit guidance
+                if tool_calls_count == 0 and iteration >= 1:
+                    # No valid tool calls made in this iteration
+                    # Check if there were constraint violations
+                    working_messages.append({
+                        "role": "system",
+                        "content": "💡 提示：你刚才尝试使用的工具不在当前技能的允许列表中。\n\n"
+                                  "请仔细查看 System Prompt 中的技能说明，只使用明确列出的工具。\n"
+                                  "如果不确定应该用什么工具，请先分析任务需求，然后选择最匹配的工具。"
+                    })
                 
                 completed_early = True
                 
@@ -525,8 +560,6 @@ class ReActLoop:
             r'/xlsx\s+',  # /xlsx command
             r'/pdf\s+',   # /pdf command
             r'/skill\s+', # /skill command
-            r'/browser-automation\s+',  # /browser-automation command
-            r'/browser\s+',  # /browser shorthand command
         ]
         
         import re

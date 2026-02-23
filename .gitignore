@@ -75,3 +75,14 @@ htmlcov/
 *.bak
 *.tmp
 *.temp
+
+# Temporary scripts (should be in backend/scripts/)
+debug_*.py
+diagnose_*.py
+test_*.py
+verify_*.py
+validate_*.py
+quick_*.sh
+commit_*.sh
+restart-*.sh
+git_commit.py

@@ -6,9 +6,10 @@ import { PromptTester } from './PromptTester';
 import { TraceViewer } from '../trace';
 import { MemorySearchDebugger } from './MemorySearchDebugger';
 import { CompressionRecordQuery } from './CompressionRecordQuery';
+import { WebSearchDebugger } from './WebSearchDebugger';
 import { Button } from '../ui/Button';
 
-type TabType = 'logs' | 'tester' | 'trace' | 'search' | 'compression_records';
+type TabType = 'logs' | 'tester' | 'trace' | 'search' | 'compression_records' | 'web_search';
 
 interface DevModeWindowProps {
   isOpen: boolean;
@@ -221,6 +222,16 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
               >
                 压缩记录
               </button>
+              <button
+                onClick={() => handleTabChange('web_search')}
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                  activeTab === 'web_search'
+                    ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                Web Search (Aliyun)
+              </button>
             </div>
 
             {/* Close Button */}
@@ -267,9 +278,11 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
             <TraceViewer initialTraceId={traceId} />
           ) : activeTab === 'search' ? (
             <MemorySearchDebugger onError={setError} />
-          ) : (
+          ) : activeTab === 'compression_records' ? (
             <CompressionRecordQuery onError={setError} />
-          )}
+          ) : activeTab === 'web_search' ? (
+            <WebSearchDebugger onError={setError} />
+          ) : null}
         </div>
 
         {/* Resize Handle */}

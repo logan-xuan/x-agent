@@ -96,6 +96,8 @@ class AgentContext:
     
     def to_log_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging."""
+        # Fix: Ensure metadata is a dict before iterating
+        metadata_dict = self.metadata if isinstance(self.metadata, dict) else {}
         return {
             "trace_id": self.trace_id,
             "session_id": self.session_id,
@@ -104,7 +106,7 @@ class AgentContext:
             "user_id": self.user_id,
             "elapsed_ms": self.elapsed_ms,
             "created_at": self.created_at.isoformat(),
-            "metadata": {k: v for k, v in self.metadata.items() if not k.startswith("_")},
+            "metadata": {k: v for k, v in metadata_dict.items() if not k.startswith("_")},
         }
     
     def child(self, **overrides: Any) -> "AgentContext":

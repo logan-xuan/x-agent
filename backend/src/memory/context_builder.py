@@ -354,6 +354,7 @@ class ContextBuilder:
         - Available tools (TOOLS.md)
         - Recent memory logs (memory/*.md)
         - Long-term memory (MEMORY.md)
+        - Current time information
         
         Args:
             context: Context bundle
@@ -362,6 +363,20 @@ class ContextBuilder:
             System prompt string with full context
         """
         parts: list[str] = []
+        
+        # ===== CURRENT TIME (Critical for time-sensitive queries) =====
+        # Always include current time at the beginning for temporal context
+        now = datetime.now()
+        current_time_info = (
+            f"# 当前时间\n"
+            f"- **日期**: {now.strftime('%Y年%m月%d日 %A')}\n"
+            f"- **ISO**: {now.isoformat(timespec='seconds')}\n"
+            f"- **时间戳**: {int(now.timestamp())}\n"
+            f"**重要**: 对于包含'今天'、'明天'、'昨天'、'本周'等时间敏感词的问题，\n"
+            f"请使用上述日期作为参考，不要依赖训练数据中的时间信息。\n"
+        )
+        parts.append(current_time_info)
+        parts.append("")
         
         # ===== BOOTSTRAP.md (First-time initialization) =====
         # Only load BOOTSTRAP.md if it exists AND identity is not yet set up
