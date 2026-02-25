@@ -47,9 +47,16 @@ fi
 # 进入后端目录并启动服务
 cd "$BACKEND_DIR"
 
+# 确保 logs 目录存在
+LOGS_DIR="$BACKEND_DIR/logs"
+if [ ! -d "$LOGS_DIR" ]; then
+    mkdir -p "$LOGS_DIR"
+    echo "✅ 创建日志目录：$LOGS_DIR"
+fi
+
 echo "🔧 使用 Python 启动后端服务..."
 PYTHON_PATH=""
-# 尝试使用虚拟环境中的Python
+# 尝试使用虚拟环境中的 Python
 if [ -f ".venv/bin/python" ]; then
     PYTHON_PATH=".venv/bin/python"
 elif [ -f "venv/bin/python" ]; then
@@ -58,19 +65,19 @@ else
     PYTHON_PATH="python"
 fi
 
-echo "🐍 使用 Python 解释器: $PYTHON_PATH"
+echo "🐍 使用 Python 解释器：$PYTHON_PATH"
 echo "🔌 后端服务将在 http://localhost:$PORT 启动"
 
-# 启动后端服务
-nohup $PYTHON_PATH -m src.main > backend.log 2>&1 &
+# 启动后端服务 - 日志输出到 logs/backend.log
+nohup $PYTHON_PATH -m src.main > "$LOGS_DIR/backend.log" 2>&1 &
 
 # 获取后台进程PID
 BACKEND_PID=$!
 
 if [ $BACKEND_PID ]; then
     echo "✅ 后端服务已启动，PID: $BACKEND_PID"
-    echo "🌐 访问地址: http://localhost:$PORT"
-    echo "📄 日志文件: $BACKEND_DIR/backend.log"
+    echo "🌐 访问地址：http://localhost:$PORT"
+    echo "📄 日志文件：$LOGS_DIR/backend.log"
 else
     echo "❌ 后端服务启动失败"
     exit 1

@@ -4,7 +4,7 @@ Validates if a tool call is allowed based on the current plan's constraints.
 """
 
 from ..models.plan import StructuredPlan, ToolConstraints
-from src.utils.logger import get_logger
+from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -15,6 +15,7 @@ class ToolConstraintValidator:
     职责：
     - 检查工具调用是否在白名单中
     - 检查工具调用是否在黑名单中
+    - 检查工具调用是否符合当前步骤（新增）
     - 如果违反约束，触发重规划
     """
     
@@ -26,6 +27,48 @@ class ToolConstraintValidator:
         """
         self.plan = plan
         self.violation_count = 0
+        self.current_step_index = 0  # 当前应该执行的步骤索引
+    
+    def set_plan(self, plan: StructuredPlan) -> None:
+        """设置当前计划
+        
+        Args:
+            plan: 新的结构化计划
+        """
+        self.plan = plan
+        self.violation_count = 0
+        self.current_step_index = 0
+        logger.info(
+            "Plan updated for tool constraint validation",
+            extra={
+                "skill_binding": plan.skill_binding,
+                "has_constraints": plan.tool_constraints is not None,
+                "total_steps": len(plan.steps),
+            }
+        )
+    
+    def update_current_step(self, completed_step_id: str) -> None:
+        """更新当前步骤索引
+        
+        Args:
+            completed_step_id: 已完成的步骤 ID
+        """
+        if not self.plan:
+            return
+        
+        # 找到已完成的步骤，移动到下一步
+        for i, step in enumerate(self.plan.steps):
+            if step.id == completed_step_id:
+                self.current_step_index = i + 1
+                logger.info(
+                    "Step completed, moved to next step",
+                    extra={
+                        "completed_step": completed_step_id,
+                        "current_step_index": self.current_step_index,
+                        "remaining_steps": len(self.plan.steps) - self.current_step_index,
+                    }
+                )
+                break
     
     def set_plan(self, plan: StructuredPlan) -> None:
         """设置当前计划
@@ -85,6 +128,23 @@ class ToolConstraintValidator:
             )
             self.violation_count += 1
             return False, reason
+        
+        # ✅ 新增：检查是否符合当前步骤的工具
+        if self.plan.steps and self.current_step_index < len(self.plan.steps):
+            current_step = self.plan.steps[self.current_step_index]
+            if current_step.tool and tool_name != current_step.tool:
+                # 如果工具与当前步骤不匹配，但不是严格禁止的，给出警告但允许
+                # 这样可以保持灵活性，同时引导 LLM 按步骤执行
+                logger.info(
+                    "Tool call not aligned with current step",
+                    extra={
+                        "tool_name": tool_name,
+                        "current_step": current_step.name,
+                        "expected_tool": current_step.tool,
+                        "step_index": self.current_step_index,
+                    }
+                )
+                # 注意：这里不阻止，只是记录日志，让 LLM 自己决定
         
         # 通过检查
         logger.debug(

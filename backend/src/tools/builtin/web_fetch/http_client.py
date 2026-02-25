@@ -166,10 +166,20 @@ class HTTPClient:
             Binary content
         """
         try:
+            # Validate URL format
+            if not url.startswith(('http://', 'https://')):
+                logger.debug(f"Invalid URL format (skipping): {url}")
+                return b""
+            
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(url)
                 response.raise_for_status()
                 return response.content
+        except httpx.RequestError as e:
+            # Network error, DNS failure, etc.
+            logger.debug(f"Download failed (network error): {url} - {type(e).__name__}")
+            return b""
         except Exception as e:
-            logger.warning(f"Download failed: {url} - {e}")
+            # Other errors
+            logger.debug(f"Download failed: {url} - {type(e).__name__}: {str(e)[:100]}")
             return b""

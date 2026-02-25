@@ -30,6 +30,7 @@ class PlanStep:
     Attributes:
         id: 步骤唯一标识
         name: 步骤描述
+        description: 详细说明（如何实现和验证）
         skill_command: 技能 CLI 命令（如果有）
         tool: 使用的工具名称
         expected_output: 预期输出描述
@@ -38,6 +39,7 @@ class PlanStep:
     """
     id: str
     name: str
+    description: str | None = None  # 🔥 ADD: 详细说明
     skill_command: str | None = None
     tool: str | None = None
     expected_output: str | None = None
@@ -49,6 +51,7 @@ class PlanStep:
         return {
             "id": self.id,
             "name": self.name,
+            "description": self.description,
             "skill_command": self.skill_command,
             "tool": self.tool,
             "expected_output": self.expected_output,
@@ -94,9 +97,13 @@ class ToolConstraints:
     Attributes:
         allowed: 允许使用的工具白名单
         forbidden: 禁止使用的工具黑名单
+        source: 约束来源 (plan | skill | task_type)
+        priority: 优先级（数值越大优先级越高）
     """
     allowed: list[str] = field(default_factory=list)
     forbidden: list[str] = field(default_factory=list)
+    source: str = "task_type"  # plan | skill | task_type
+    priority: int = 0  # Higher number = higher priority
     
     def is_allowed(self, tool_name: str) -> bool:
         """检查工具是否被允许使用"""
@@ -137,6 +144,8 @@ class StructuredPlan:
             "tool_constraints": {
                 "allowed": self.tool_constraints.allowed,
                 "forbidden": self.tool_constraints.forbidden,
+                "source": self.tool_constraints.source,
+                "priority": self.tool_constraints.priority,
             } if self.tool_constraints else None,
             "steps": [step.to_dict() for step in self.steps],
             "milestones": [m.to_dict() for m in self.milestones],

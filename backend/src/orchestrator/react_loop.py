@@ -13,6 +13,7 @@ This creates an iterative problem-solving capability with self-reflection.
 
 import json
 import re
+import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from enum import Enum
@@ -21,7 +22,16 @@ from typing import Any, Callable
 from ..services.llm.router import LLMRouter
 from ..tools.base import BaseTool, ToolResult
 from ..tools.manager import ToolManager
-from src.utils.logger import get_logger
+from .plan_context import PlanState  # Add PlanState type
+from ..utils.logger import get_logger
+
+# ✅ OPTIMIZE: Import error learning service for memory integration
+try:
+    from ..services.error_learning import get_error_learning_service
+    ERROR_LEARNING_AVAILABLE = True
+except ImportError:
+    ERROR_LEARNING_AVAILABLE = False
+    logger.warning("Error learning service not available, memory integration disabled")
 
 logger = get_logger(__name__)
 
@@ -59,8 +69,36 @@ REACT_EVENT_STRATEGY_ADJUSTMENT = "strategy_adjustment"  # NEW: Strategy adjustm
 
 
 class ReflectionType(str, Enum):
-    """Types of reflection in the ReAct loop."""
+    """Types of reflection in the ReAct loop.
+    
+    Implements 5 reflection scenarios:
+    1. TOOL_RESULT: Result anomaly (error, empty, format mismatch, low confidence)
+    2. CHECKPOINT: Stage goal reached (milestone validation)
+    3. PRE_ACTION: Before high-risk actions (delete, write, send, paid API)
+    4. ADAPTIVE: Multiple failures (retry strategy adjustment)
+    5. LONG_TASK: Periodic check during long execution (prevent drift)
+    """
+    # Scenario 1: Result anomaly (MUST reflect)
     TOOL_RESULT = "tool_result"  # Reflect on tool execution result
+    ERROR_DRIVEN = "error_driven"  # API error, empty result, schema mismatch
+    
+    # Scenario 2: Checkpoint reflection
+    CHECKPOINT = "checkpoint"  # After reaching stage goal
+    MILESTONE_REACHED = "milestone_reached"  # Milestone validation passed
+    
+    # Scenario 3: Pre-action reflection (high-risk)
+    PRE_ACTION = "pre_action"  # Before risky operations
+    HIGH_RISK_DECISION = "high_risk_decision"  # Delete, write, send, execute
+    
+    # Scenario 4: Adaptive reflection (multiple failures)
+    ADAPTIVE = "adaptive"  # After repeated failures
+    STRATEGY_ADJUSTMENT = "strategy_adjustment"  # Adjust approach
+    
+    # Scenario 5: Long task rhythm control
+    LONG_TASK = "long_task"  # Periodic check during execution
+    PROGRESS_CHECK = "progress_check"  # Prevent task drift
+    
+    # Legacy types (backward compatibility)
     PLAN_ADJUSTMENT = "plan_adjustment"  # Reflect and adjust plan
     FAILURE_ANALYSIS = "failure_analysis"  # Analyze failure and suggest recovery
     FINAL_VERIFICATION = "final_verification"  # Verify final answer completeness
@@ -186,12 +224,13 @@ class ReActLoop:
     MAX_CONSECUTIVE_FAILURES = 2  # Max failures before strategy adjustment
     MAX_SAME_TOOL_REPEATS = 2  # Max repeats of same tool before suggesting alternative
     MAX_ADJUSTMENTS = 3  # Max strategy adjustments to prevent infinite loops
+    MAX_RETRY_WITHOUT_TOOL = 2  # Max retries when LLM doesn't call tools (iteration < 2规范)
     
     def __init__(
         self,
         llm_router: LLMRouter,
         tool_manager: ToolManager,
-        max_iterations: int = 8,
+        max_iterations: int = 5,  # ✅ OPTIMIZE: Reduced from 8 to 5 for faster failure detection
         enable_reflection: bool = True,  # NEW: Enable/disable reflection
     ) -> None:
         """Initialize the ReAct loop.
@@ -207,13 +246,157 @@ class ReActLoop:
         self.max_iterations = max_iterations
         self.enable_reflection = enable_reflection
         
-        logger.info(
-            "ReActLoop initialized",
+        # 🔥 NEW: SKILL.md content cache (avoid repeated file reads)
+        self._skill_md_cache: dict[str, str] = {}
+        
+        logger.debug(  # Changed from info: initialization is routine
+            "ReActLoop initialized with progressive skill disclosure",
             extra={
                 "max_iterations": max_iterations,
                 "enable_reflection": enable_reflection,
             }
         )
+    
+    def _extract_skill_guidance_for_execution(self, tool_name: str, arguments: dict) -> str:
+        """从 SKILL.md 中提取执行时的关键指引（渐进式披露）
+        
+        Args:
+            tool_name: 工具名称（如 run_in_terminal）
+            arguments: 工具参数
+            
+        Returns:
+            提取的关键指引文本
+        """
+        import re
+        from pathlib import Path
+        
+        # 🔥 检测是否涉及技能脚本执行
+        script_name = None
+        skill_name = None
+        
+        if tool_name == "run_in_terminal":
+            command = arguments.get("command", "")
+            
+            # 从命令中提取脚本名
+            # 示例：python create_pdf_from_md.py ... → create_pdf_from_md.py
+            # node create_presentation.js ... → create_presentation.js
+            parts = command.split()
+            for i, part in enumerate(parts):
+                if part in ["python", "python3", "node", "npm", "yarn"] and i + 1 < len(parts):
+                    script_candidate = parts[i + 1]
+                    # 提取脚本文件名
+                    script_name = script_candidate.split("/")[-1].split("\\")[-1]
+                    break
+        
+        if not script_name:
+            return ""
+        
+        # 🔥 根据脚本名推断技能类型
+        if "pdf" in script_name.lower():
+            skill_name = "pdf"
+        elif "ppt" in script_name.lower() or "presentation" in script_name.lower():
+            skill_name = "pptx"
+        elif "xlsx" in script_name.lower() or "excel" in script_name.lower():
+            skill_name = "xlsx"
+        
+        if not skill_name:
+            return ""
+        
+        # 检查缓存
+        if skill_name in self._skill_md_cache:
+            skill_md_content = self._skill_md_cache[skill_name]
+        else:
+            # 读取 SKILL.md 文件
+            try:
+                skill_dir = Path(__file__).parent.parent / 'skills' / skill_name
+                skill_md_path = skill_dir / 'SKILL.md'
+                
+                if not skill_md_path.exists():
+                    logger.warning(f"SKILL.md not found for skill: {skill_name}")
+                    return ""
+                
+                skill_md_content = skill_md_path.read_text(encoding='utf-8')
+                self._skill_md_cache[skill_name] = skill_md_content
+                logger.info(
+                    f"Loaded SKILL.md for {skill_name} ({len(skill_md_content)} chars)",
+                    extra={"skill": skill_name, "tool": tool_name}
+                )
+            except Exception as e:
+                logger.error(f"Failed to read SKILL.md: {e}")
+                return ""
+        
+        # 🔥 渐进式披露策略：
+        # 1. 识别当前执行的脚本类型
+        # 2. 提取相关的命令格式和示例
+        # 3. 只返回最关键的信息（正确用法 + 常见错误）
+        
+        guidance_parts = []
+        
+        # === PPTX 技能执行指引 ===
+        if skill_name == "pptx" and ("presentation" in script_name.lower() or "ppt" in script_name.lower()):
+            guidance_parts.append("\n\n## ⚠️ PPTX 脚本执行关键指引")
+            guidance_parts.append("- ✅ **唯一指定脚本**: `create_presentation.js`")
+            guidance_parts.append("- ✅ **正确命令格式**: `node create_presentation.js <input.md> <output.pptx>`")
+            guidance_parts.append("- ✅ **示例**: `node create_presentation.js /workspace/report.md /workspace/presentation.pptx`")
+            guidance_parts.append("- ❌ **禁止**: 使用 Python 脚本或不存在的脚本")
+            guidance_parts.append("- 💡 **路径规则**: 直接使用脚本名（系统会自动查找）")
+            
+            # 从 SKILL.md 中提取 Usage 部分
+            usage_match = re.search(r'### Usage[\s\S]*?(?=###|## $)', skill_md_content)
+            if usage_match:
+                guidance_parts.append("\n\n## 📖 SKILL.md 官方用法")
+                guidance_parts.append(usage_match.group(0)[:500])  # 限制长度
+            
+            logger.info(
+                "Extracted PPTX execution guidance",
+                extra={
+                    "skill": skill_name,
+                    "script_name": script_name,
+                    "guidance_length": len("\n".join(guidance_parts)),
+                }
+            )
+            return "\n".join(guidance_parts)
+        
+        # === PDF 技能执行指引 ===
+        elif skill_name == "pdf" and "pdf" in script_name.lower():
+            guidance_parts.append("\n\n## 🌐 PDF 脚本执行关键指引")
+            guidance_parts.append("- ✅ **唯一指定脚本**: `create_pdf_from_md.py`（增强版）")
+            guidance_parts.append("- ✅ **正确命令格式**: `python create_pdf_from_md.py output.pdf input.md \"标题\"`")
+            guidance_parts.append("- ✅ **已注册中文字体**: PingFang/STHeiti")
+            guidance_parts.append("- ✅ **支持多页、自动分页、章节格式化**")
+            guidance_parts.append("- ❌ **禁止**: 使用不存在的脚本或旧版脚本")
+            guidance_parts.append("- 💡 **路径规则**: 直接使用脚本名（系统会自动查找）")
+            
+            logger.info(
+                "Extracted PDF execution guidance",
+                extra={
+                    "skill": skill_name,
+                    "script_name": script_name,
+                    "guidance_length": len("\n".join(guidance_parts)),
+                }
+            )
+            return "\n".join(guidance_parts)
+        
+        # === XLSX 技能执行指引 ===
+        elif skill_name == "xlsx" and ("xlsx" in script_name.lower() or "excel" in script_name.lower()):
+            guidance_parts.append("\n\n## 📊 XLSX 脚本执行关键指引")
+            guidance_parts.append("- ✅ **使用 Node.js + ExcelJS**")
+            guidance_parts.append("- ✅ **正确命令格式**: `node create_spreadsheet.js <input.json> <output.xlsx>`")
+            guidance_parts.append("- ✅ **支持中文、公式、格式化**")
+            guidance_parts.append("- ❌ **禁止**: 使用不存在的 Python 脚本")
+            guidance_parts.append("- 💡 **路径规则**: 直接使用脚本名（系统会自动查找）")
+            
+            logger.info(
+                "Extracted XLSX execution guidance",
+                extra={
+                    "skill": skill_name,
+                    "script_name": script_name,
+                    "guidance_length": len("\n".join(guidance_parts)),
+                }
+            )
+            return "\n".join(guidance_parts)
+        
+        return ""
     
     async def run(
         self,
@@ -244,6 +427,9 @@ class ReActLoop:
         tools: list[BaseTool] | None = None,
         session_id: str | None = None,
         skill_context: Any = None,  # Phase 2 - Skill metadata for tool restrictions
+        plan_state: PlanState | None = None,  # NEW: PlanState for structured plan tool constraints
+        original_goal: str | None = None,  # 🔥 NEW: Original task goal for completion verification
+        trace_id: str | None = None,  # 🔥 NEW: Trace ID for logging and verification
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run the ReAct loop with streaming events.
         
@@ -260,29 +446,140 @@ class ReActLoop:
             tools: Available tools (uses tool_manager if not provided)
             session_id: Optional session ID for logging
             skill_context: SkillMetadata object (Phase 2, for tool restrictions)
+            plan_state: PlanState object (for structured plan tool constraints)
             
         Yields:
             Event dictionaries
         """
+        # 🔥 NEW: Store original goal for completion verification
+        self._original_goal = original_goal or ""
+        
+        # Working message list
+        working_messages = list(messages)
+        
         # Use provided tools or get from manager
         if tools is None:
             tools = self.tool_manager.get_all_tools()
         
+        # Apply plan tool constraints if structured plan exists
+        if plan_state and hasattr(plan_state, 'structured_plan') and plan_state.structured_plan:
+            plan = plan_state.structured_plan
+            if hasattr(plan, 'tool_constraints') and plan.tool_constraints:
+                # ✅ FIX: Use Plan's original tool constraints directly, don't re-compute
+                original_count = len(tools)
+                tools = [
+                    t for t in tools
+                    if plan.tool_constraints.is_allowed(t.name)
+                ]
+                filtered_count = original_count - len(tools)
+                                
+                logger.info(
+                    "Applied Plan's original tool constraints (highest priority)",
+                    extra={
+                        "original_tools": original_count,
+                        "allowed_tools": len(tools),
+                        "filtered_out": filtered_count,
+                        "constraint_source": plan.tool_constraints.source,
+                        "constraint_priority": plan.tool_constraints.priority,
+                        "allowed_list": plan.tool_constraints.allowed if plan.tool_constraints.allowed else "all",
+                        "forbidden_list": plan.tool_constraints.forbidden if plan.tool_constraints.forbidden else "none",
+                    }
+                )
+        
+                # Emit Info event for user visibility
+                if filtered_count > 0:
+                    constraint_msg = []
+                    if plan.tool_constraints.allowed:
+                        constraint_msg.append(f"✅ 仅允许：{', '.join(plan.tool_constraints.allowed)}")
+                    if plan.tool_constraints.forbidden:
+                        constraint_msg.append(f"❌ 禁止：{', '.join(plan.tool_constraints.forbidden)}")
+        
+                    yield {
+                        "type": "message",
+                        "role": "system",
+                        "content": f"🔧 **工具约束已应用**\n\n{chr(10).join(constraint_msg)}\n\n已过滤 {filtered_count} 个工具",
+                    }
+        
+        # 🔥 NEW: Add plan execution monitoring if plan_state is provided
+        if plan_state and hasattr(plan_state, 'current_step') and hasattr(plan_state, 'total_steps'):
+            current_step = plan_state.current_step
+            total_steps = plan_state.total_steps
+            progress = f"{current_step}/{total_steps}"
+                    
+            logger.debug(
+                "Plan execution monitoring enabled",
+                extra={
+                    "current_step": current_step,
+                    "total_steps": total_steps,
+                    "progress": progress,
+                }
+            )
+                    
+            # 🔥 ENHANCED: Add detailed plan steps to guide LLM
+            plan_details = []
+            if hasattr(plan_state, 'structured_plan') and plan_state.structured_plan:
+                structured_plan = plan_state.structured_plan
+                        
+                # Build detailed step-by-step guidance
+                plan_details.append(f"\n\n【📋 计划执行步骤】")
+                plan_details.append(f"当前进度：{progress}\n")
+                        
+                for i, step in enumerate(structured_plan.steps, 1):
+                    status_icon = "✅" if i < current_step else ("🔴" if i == current_step else "⚪")
+                    step_status = "已完成" if i < current_step else ("进行中" if i == current_step else "待执行")
+                            
+                    plan_details.append(
+                        f"{status_icon} **Step {i}: {step.name}**\n"
+                        f"   - 工具：`{step.tool}`\n"
+                        f"   - 描述：{step.description}\n"
+                        f"   - 状态：{step_status}"
+                    )
+                            
+                    # Add skill_command if available
+                    if hasattr(step, 'skill_command') and step.skill_command:
+                        plan_details.append(f"   - 技能命令：`{step.skill_command}`")
+                            
+                    plan_details.append("")
+                        
+                # Add specific guidance for current step
+                if current_step <= len(structured_plan.steps):
+                    current_step_obj = structured_plan.steps[current_step - 1]
+                    plan_details.append(f"\n【🎯 当前任务】\n")
+                    plan_details.append(f"请立即执行 **Step {current_step}**: {current_step_obj.name}\n")
+                    plan_details.append(f"使用工具：`{current_step_obj.tool}`\n")
+                    if hasattr(current_step_obj, 'skill_command') and current_step_obj.skill_command:
+                        plan_details.append(f"执行命令：`{current_step_obj.skill_command}`\n")
+                    
+            # Combine general guidance with detailed steps
+            plan_guidance = (
+                f"\n\n【计划执行监控】\n"
+                f"请严格按照以下计划步骤执行，确保每一步使用正确的工具和参数。\n"
+                f"如果当前步骤指定了具体命令（如 skill_command），请直接使用该命令，不要自己创造新的实现方式。\n"
+                f"特别是 PDF/PPTX生成任务，必须使用提供的技能脚本，不要使用 inline Python 代码！\n"
+            )
+                    
+            if plan_details:
+                plan_guidance += "\n".join(plan_details)
+                    
+            # Inject into working messages
+            working_messages.append({
+                "role": "system",
+                "content": plan_guidance,
+            })
+                
         # Get OpenAI tool definitions
         openai_tools = [tool.to_openai_tool() for tool in tools] if tools else None
-        
-        # Working message list
-        working_messages = list(messages)
         
         # Track iteration statistics
         actual_iterations = 0
         tool_calls_count = 0
         completed_early = False
+        retry_without_tool_count = 0  # NEW: Track retry attempts when no tools called
         
         # Initialize strategy state for reflection and adjustment
         strategy_state = StrategyState()
         
-        logger.info(
+        logger.debug(  # Changed from info: routine event
             "ReAct loop started",
             extra={
                 "tools_count": len(tools) if tools else 0,
@@ -329,7 +626,7 @@ class ReActLoop:
                             "name": tool_call.name,
                             "arguments": tool_call.arguments,
                         }
-                        logger.info(
+                        logger.debug(  # Changed from info: routine tool_call event
                             "Emitting tool_call from react_loop",
                             extra={
                                 "tool_call_id": tool_call.id,
@@ -339,36 +636,102 @@ class ReActLoop:
                             }
                         )
                         
-                        # ===== PHASE 2: Tool Constraint Validation BEFORE execution =====
-                        # Check if this tool is allowed based on skill_context
-                        if skill_context and hasattr(skill_context, 'allowed_tools') and skill_context.allowed_tools:
-                            if tool_call.name not in skill_context.allowed_tools:
+                        yield tool_call_event
+                        
+                        # Scenario 3: Pre-Action Reflection for high-risk operations
+                        is_risky, risk_desc = self._is_high_risk_action(tool_call.name, tool_call.arguments)
+                        if is_risky and self.enable_reflection:
+                            risk_warning = (
+                                f"🚨 **高风险操作检测**\n\n"
+                                f"即将执行：{risk_desc}\n"
+                                f"工具：{tool_call.name}\n"
+                                f"参数：{str(tool_call.arguments)[:200]}\n\n"
+                                f"请再次确认此操作的必要性和安全性。"
+                            )
+                            
+                            # Add pre-action reflection message
+                            working_messages.append({
+                                "role": "system",
+                                "content": risk_warning,
+                            })
+                            
+                            # Emit reflection event
+                            yield {
+                                "type": REACT_EVENT_REFLECTION,
+                                "reflection_type": ReflectionType.PRE_ACTION.value,
+                                "content": f"高风险操作：{risk_desc}",
+                                "tool_name": tool_call.name,
+                                "suggestion": "请确认操作必要性，考虑是否有更安全的替代方案",
+                                "risk_level": "high",
+                            }
+                            
+                            logger.warning(
+                                "High-risk action detected, reflection triggered",
+                                extra={
+                                    "tool_name": tool_call.name,
+                                    "risk_description": risk_desc,
+                                    "arguments": tool_call.arguments,
+                                }
+                            )
+                        
+                        # 🔥🔥🔥 CRITICAL: Inject SKILL.md guidance before execution (progressive disclosure)
+                        skill_guidance = self._extract_skill_guidance_for_execution(tool_call.name, tool_call.arguments)
+                        if skill_guidance:
+                            logger.info(
+                                "Injecting SKILL.md guidance before tool execution",
+                                extra={
+                                    "tool": tool_call.name,
+                                    "skill_guidance_chars": len(skill_guidance),
+                                    "arguments_preview": str(tool_call.arguments)[:100],
+                                }
+                            )
+                            
+                            # Add skill guidance message
+                            working_messages.append({
+                                "role": "system",
+                                "content": skill_guidance,
+                            })
+                            
+                            # 🔥 NEW: Emit event for user visibility (optional, for debugging)
+                            yield {
+                                "type": "skill_guidance_injected",
+                                "tool_name": tool_call.name,
+                                "guidance_length": len(skill_guidance),
+                                "preview": skill_guidance[:200] + "..." if len(skill_guidance) > 200 else skill_guidance,
+                            }
+                        
+                        # Execute tool - constraint checking is done in ToolManager
+                        # to avoid duplication and centralize validation logic
+                        try:
+                            result = await self.tool_manager.execute(
+                                tool_call.name,
+                                tool_call.arguments,
+                                skill_context=skill_context,  # Phase 2 - Pass skill context for tool restrictions
+                            )
+                        except Exception as e:
+                            # Handle ToolNotAllowedError from ToolManager
+                            from ..tools.manager import ToolNotAllowedError
+                            if isinstance(e, ToolNotAllowedError):
                                 logger.warning(
-                                    "Tool call blocked by skill constraints (ReAct Loop)",
+                                    "Tool call blocked by skill constraints",
                                     extra={
                                         "tool_name": tool_call.name,
-                                        "allowed_tools": skill_context.allowed_tools,
-                                        "skill_name": getattr(skill_context, 'name', 'unknown'),
+                                        "allowed_tools": e.allowed_tools,
+                                        "skill_context": getattr(skill_context, 'name', 'unknown') if skill_context else None,
                                     }
                                 )
                                 
                                 # Add system message to inform LLM about the constraint
                                 working_messages.append({
                                     "role": "system",
-                                    "content": f"⚠️ 工具 '{tool_call.name}' 不可用。当前技能 '{skill_context.name}' 只允许使用以下工具：{skill_context.allowed_tools}。请选择允许的工具重新尝试。"
+                                    "content": f"⚠️ 工具 '{tool_call.name}' 不可用。{str(e)}"
                                 })
                                 
-                                # Skip this tool call - don't execute it
+                                # Skip this tool call - continue to next iteration
                                 continue
-                        
-                        yield tool_call_event
-                        
-                        # Execute tool
-                        result = await self.tool_manager.execute(
-                            tool_call.name,
-                            tool_call.arguments,
-                            skill_context=skill_context,  # Phase 2 - Pass skill context for tool restrictions
-                        )
+                            else:
+                                # Re-raise other exceptions
+                                raise
                         
                         # Check if this requires user confirmation - stop the loop
                         # Fix: Ensure metadata is a dict before accessing
@@ -377,7 +740,7 @@ class ReActLoop:
                         is_blocked = metadata_dict.get("is_blocked", False)
                         
                         # Emit tool_result event
-                        logger.info(
+                        logger.debug(  # Changed from info: routine tool_result event
                             "Emitting tool_result from react_loop",
                             extra={
                                 "tool_call_id": tool_call.id,
@@ -386,6 +749,231 @@ class ReActLoop:
                                 "requires_confirmation": requires_confirmation,
                             }
                         )
+                        
+                        # Scenario 1: Check if result anomaly requires reflection (MUST reflect)
+                        should_reflect, reflection_type, reason = self._should_reflect_on_result(result)
+                        if should_reflect and self.enable_reflection:
+                            # ✅ OPTIMIZE: Retrieve relevant memories from past experiences
+                            memory_guidance = ""
+                            if ERROR_LEARNING_AVAILABLE:
+                                try:
+                                    error_learning_service = get_error_learning_service(self.llm_router)
+                                    
+                                    # ✅ OPTIMIZE: Add timeout control to prevent blocking
+                                    import asyncio
+                                    retrieved_memories = await asyncio.wait_for(
+                                        error_learning_service.retrieve_relevant_memories_for_error(
+                                            error_type=reflection_type.value,
+                                            error_message=(result.error or str(result.output))[:500],
+                                            tool_name=tool_call.name,
+                                        ),
+                                        timeout=3.0,  # 3 seconds timeout
+                                    )
+                                    
+                                    # Create memory injection prompt
+                                    if retrieved_memories:
+                                        memory_guidance = error_learning_service.create_memory_injection_prompt(
+                                            retrieved_memories=retrieved_memories,
+                                            current_error_type=reflection_type.value,
+                                            current_error_message=(result.error or str(result.output))[:300],
+                                        )
+                                        
+                                        logger.info(
+                                            "Retrieved relevant memories for error correction",
+                                            extra={
+                                                "error_type": reflection_type.value,
+                                                "memories_count": len(retrieved_memories),
+                                                "top_score": retrieved_memories[0]["score"] if retrieved_memories else 0,
+                                            }
+                                        )
+                                except asyncio.TimeoutError:
+                                    logger.warning(
+                                        "Memory retrieval timed out, proceeding without memory guidance",
+                                        extra={"timeout_seconds": 3.0}
+                                    )
+                                    memory_guidance = ""
+                                except Exception as e:
+                                    logger.warning(
+                                        "Failed to retrieve memories for error",
+                                        extra={"error": str(e)}
+                                    )
+                            
+                            # 🔥 NEW: Add skill path guidance for run_in_terminal errors
+                            skill_path_guidance = ""
+                            if (tool_call.name == "run_in_terminal" and 
+                                skill_context and 
+                                hasattr(skill_context, 'scripts_dir') and 
+                                skill_context.scripts_dir):
+                                skill_path_guidance = (
+                                    f"\n\n💡 **技能脚本路径提示**\n"
+                                    f"- 技能 `{skill_context.name}` 的脚本目录：`{skill_context.scripts_dir}`\n"
+                                    f"- ✅ 正确用法：`python create_pdf_from_md.py ...`（直接使用脚本名）\n"
+                                    f"- ❌ 错误用法：`python /workspace/.../create_pdf_from_md.py`（不要使用绝对路径）\n"
+                                )
+                            
+                            # ✅ OPTIMIZE: Add targeted error detection guidance
+                            error_specific_guidance = ""
+                            error_lower = (result.error or result.output or "").lower()
+                            
+                            if "module not found" in error_lower or "no such file" in error_lower:
+                                error_specific_guidance = (
+                                    f"\n\n🚨 **关键错误：文件不存在!**\n"
+                                    f"检测到 `MODULE_NOT_FOUND` 或 `No such file` 错误。\n\n"
+                                    f"**请立即检查**:\n"
+                                    f"1. ✅ 脚本文件是否在正确的位置\n"
+                                    f"2. ✅ 是否需要先创建该脚本文件\n"
+                                    f"3. ✅ 路径是否正确（建议使用相对路径或直接写脚本名）\n"
+                                    f"4. ✅ 工作目录是否正确设置\n\n"
+                                    f"**示例修复**:\n"
+                                    f"- ❌ 错误：`node /wrong/path/create_presentation.js`\n"
+                                    f"- ✅ 正确：`node skills/pptx/scripts/create_presentation.js ...`\n"
+                                )
+                            elif "permission denied" in error_lower:
+                                error_specific_guidance = (
+                                    f"\n\n🚨 **权限错误**!\n"
+                                    f"检测到 `Permission denied` 错误。\n\n"
+                                    f"**解决方案**:\n"
+                                    f"1. ✅ 检查文件是否有执行权限：`chmod +x script.py`\n"
+                                    f"2. ✅ 检查目录是否有写入权限\n"
+                                    f"3. ✅ 尝试使用 `python script.py` 而不是直接执行\n"
+                                )
+                            elif "command not found" in error_lower or "not recognized" in error_lower:
+                                error_specific_guidance = (
+                                    f"\n\n🚨 **命令不存在**!\n"
+                                    f"检测到 `Command not found` 错误。\n\n"
+                                    f"**解决方案**:\n"
+                                    f"1. ✅ 检查命令是否已安装\n"
+                                    f"2. ✅ 检查 PATH 环境变量\n"
+                                    f"3. ✅ 使用完整路径或确认命令名称正确\n"
+                                )
+                            
+                            reflection_content = (
+                                f"⚠️ **结果异常检测**\n\n"
+                                f"{reason}\n\n"
+                                f"工具：{tool_call.name}\n"
+                                f"结果：{result.output[:100] if result.output else 'N/A'}...\n"
+                                f"{skill_path_guidance}"
+                                f"{error_specific_guidance}"
+                                f"{memory_guidance}"  # ✅ OPTIMIZE: Add memory guidance
+                            )
+                            
+                            # Add reflection message
+                            working_messages.append({
+                                "role": "system",
+                                "content": reflection_content,
+                            })
+                            
+                            # Emit reflection event
+                            yield {
+                                "type": REACT_EVENT_REFLECTION,
+                                "reflection_type": reflection_type.value,
+                                "content": reason,
+                                "tool_name": tool_call.name,
+                                "suggestion": "请检查工具参数和执行环境，或尝试使用其他方法",
+                            }
+                            
+                            logger.info(
+                                "Result anomaly reflection triggered",
+                                extra={
+                                    "tool_name": tool_call.name,
+                                    "reflection_type": reflection_type.value,
+                                    "reason": reason,
+                                }
+                            )
+                        
+                        # P4-4 NEW: Multi-dimension reflection checks (only if no anomaly reflection)
+                        elif self.enable_reflection and plan_state:
+                            # Check 2: Step stuck reflection
+                            is_stuck, stuck_reason = self._should_step_stuck_reflect(iteration, plan_state, strategy_state)
+                            if is_stuck:
+                                # 🔥 NEW: Add skill path guidance if skill_context is available
+                                skill_path_guidance = ""
+                                if skill_context and hasattr(skill_context, 'scripts_dir') and skill_context.scripts_dir:
+                                    skill_path_guidance = (
+                                        f"\n\n💡 **技能脚本路径提示**\n"
+                                        f"- 技能 `{skill_context.name}` 的脚本目录：`{skill_context.scripts_dir}`\n"
+                                        f"- ✅ 正确示例：`python create_pdf_from_md.py ...`（直接使用脚本名）\n"
+                                        f"- ❌ 错误示例：`python /workspace/.../create_pdf_from_md.py`（不要使用绝对路径）\n"
+                                    )
+                                
+                                # ✅ OPTIMIZE: Add repeated failure warning
+                                repeated_failure_warning = ""
+                                if len(strategy_state.reflection_history) >= 2:
+                                    repeated_failure_warning = (
+                                        f"\n\n🚨 **警告：已反思 {len(strategy_state.reflection_history)} 次但仍未进展**!\n"
+                                        f"当前方法可能根本不可行，请立即:\n"
+                                        f"1. ⛔ **停止当前尝试**\n"
+                                        f"2. 💡 **彻底换一种思路**\n"
+                                        f"3. 🆘 **或请求用户帮助**\n"
+                                    )
+                                                        
+                                reflection_content = (
+                                    f"⚠️ **Step 停滞检测**\n\n"
+                                    f"{stuck_reason}\n\n"
+                                    f"建议操作:\n"
+                                    f"1. 如果正在重复同一工具 → 立即停止，尝试其他方法\n"
+                                    f"2. 如果 Step 停滞 → 评估是否可以进入下一步\n"
+                                    f"3. 如果工具偏离 → 回顾计划中的工具约束\n"
+                                    f"4. 如果任务困难 → 考虑分解为更小的子任务\n"
+                                    f"{skill_path_guidance}"
+                                    f"{repeated_failure_warning}"
+                                )
+                                
+                                working_messages.append({
+                                    "role": "system",
+                                    "content": reflection_content,
+                                })
+                                
+                                yield {
+                                    "type": REACT_EVENT_REFLECTION,
+                                    "reflection_type": ReflectionType.STRATEGY_ADJUSTMENT.value,
+                                    "content": stuck_reason,
+                                    "suggestion": "请重新评估当前策略，避免陷入循环",
+                                }
+                                
+                                logger.warning(
+                                    "Step stuck reflection triggered",
+                                    extra={
+                                        "iteration": iteration,
+                                        "reason": stuck_reason,
+                                        "current_step": getattr(plan_state, 'current_step', 'N/A'),
+                                    }
+                                )
+                            
+                            # Check 3: Slow progress reflection
+                            elif self._should_long_task_reflect(iteration, self.max_iterations, plan_state):
+                                reflection_content = (
+                                    f"⚠️ **进度缓慢检测**\n\n"
+                                    f"当前迭代：{iteration + 1}/{self.max_iterations}\n"
+                                    f"当前步骤：{getattr(plan_state, 'current_step', 'N/A')}/{getattr(plan_state, 'total_steps', 'N/A')}\n"
+                                    f"工具执行次数：{getattr(plan_state, 'tool_execution_count', 'N/A')}\n\n"
+                                    f"建议操作:\n"
+                                    f"1. 简化当前方法，避免过度复杂化\n"
+                                    f"2. 如果已完成足够信息收集，考虑进入下一步\n"
+                                    f"3. 如需帮助，请向用户请求更明确的指导\n"
+                                )
+                                
+                                working_messages.append({
+                                    "role": "system",
+                                    "content": reflection_content,
+                                })
+                                
+                                yield {
+                                    "type": REACT_EVENT_REFLECTION,
+                                    "reflection_type": ReflectionType.LONG_TASK.value,
+                                    "content": "进度缓慢检测：连续 2 次迭代无进展",
+                                    "suggestion": "请加快执行节奏或调整策略",
+                                }
+                                
+                                logger.warning(
+                                    "Slow progress reflection triggered",
+                                    extra={
+                                        "iteration": iteration,
+                                        "current_step": getattr(plan_state, 'current_step', 'N/A'),
+                                        "tool_execution_count": getattr(plan_state, 'tool_execution_count', 'N/A'),
+                                    }
+                                )
+                        
                         yield {
                             "type": REACT_EVENT_TOOL_RESULT,
                             "tool_call_id": tool_call.id,
@@ -438,6 +1026,38 @@ class ReActLoop:
                         
                         # Update strategy state
                         self._update_strategy_state(strategy_state, tool_call.name, result.success)
+                        
+                        # 🔥 NEW: Universal Task Completion Detection - Check if goal achieved
+                        if result.success:
+                            completion_analysis = await self._analyze_task_completion(
+                                tool_call=tool_call,
+                                result=result,
+                                session_id=session_id,
+                                trace_id=trace_id or session_id or str(uuid.uuid4()),  # Use trace_id, session_id, or generate new
+                                strategy_state=strategy_state,  # 🔥 NEW: Pass strategy state for multi-step detection
+                            )
+                            
+                            if completion_analysis.should_conclude:
+                                logger.info(
+                                    "🎯 Task completion detected, prompting for final_answer",
+                                    extra={
+                                        "session_id": session_id,
+                                        "completion_type": completion_analysis.type,
+                                        "confidence": completion_analysis.confidence,
+                                        "reasons": completion_analysis.reasons,
+                                    }
+                                )
+                                
+                                # Add system message to prompt LLM to conclude with comprehensive feedback
+                                working_messages.append({
+                                    "role": "system",
+                                    "content": (
+                                        f"✅ 检测到任务已完成（{completion_analysis.type}）。"
+                                        "请立即总结任务完成情况并向用户返回最终结果（final_answer），包括：\n"
+                                        f"{completion_analysis.guidance}\n"
+                                        "\n请不要再次调用工具，直接返回 final_answer。"
+                                    ),
+                                })
                         
                         # Add tool result to messages
                         working_messages.append({
@@ -507,10 +1127,85 @@ class ReActLoop:
                 # ===== SCHEME 1: Check if tool calls were required but not made =====
                 # Detect if user message requires tool calls but LLM didn't call any
                 if self._requires_tool_call_but_none_made(messages):
+                    retry_without_tool_count += 1
+                    
+                    # Enforce iteration < 2 retry规范: Only retry in first 2 iterations
+                    if retry_without_tool_count >= self.MAX_RETRY_WITHOUT_TOOL or iteration >= 2:
+                        # Exceeded retry limit or past early iterations - fail with error
+                        logger.error(
+                            "LLM persistently not calling tools, task cannot continue",
+                            extra={
+                                "iteration": iteration + 1,
+                                "retry_count": retry_without_tool_count,
+                                "max_retry": self.MAX_RETRY_WITHOUT_TOOL,
+                            }
+                        )
+                        # Exceeded retry limit or past early iterations - fail with error
+                        logger.error(
+                            "LLM persistently not calling tools, task cannot continue",
+                            extra={
+                                "iteration": iteration + 1,
+                                "retry_count": retry_without_tool_count,
+                                "max_retry": self.MAX_RETRY_WITHOUT_TOOL,
+                            }
+                        )
+                        
+                        # 🔥 NEW: Generate problem guidance data
+                        from .self_healing_monitor import generate_problem_guidance_for_frontend
+                        guidance_data = generate_problem_guidance_for_frontend(
+                            error_type="llm_not_calling_tools",
+                            error_message=f"LLM 持续不调用工具（重试{retry_without_tool_count}次），任务无法继续",
+                            context={
+                                "retry_count": retry_without_tool_count,
+                                "max_retry": self.MAX_RETRY_WITHOUT_TOOL,
+                                "iteration": iteration + 1,
+                                "possible_causes": [
+                                    "用户问题需要工具但 LLM 未识别",
+                                    "工具描述不够清晰",
+                                    "LLM 理解偏差",
+                                ],
+                            }
+                        )
+                        
+                        # Send error message
+                        yield {
+                            "type": REACT_EVENT_ERROR,
+                            "error": f"LLM 持续不调用工具（重试{retry_without_tool_count}次），任务无法继续",
+                            "retry_count": retry_without_tool_count,
+                        }
+                        
+                        # 🔥 NEW: Send guidance card immediately after error
+                        
+                        # 🔥 NEW: Send guidance card immediately after error
+                        # Log the guidance data before sending
+                        from ..utils.logger import get_logger
+                        logger_local = get_logger(__name__)
+                        logger_local.info(
+                            "🔍 react_loop: Sending problem_guidance",
+                            extra={
+                                "guidance_type": guidance_data.get("type") if isinstance(guidance_data, dict) else "not a dict",
+                                "has_steps": len(guidance_data.get("steps", [])) if isinstance(guidance_data, dict) else 0,
+                                "session_id": session_id or "unknown",
+                            }
+                        )
+                        
+                        yield {
+                            "type": "problem_guidance",
+                            "data": guidance_data,
+                        }
+                        
+                        logger_local.info(
+                            "✅ react_loop: problem_guidance sent",
+                            extra={"session_id": session_id}
+                        )
+                        
+                        return  # Terminate loop
+                    
                     logger.warning(
-                        "LLM responded without tool calls when tools were required",
+                        "LLM responded without tool calls when tools were required (retrying)",
                         extra={
                             "iteration": iteration + 1,
+                            "retry_count": retry_without_tool_count,
                             "response_preview": final_content[:200],
                         }
                     )
@@ -578,7 +1273,7 @@ class ReActLoop:
                         # Continue to next iteration for improvement
                         continue
                 
-                logger.info(
+                logger.debug(  # Changed from info: routine completion event
                     "ReAct loop completed",
                     extra={
                         "iterations": iteration + 1,
@@ -596,23 +1291,96 @@ class ReActLoop:
                 return
                 
             except Exception as e:
+                # 🔥 DEBUG: Log full exception details
+                import traceback
+                error_stack = traceback.format_exc()
                 logger.error(
-                    "ReAct iteration failed",
+                    f"ReAct iteration failed - EXCEPTION DETAILS",
                     extra={
                         "iteration": iteration + 1,
                         "error": str(e),
                         "error_type": type(e).__name__,
+                        "error_repr": repr(e),
+                        "error_stack": error_stack[:2000],  # Limit log size
                     }
                 )
                 
+                # Check if this is a KeyError related to ProblemType
+                if isinstance(e, KeyError):
+                    logger.critical(
+                        f"KEYERROR DETECTED - This might be causing the enum string issue!",
+                        extra={
+                            "key_error_args": e.args,
+                            "key_error_str": str(e),
+                        }
+                    )
+                
+                # ALWAYS trigger failure reflection on exception (regardless of enable_reflection)
+                failure_analysis = self._generate_failure_analysis(strategy_state, iteration + 1)
+                
+                # Emit reflection event
                 yield {
-                    "type": REACT_EVENT_ERROR,
-                    "error": str(e),
-                    "iteration": iteration + 1,
+                    "type": REACT_EVENT_REFLECTION,
+                    "reflection_type": ReflectionType.FAILURE_ANALYSIS.value,
+                    "content": f"异常退出：{type(e).__name__} (详情见日志)",
+                    "suggestion": failure_analysis["recommendation"],
+                    "failure_details": failure_analysis,
+                    "exception_type": type(e).__name__,
                 }
                 
-                # Try to continue with next iteration
-                continue
+                # Emit error event
+                
+                # Emit error event
+                # 🔥 FIX: Ensure error is always a clean string, not enum representation
+                error_str = str(e)
+                if error_str.startswith('<') and 'ProblemType' in error_str:
+                    # This is an enum representation, use a safer message
+                    error_str = f"系统错误：{type(e).__name__} (详情见日志)"
+                    logger.critical(
+                        "Prevented sending ProblemType enum as error message!",
+                        extra={
+                            "original_error": repr(e),
+                            "sanitized_error": error_str,
+                        }
+                    )
+                
+                yield {
+                    "type": REACT_EVENT_ERROR,
+                    "error": error_str,
+                    "iteration": iteration + 1,
+                    "failure_analysis": failure_analysis,
+                }
+                
+                # Terminate loop on exception
+                logger.warning(
+                    "ReAct loop terminated by exception",
+                    extra={
+                        "iteration": iteration + 1,
+                        "exception": str(e),
+                        "failure_analysis": failure_analysis,
+                    }
+                )
+                
+                # ✅ OPTIMIZE: Record error for learning if this was a tool execution error
+                if ERROR_LEARNING_AVAILABLE:
+                    try:
+                        error_learning_service = get_error_learning_service(self.llm_router)
+                        
+                        # Record the error pattern
+                        error_learning_service.record_error(
+                            error_type=type(e).__name__,
+                            error_message=str(e),
+                            tool_name=tool_call.name if 'tool_call' in locals() else "unknown",
+                            session_id=session_id or "unknown",
+                            context={"iteration": iteration},
+                        )
+                    except Exception as learn_error:
+                        logger.debug(
+                            "Failed to record error for learning",
+                            extra={"error": str(learn_error)}
+                        )
+                
+                return
         
         # Max iterations reached
         utilization_rate = (actual_iterations / self.max_iterations * 100) if self.max_iterations > 0 else 0
@@ -891,6 +1659,283 @@ class ReActLoop:
             state.same_tool_repeated = 0
             state.last_tool_name = tool_name
     
+    async def _analyze_task_completion(
+        self,
+        tool_call: ToolCallRequest,
+        result: ToolResult,
+        session_id: str,
+        trace_id: str,
+        strategy_state: "StrategyState | None" = None,  # 🔥 NEW: Pass strategy state for multi-step detection
+    ) -> "TaskCompletionAnalysis":
+        """Analyze whether task goal has been achieved - universal completion detection.
+        
+        Returns analysis with:
+        - should_conclude: Whether to prompt LLM for final_answer
+        - type: Type of completion (file_generated, data_retrieved, action_completed, etc.)
+        - confidence: Confidence score (0.0-1.0)
+        - reasons: List of reasons for conclusion
+        - guidance: Specific guidance for final_answer content
+        """
+        from .models.completion import TaskCompletionAnalysis
+        
+        reasons = []
+        confidence = 0.0
+        completion_type = None
+        guidance_parts = []
+        
+        # ===== 1. File Generation Detection =====
+        file_extensions = [".pptx", ".pdf", ".xlsx", ".xls", ".docx", ".txt", ".md", ".json", ".csv"]
+        detected_file = None
+        
+        if tool_call.name == "run_in_terminal":
+            command = tool_call.arguments.get("command", "")
+            for ext in file_extensions:
+                if ext in command.lower():
+                    detected_file = ext
+                    break
+        elif tool_call.name == "write_file":
+            file_path = tool_call.arguments.get("file_path", "")
+            for ext in file_extensions:
+                if file_path.lower().endswith(ext):
+                    detected_file = ext
+                    break
+        
+        if detected_file:
+            completion_type = f"文件生成 ({detected_file.upper()})"
+            confidence = 0.9
+            reasons.append(f"成功生成{detected_file.upper()}文件")
+            guidance_parts.append(f"1) 生成的文件路径和类型说明")
+            guidance_parts.append(f"2) 文件的主要内容和用途")
+            guidance_parts.append(f"3) 如何打开或使用该文件的建议")
+        
+        # ===== 2. Data Retrieval Detection =====
+        if tool_call.name in ("web_search", "read_file", "fetch_web_content"):
+            if result.success and result.output:
+                output_length = len(result.output) if isinstance(result.output, str) else 0
+                if output_length > 100:  # Substantial content retrieved
+                    completion_type = "数据检索"
+                    confidence = max(confidence, 0.8)
+                    reasons.append(f"成功检索到{output_length}字符的数据")
+                    guidance_parts.append(f"1) 检索到的核心信息总结")
+                    guidance_parts.append(f"2) 信息来源和可靠性说明")
+                    guidance_parts.append(f"3) 基于信息的建议或下一步行动")
+        
+        # ===== 3. Code Execution Success =====
+        if tool_call.name == "run_in_terminal":
+            command = tool_call.arguments.get("command", "")
+            if result.success:
+                # Check if it's a build/compile command
+                build_keywords = ["build", "compile", "make", "npm run", "yarn", "webpack", "vite"]
+                if any(keyword in command.lower() for keyword in build_keywords):
+                    completion_type = "构建完成"
+                    confidence = max(confidence, 0.85)
+                    reasons.append("代码构建/编译成功")
+                    guidance_parts.append(f"1) 构建产物位置和格式")
+                    guidance_parts.append(f"2) 构建是否包含警告或注意事项")
+                    guidance_parts.append(f"3) 如何运行或部署的建议")
+        
+        # ===== 4. Multi-step Task Completion =====
+        # If we've executed multiple different tools successfully, might be complete
+        if strategy_state and len(set([e.tool_name for e in strategy_state.tool_execution_history[-5:]])) >= 3:
+            # Multiple different tools used successfully
+            recent_successes = sum(1 for e in strategy_state.tool_execution_history[-5:] if e.success)
+            if recent_successes >= 4:
+                completion_type = "多步骤任务完成"
+                confidence = max(confidence, 0.75)
+                reasons.append("连续成功执行多个不同工具")
+                guidance_parts.append(f"1) 完成的所有步骤总结")
+                guidance_parts.append(f"2) 最终成果展示")
+                guidance_parts.append(f"3) 整体质量评估")
+        
+        # ===== 5. Plan Mode Milestone Achievement =====
+        # If in plan mode and milestone reached
+        # (This would need plan_state parameter - skip for now)
+        
+        # Determine if should conclude
+        should_conclude = confidence >= 0.75
+        
+        # 🔥 Hybrid method: Mark for LLM verification if confidence is in medium range
+        requires_llm_verification = 0.6 <= confidence < 0.9
+        
+        analysis = TaskCompletionAnalysis(
+            should_conclude=should_conclude,
+            type=completion_type or "未知",
+            confidence=confidence,
+            reasons=reasons,
+            guidance="\n".join(guidance_parts) if guidance_parts else "请总结任务完成情况。",
+            requires_llm_verification=requires_llm_verification,
+        )
+        
+        # If LLM verification is needed, do it now
+        if requires_llm_verification:
+            llm_result = await self._llm_verify_task_completion(
+                original_goal=self._original_goal if hasattr(self, '_original_goal') else "",
+                tool_execution_history=strategy_state.tool_execution_history,
+                preliminary_analysis=analysis,
+                session_id=session_id,
+                trace_id=trace_id or session_id or str(uuid.uuid4()),  # 🔥 FIX: Use provided trace_id
+            )
+            
+            # Combine rule-based and LLM confidence scores
+            combined_confidence = confidence * 0.4 + llm_result.confidence * 0.6
+            
+            analysis.confidence = combined_confidence
+            analysis.should_conclude = combined_confidence >= 0.75
+            
+            if llm_result.is_complete:
+                analysis.reasons.extend(llm_result.reasons)
+                if llm_result.suggestions:
+                    analysis.guidance += "\n\n特别建议:\n" + "\n".join(llm_result.suggestions)
+            else:
+                # LLM thinks task is incomplete - don't trigger final_answer
+                analysis.should_conclude = False
+                analysis.type += " (LLM 验证：未完成)"
+        
+        return analysis
+    
+    async def _llm_verify_task_completion(
+        self,
+        original_goal: str,
+        tool_execution_history: list,
+        preliminary_analysis: "TaskCompletionAnalysis",
+        session_id: str,
+        trace_id: str,
+    ) -> "LLMVerificationResult":
+        """Use LLM to verify whether task goal has been achieved.
+        
+        Args:
+            original_goal: The user's original task/goal
+            tool_execution_history: History of tool executions
+            preliminary_analysis: Preliminary analysis from rule-based detection
+            session_id: Session ID for logging
+            trace_id: Trace ID for logging
+            
+        Returns:
+            LLMVerificationResult with LLM's assessment
+        """
+        from .models.completion import LLMVerificationResult
+        
+        try:
+            # Format tool history for LLM
+            tool_summary = []
+            for i, record in enumerate(tool_execution_history[-10:], 1):  # Last 10 executions
+                status = "✅" if record.success else "❌"
+                tool_summary.append(f"{i}. {status} {record.tool_name}: {str(record.arguments)[:100]}")
+            
+            # Build verification prompt
+            verification_prompt = f"""你是一个任务完成度评估专家。请快速判断以下任务是否已完成。
+
+【原始目标】
+{original_goal if original_goal else "（未提供具体目标）"}
+
+【已执行的操作】
+{chr(10).join(tool_summary) if tool_summary else "暂无记录"}
+
+【初步检测结果】
+检测类型：{preliminary_analysis.type}
+检测置信度：{preliminary_analysis.confidence:.2f}
+检测依据：{", ".join(preliminary_analysis.reasons)}
+
+请用是/否/不确定回答：
+1. 任务是否与原始目标一致？
+2. 是否产生了有价值的成果？
+3. 是否应该立即向用户返回最终结果？
+
+如果任务未完成，还缺少什么关键内容？
+
+请严格按照以下 JSON 格式回答：
+{{
+    "is_complete": true/false,
+    "confidence": 0.0-1.0,
+    "reasons": ["原因 1", "原因 2"],
+    "missing_elements": ["缺失项 1"],
+    "suggestions": ["建议 1"]
+}}
+"""
+            
+            # Call LLM with fast/cheap model
+            from ...main import get_llm_router  # 🔥 FIX: Import from main.py
+            llm_router = get_llm_router()
+            
+            # 🔥 FIX: Add timeout control to prevent hanging
+            import asyncio
+            try:
+                response = await asyncio.wait_for(
+                    llm_router.chat(
+                        messages=[{"role": "user", "content": verification_prompt}],
+                        temperature=0.1,  # Low temperature for objective analysis
+                        stream=False,
+                    ),
+                    timeout=5.0,  # 5 seconds timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "LLM verification timed out, using fallback",
+                    extra={
+                        "session_id": session_id,
+                        "trace_id": trace_id,
+                    }
+                )
+                return LLMVerificationResult(
+                    is_complete=False,
+                    confidence=0.5,
+                    reasons=["LLM 验证超时"],
+                )
+            
+            # Parse LLM response
+            import json
+            try:
+                # Try to extract JSON from response
+                content = response.content
+                # Handle markdown code blocks
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0]
+                
+                llm_result_dict = json.loads(content.strip())
+                
+                return LLMVerificationResult(
+                    is_complete=llm_result_dict.get("is_complete", False),
+                    confidence=float(llm_result_dict.get("confidence", 0.5)),
+                    reasons=llm_result_dict.get("reasons", []),
+                    missing_elements=llm_result_dict.get("missing_elements", []),
+                    suggestions=llm_result_dict.get("suggestions", []),
+                )
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(
+                    "Failed to parse LLM verification response, using fallback",
+                    extra={
+                        "session_id": session_id,
+                        "trace_id": trace_id,
+                        "error": str(e),
+                    }
+                )
+                # Fallback: conservative approach
+                return LLMVerificationResult(
+                    is_complete=False,
+                    confidence=0.5,
+                    reasons=["LLM 响应解析失败"],
+                    suggestions=["请继续完成任务"],
+                )
+                
+        except Exception as e:
+            logger.error(
+                "LLM verification failed",
+                extra={
+                    "session_id": session_id,
+                    "trace_id": trace_id,
+                    "error": str(e),
+                },
+                exc_info=True,
+            )
+            # Fallback on error - don't block final_answer
+            return LLMVerificationResult(
+                is_complete=False,
+                confidence=0.5,
+                reasons=["LLM 验证异常"],
+            )
+    
     async def _reflect_on_tool_result(
         self,
         tool_name: str,
@@ -1157,10 +2202,10 @@ class ReActLoop:
         # Determine primary reason
         if state.consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
             analysis["primary_reason"] = "连续多次工具执行失败"
-            analysis["contributing_factors"].append(f"工具失败模式: {list(state.failed_tool_patterns)}")
-        elif state.same_tool_repeated >= self.MAX_SAME_TOOL_REPEATS:
-            analysis["primary_reason"] = "可能陷入工具调用循环"
-            analysis["contributing_factors"].append(f"重复工具: {state.last_tool_name}")
+            analysis["contributing_factors"].append(f"工具失败模式：{list(state.failed_tool_patterns)}")
+        elif state.same_tool_repeated >= 2:  # P4-2: 降低阈值到 2 次，更早发现循环
+            analysis["primary_reason"] = "检测到工具调用循环"
+            analysis["contributing_factors"].append(f"重复工具：{state.last_tool_name} (已调用 {state.same_tool_repeated} 次)")
         elif state.adjustment_count >= self.MAX_ADJUSTMENTS:
             analysis["primary_reason"] = "策略调整次数过多，任务复杂度可能超出当前能力"
         elif iterations >= self.max_iterations:
@@ -1196,3 +2241,161 @@ class ReActLoop:
         )
         
         return analysis
+    
+    def _should_reflect_on_result(self, result: ToolResult) -> tuple[bool, ReflectionType, str]:
+        """检查工具结果是否需要反思（场景1：结果异常）
+        
+        Args:
+            result: 工具执行结果
+            
+        Returns:
+            (是否需要反思, 反思类型, 原因)
+        """
+        # API错误
+        if not result.success and result.error:
+            return True, ReflectionType.ERROR_DRIVEN, f"工具执行失败: {result.error}"
+        
+        # 结果为空
+        if result.success and (not result.output or len(result.output.strip()) == 0):
+            return True, ReflectionType.ERROR_DRIVEN, "工具返回空结果"
+        
+        # 格式不符合schema（检查特定模式）
+        if result.success and result.metadata.get("format_error"):
+            return True, ReflectionType.ERROR_DRIVEN, "返回格式不符合预期"
+        
+        # 置信度低（如果有confidence字段）
+        confidence = result.metadata.get("confidence", 1.0)
+        if confidence < 0.5:
+            return True, ReflectionType.ERROR_DRIVEN, f"结果置信度过低 ({confidence:.2f})"
+        
+        return False, ReflectionType.TOOL_RESULT, ""
+    
+    def _is_high_risk_action(self, tool_name: str, arguments: dict) -> tuple[bool, str]:
+        """判断是否为高风险操作（场景3：Pre-Action反思）
+        
+        Args:
+            tool_name: 工具名称
+            arguments: 工具参数
+            
+        Returns:
+            (是否高风险, 风险描述)
+        """
+        # 高风险工具列表
+        HIGH_RISK_TOOLS = {
+            "delete_file": "删除文件",
+            "delete_directory": "删除目录",
+            "write_file": "写入文件",
+            "overwrite_file": "覆盖文件",
+            "send_email": "发送邮件",
+            "execute_code": "执行代码",
+            "run_shell": "执行Shell命令",
+            "paid_api_call": "调用付费API",
+            "database_delete": "删除数据库记录",
+            "api_request": "API请求"  # 某些API可能有副作用
+        }
+        
+        if tool_name in HIGH_RISK_TOOLS:
+            risk_desc = HIGH_RISK_TOOLS[tool_name]
+            # 检查特定高风险参数
+            if tool_name == "write_file" and arguments.get("overwrite"):
+                return True, f"{risk_desc}（覆盖模式）"
+            if tool_name == "run_shell" and any(cmd in str(arguments) for cmd in ["rm", "del", "format"]):
+                return True, f"{risk_desc}（危险命令）"
+            return True, risk_desc
+        
+        return False, ""
+    
+    def _should_checkpoint_reflect(self, iteration: int, strategy_state: StrategyState) -> bool:
+        """判断是否需要阶段性反思（场景2：Checkpoint）
+        
+        Args:
+            iteration: 当前迭代次数
+            strategy_state: 策略状态
+            
+        Returns:
+            是否需要反思
+        """
+        # 每完成一定数量的成功工具调用后反思
+        if strategy_state.tool_execution_history:
+            success_count = sum(1 for r in strategy_state.tool_execution_history if r.success)
+            # 每3个成功工具后反思一次
+            if success_count > 0 and success_count % 3 == 0:
+                return True
+        
+        return False
+    
+    def _should_long_task_reflect(self, iteration: int, max_iterations: int, plan_state: Any = None) -> bool:
+        """判断是否需要长任务节奏反思（场景 5：Long Task）
+            
+        Args:
+            iteration: 当前迭代次数
+            max_iterations: 最大迭代次数
+            plan_state: Plan 状态对象（可选，用于更精确的进度检测）
+                
+        Returns:
+            是否需要反思
+        """
+        # P4-3 NEW: 如果有 plan_state，添加额外的进度检查
+        if plan_state and hasattr(plan_state, 'current_step'):
+            # 每 2 次迭代检查一次进展
+            if iteration % 2 == 0 and iteration > 0:
+                # 使用实例变量跟踪上次的 step
+                if not hasattr(self, '_last_step_snapshot'):
+                    self._last_step_snapshot = plan_state.current_step
+                elif self._last_step_snapshot == plan_state.current_step:
+                    # 2 次迭代后仍在同一 step，需要反思
+                    logger.warning(
+                        "Slow progress detected",
+                        extra={
+                            "iteration": iteration,
+                            "current_step": plan_state.current_step,
+                            "last_step": self._last_step_snapshot,
+                            "tool_execution_count": getattr(plan_state, 'tool_execution_count', 0),
+                        }
+                    )
+                    return True
+                else:
+                    # 更新快照
+                    self._last_step_snapshot = plan_state.current_step
+            
+        # 原有逻辑：在任务中期（1/3 和 2/3 处）进行反思，防止跑偏
+        checkpoints = [max_iterations // 3, (max_iterations * 2) // 3]
+        return iteration in checkpoints
+        
+    def _should_step_stuck_reflect(
+        self,
+        iteration: int,
+        plan_state: Any,
+        strategy_state: StrategyState,
+    ) -> tuple[bool, str]:
+        """判断是否因 Step 停滞需要反思（新增场景：Step Stuck）
+            
+        触发条件:
+        1. current_step 连续 3 次迭代未变化
+        2. tool_execution_count > 3 且仍在同一 Step
+        3. 同一工具重复调用 >= 2 次
+            
+        Args:
+            iteration: 当前迭代次数
+            plan_state: Plan 状态对象
+            strategy_state: 策略状态
+                
+        Returns:
+            tuple[bool, str]: (是否需要反思，原因描述)
+        """
+        if not plan_state:
+            return False, ""
+            
+        # 检查 1: tool_execution_count 过高但仍在同一 Step
+        if hasattr(plan_state, 'tool_execution_count') and hasattr(plan_state, 'current_step'):
+            if plan_state.tool_execution_count > 3:
+                # 检测是否在同一个 step 上执行了过多工具
+                reason = f"Step 停滞检测：current_step={plan_state.current_step}, tool_execution_count={plan_state.tool_execution_count}"
+                return True, reason
+            
+        # 检查 2: 同一工具重复调用 >= 2 次
+        if hasattr(strategy_state, 'same_tool_repeated') and strategy_state.same_tool_repeated >= 2:
+            reason = f"工具重复检测：{strategy_state.last_tool_name} 已调用 {strategy_state.same_tool_repeated} 次"
+            return True, reason
+            
+        return False, ""

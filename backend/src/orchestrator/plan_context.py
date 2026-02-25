@@ -8,7 +8,7 @@ Adds milestone validation for hybrid scheduling.
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.utils.logger import get_logger
+from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -24,10 +24,13 @@ class PlanState:
         completed_steps: 已完成步骤描述列表
         failed_count: 连续失败次数
         last_adjustment: 上次调整原因
-        iteration_count: ReAct 迭代次数
+        react_iteration_count: ReAct 迭代次数（由外部 ReAct Loop 传入）
+        tool_execution_count: 工具执行次数（内部统计）
         replan_count: 重规划次数（防止无限循环）
         milestones_validated: 已验证的里程碑列表
         structured_plan: StructuredPlan v2.0 对象（可选）
+        tool_violations: 工具违反记录列表（新增）
+        allowed_tools_snapshot: 允许的工具快照（新增）
     """
     original_plan: str
     current_step: int = 1
@@ -35,10 +38,13 @@ class PlanState:
     completed_steps: list[str] = field(default_factory=list)
     failed_count: int = 0
     last_adjustment: str | None = None
-    iteration_count: int = 0
+    react_iteration_count: int = 0  # 修改：明确为 ReAct 迭代次数
+    tool_execution_count: int = 0  # 新增：工具执行次数
     replan_count: int = 0  # 新增：重规划次数
     milestones_validated: list[str] = field(default_factory=list)  # 新增：已验证里程碑
     structured_plan: Any = None  # 新增：StructuredPlan v2.0 引用
+    tool_violations: list[dict] = field(default_factory=list)  # 新增：工具违反记录
+    allowed_tools_snapshot: list[str] = field(default_factory=list)  # 新增：允许的工具快照
     
     def __post_init__(self):
         """初始化后计算总步骤数"""
@@ -94,8 +100,33 @@ class PlanContext:
         Returns:
             str: 格式化的计划上下文文本
         """
-        # 解析计划步骤
-        steps = self._parse_plan_steps(state.original_plan)
+        # Validate plan first
+        if not state.original_plan or not state.original_plan.strip():
+            logger.error("Empty plan detected in build_react_context")
+            return "【错误】计划为空，请先使用 /plan 命令创建计划"
+        
+        # 解析计划步骤 with error handling
+        try:
+            steps = self._parse_plan_steps(state.original_plan)
+        except Exception as e:
+            logger.error(
+                "Failed to parse plan steps",
+                extra={
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "plan_length": len(state.original_plan),
+                }
+            )
+            return f"【错误】计划解析失败：{str(e)}\n请检查计划格式是否正确"
+        
+        if not steps:
+            logger.warning("No steps found in plan")
+            return "【警告】计划中未找到有效步骤，请检查计划格式"
+        
+        # Update total steps if not set
+        if state.total_steps == 0 or state.total_steps != len(steps):
+            state.total_steps = len(steps)
+            logger.debug(f"Updated total_steps to {len(steps)}")
         
         # 构建上下文
         context_parts = []
@@ -116,7 +147,7 @@ class PlanContext:
             for completed in state.completed_steps[-3:]:  # 只显示最近3个
                 context_parts.append(f"- {completed}")
         
-        # 进度
+        # 进度 (safe division)
         progress_pct = (state.current_step / state.total_steps * 100) if state.total_steps > 0 else 0
         context_parts.append(f"\n【进度】{state.current_step}/{state.total_steps} ({progress_pct:.0f}%)")
         
@@ -182,15 +213,15 @@ class PlanContext:
             return True, reason
             
         # 检查是否卡住（迭代次数过多但进度缓慢）
-        if state.iteration_count >= self.REPLAN_THRESHOLD["stuck_iterations"]:
+        if state.react_iteration_count >= self.REPLAN_THRESHOLD["stuck_iterations"]:
             if state.completed_steps:  # 有进展
                 return False, ""
-            reason = f"迭代 {state.iteration_count} 次但无进展"
+            reason = f"迭代 {state.react_iteration_count} 次但无进展"
             logger.warning(
                 "Replan triggered by stuck iteration",
                 extra={
                     "reason": reason,
-                    "iteration_count": state.iteration_count,
+                    "react_iteration_count": state.react_iteration_count,
                     "threshold": self.REPLAN_THRESHOLD["stuck_iterations"],
                     "threshold_type": "stuck_iterations",
                     "replan_count": state.replan_count,
@@ -235,7 +266,8 @@ class PlanContext:
             success: 是否成功
             output: 输出内容
         """
-        state.iteration_count += 1
+        # 更新工具执行计数（不是ReAct迭代）
+        state.tool_execution_count += 1
             
         if success:
             # 成功：重置失败计数，记录完成步骤
@@ -256,6 +288,7 @@ class PlanContext:
                     "total_steps": state.total_steps,
                     "completed_count": len(state.completed_steps),
                     "failed_count": state.failed_count,
+                    "tool_execution_count": state.tool_execution_count,
                     "progress": f"{state.current_step}/{state.total_steps}",
                 }
             )
@@ -268,6 +301,7 @@ class PlanContext:
                     "current_step": state.current_step,
                     "failed_count": state.failed_count,
                     "tool_name": tool_name,
+                    "tool_execution_count": state.tool_execution_count,
                 }
             )
         
@@ -353,6 +387,60 @@ class PlanContext:
         """
         return state.current_step > state.total_steps or (
             state.total_steps > 0 and len(state.completed_steps) >= state.total_steps
+        )
+    
+    def record_tool_violation(
+        self,
+        state: PlanState,
+        tool_name: str,
+        violation_type: str,
+        details: dict | None = None,
+    ) -> None:
+        """记录工具违反事件
+        
+        Args:
+            state: 计划状态（会被修改）
+            tool_name: 工具名称
+            violation_type: 违反类型（如 'forbidden_tool', 'not_in_allowed_list'）
+            details: 额外详情
+        """
+        violation_record = {
+            "tool_name": tool_name,
+            "violation_type": violation_type,
+            "details": details or {},
+            "timestamp": __import__("datetime").datetime.now().isoformat(),
+        }
+        
+        state.tool_violations.append(violation_record)
+        
+        logger.warning(
+            "Tool violation recorded",
+            extra={
+                "tool_name": tool_name,
+                "violation_type": violation_type,
+                "total_violations": len(state.tool_violations),
+                "allowed_tools": state.allowed_tools_snapshot,
+            }
+        )
+    
+    def update_allowed_tools_snapshot(
+        self,
+        state: PlanState,
+        allowed_tools: list[str],
+    ) -> None:
+        """更新允许的工具快照
+        
+        Args:
+            state: 计划状态（会被修改）
+            allowed_tools: 允许的工具列表
+        """
+        state.allowed_tools_snapshot = allowed_tools.copy()
+        
+        logger.debug(
+            "Updated allowed tools snapshot",
+            extra={
+                "allowed_tools": allowed_tools,
+            }
         )
 
 

@@ -3,11 +3,17 @@
 This module implements skill discovery from multiple directories with priority-based
 overriding, following the Anthropic Skills specification.
 
+Includes intelligent caching with:
+- File system watching for auto-reload
+- Environment-based TTL configuration
+- Manual refresh API
+
 Discovery paths (priority high → low):
 1. User-level: configured in x-agent.yaml (default: workspace/skills/)
 2. System-level: backend/src/skills/
 """
 
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -51,7 +57,19 @@ class SkillRegistry:
         self._parser = SkillParser()
         self._cache: dict[str, SkillMetadata] = {}
         self._last_scan_time: datetime | None = None
-        self._cache_ttl = timedelta(seconds=300)  # 5 minutes
+        
+        # Environment-based cache TTL configuration
+        # Development: 30 seconds for fast iteration
+        # Production: 5 minutes for performance
+        env = os.getenv("X_AGENT_ENV", "production").lower()
+        if env == "development":
+            self._cache_ttl = timedelta(seconds=30)
+        else:
+            self._cache_ttl = timedelta(seconds=300)  # 5 minutes
+        
+        # File watching (optional, implemented via watchdog)
+        self._file_watcher = None
+        self._watch_enabled = os.getenv("X_AGENT_WATCH_SKILLS", "false").lower() == "true"
         
         # Load user skills directory from configuration
         try:
@@ -66,9 +84,73 @@ class SkillRegistry:
             "SkillRegistry initialized",
             extra={
                 "workspace_path": str(self.workspace_path),
-                "user_skills_dir": self.user_skills_dir
+                "user_skills_dir": self.user_skills_dir,
+                "cache_ttl_seconds": self._cache_ttl.total_seconds(),
+                "environment": env,
+                "file_watching": self._watch_enabled,
             }
         )
+        
+        # Start file watching if enabled
+        if self._watch_enabled:
+            self._setup_file_watcher()
+    
+    def _setup_file_watcher(self) -> None:
+        """Setup file system watcher for automatic cache invalidation.
+        
+        Requires watchdog library: pip install watchdog
+        """
+        try:
+            from watchdog.observers import Observer
+            from watchdog.events import FileSystemEventHandler, FileSystemEvent
+            
+            class SkillFileHandler(FileSystemEventHandler):
+                """Handler for skill file changes."""
+                
+                def __init__(self, registry: "SkillRegistry"):
+                    self.registry = registry
+                
+                def on_any_event(self, event: FileSystemEvent) -> None:
+                    """Handle any file system event."""
+                    if event.is_directory:
+                        return
+                    
+                    # Check if this is a SKILL.md file
+                    if event.src_path.endswith("SKILL.md"):
+                        logger.info(
+                            "Skill file changed, invalidating cache",
+                            extra={"file_path": event.src_path, "event_type": event.event_type}
+                        )
+                        self.registry.clear_cache()
+            
+            self._file_watcher = Observer()
+            handler = SkillFileHandler(self)
+            
+            # Watch user skills directory
+            user_skills_path = self.workspace_path / self.user_skills_dir
+            if user_skills_path.exists():
+                self._file_watcher.schedule(handler, str(user_skills_path), recursive=True)
+                self._file_watcher.start()
+                logger.info(f"File watching enabled for {user_skills_path}")
+        
+        except ImportError:
+            logger.warning(
+                "watchdog library not installed, file watching disabled. "
+                "Install with: pip install watchdog"
+            )
+            self._watch_enabled = False
+        except Exception as e:
+            logger.warning(f"Failed to setup file watcher: {e}")
+            self._watch_enabled = False
+    
+    def __del__(self) -> None:
+        """Cleanup file watcher on destruction."""
+        if self._file_watcher:
+            try:
+                self._file_watcher.stop()
+                self._file_watcher.join(timeout=1)
+            except Exception as e:
+                logger.warning(f"Error stopping file watcher: {e}")
     
     def list_all_skills(self) -> list[SkillMetadata]:
         """List all available skills (with caching).
@@ -115,10 +197,14 @@ class SkillRegistry:
     def reload_if_changed(self) -> bool:
         """Force reload of skills (e.g., when files change).
         
+        DEPRECATED: Use clear_cache() or set X_AGENT_WATCH_SKILLS=true for automatic reloading.
+        
         Returns:
             True if skills were reloaded
         """
-        logger.info("Forcing skill reload")
+        logger.warning(
+            "reload_if_changed() is deprecated, use clear_cache() instead"
+        )
         old_count = len(self._cache)
         
         skills = self._discover_all_skills()
@@ -134,10 +220,21 @@ class SkillRegistry:
         return True
     
     def clear_cache(self) -> None:
-        """Clear the skill cache."""
+        """Clear the skill cache, forcing a reload on next access.
+        
+        This method can be called:
+        - Manually via API when skills are added/modified
+        - Automatically by file watcher when SKILL.md files change
+        - By external processes via signal/IPC
+        
+        Example:
+            # In development, force refresh after editing SKILL.md
+            registry.clear_cache()
+            skills = registry.list_all_skills()  # Will reload from disk
+        """
         self._cache.clear()
         self._last_scan_time = None
-        logger.info("Skill registry cache cleared")
+        logger.info("Skill cache cleared, will reload on next access")
     
     def _is_cache_valid(self) -> bool:
         """Check if cache is still valid.

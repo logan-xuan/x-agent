@@ -66,6 +66,9 @@ class SkillParser:
             metadata = SkillMetadata(
                 name=metadata_dict['name'],
                 description=metadata_dict['description'],
+                keywords=metadata_dict.get('keywords', []),  # 🔥 NEW: Read keywords for skill matching
+                auto_trigger=metadata_dict.get('auto-trigger', True),  # 🔥 NEW: Support auto-trigger config
+                priority=metadata_dict.get('priority', 999),  # 🔥 NEW: Support priority config
                 path=skill_dir,
                 has_scripts=has_scripts,
                 has_references=has_references,

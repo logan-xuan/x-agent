@@ -2,6 +2,7 @@
   "dependencies": {
     "html2pptx": "^0.0.5",
     "jspdf": "^4.2.0",
+    "pdfkit": "^0.17.2",
     "pptxgenjs": "^4.0.1",
     "puppeteer": "^24.37.4"
   },
