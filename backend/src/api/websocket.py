@@ -358,23 +358,40 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                 # Collect assistant response for memory recording
                 assistant_response = ""
                 
+                
                 async for chunk in stream:
                     # Add trace_id to each chunk
                     if isinstance(chunk, dict):
                         chunk["trace_id"] = message_context.trace_id
                         
+                        # 🔍 DEBUG: Log ALL chunks received from engine
+                        chunk_type_debug = chunk.get("type")
+                        if chunk_type_debug in ("problem_guidance", "error"):
+                            logger.info(
+                                "📥 WebSocket stream received chunk type",
+                                extra={
+                                    "chunk_type": chunk_type_debug,
+                                    "chunk_keys": list(chunk.keys()),
+                                    "has_session_id": "session_id" in chunk,
+                                }
+                            )
+                        
                         # Debug: log the full chunk before sending
                         chunk_type = chunk.get("type")
-                        if chunk_type in ("tool_call", "tool_result", "awaiting_confirmation"):
+                        
+                        # Debug: log the full chunk before sending
+                        chunk_type = chunk.get("type")
+                        if chunk_type in ("tool_call", "tool_result", "awaiting_confirmation", "problem_guidance"):
                             logger.info(
-                                "Sending chunk to frontend",
+                                "🚀 Sending chunk to frontend",
                                 extra={
                                     "type": chunk_type,
                                     "tool_call_id": chunk.get("tool_call_id"),
                                     "tool_name": chunk.get("name") or chunk.get("tool_name"),
+                                    "guidance_type": chunk.get("data", {}).get("type") if chunk_type == "problem_guidance" else None,
+                                    "has_data": "data" in chunk if chunk_type == "problem_guidance" else None,
                                 }
                             )
-                        
                         # Handle different event types
                         chunk_type = chunk.get("type")
                         
@@ -454,18 +471,48 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                     "success": success,
                                     "output": output[:1000] if output else None,
                                     "error": error,
-                                    "duration_ms": None,  # TODO: Add timing info
+                                    "duration_ms": None,  # TODO: Add timing info,
                                 }
                             )
                         
-                        # Note: Memory recording is now handled by Orchestrator
-                        # to avoid duplicate writes
+                        
+                        # 🔥 NEW: Handle problem_guidance events
+                        elif chunk_type == "problem_guidance":
+                            logger.info(
+                                "🚀 WebSocket: Sending problem_guidance to frontend",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "guidance_type": chunk.get("data", {}).get("type"),
+                                    "has_data": "data" in chunk,
+                                    "session_id": session_id,
+                                }
+                            )
+                            logger.info(
+                                "🔍 DEBUG: About to send problem_guidance chunk",
+                                extra={"chunk_keys": list(chunk.keys()), "chunk_type": chunk_type}
+                            )
+                            # Forward guidance event to frontend
+                            await websocket.send_json(chunk)
+                            logger.info(
+                                "✅ DEBUG: problem_guidance sent successfully"
+                            )
+                        
+                        else:
+                            # Default: forward any other dict chunks
+                            logger.debug(
+                                "Forwarding default chunk",
+                                extra={"chunk_type": chunk_type}
+                            )
+                            await websocket.send_json(chunk)
+                            # Default: forward any other dict chunks
+                            await websocket.send_json(chunk)
                     
-                    await websocket.send_json(chunk)
+                    else:
+                        # Non-dict chunks are sent as-is
+                        await websocket.send_json(chunk)
                     
                     # Small delay to prevent overwhelming the client
                     await asyncio.sleep(0.01)
-                    
             except Exception as e:
                 logger.error(
                     f"Streaming error: {e}",

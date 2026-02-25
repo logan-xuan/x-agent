@@ -15,8 +15,9 @@ class SkillMetadata:
     
     Attributes:
         name: Skill identifier (lowercase/alphanumeric/hyphens, 1-64 chars)
-        description: What the skill does and when to use it (1-1024 chars)
+        description: What the skill does and when to use it (1-1-1024 chars)
         path: Path to the skill directory
+        keywords: List of trigger keywords for auto-detection (comma-separated)
         has_scripts: Whether the skill has a scripts/ directory
         has_references: Whether the skill has a references/ directory
         has_assets: Whether the skill has an assets/ directory
@@ -26,8 +27,13 @@ class SkillMetadata:
         user_invocable: Available via / command menu (default: True)
         argument_hint: Argument completion hint (e.g., "[filename] [format]")
         allowed_tools: List of tools allowed when this skill is active
+        forbidden_tools: List of tools forbidden when this skill is active
         context: Execution context ("fork" for isolated execution)
         license: License identifier (e.g., "Apache-2.0", "Proprietary")
+        
+        # Phase 3: Skill matching and prioritization
+        auto_trigger: Whether skill can be auto-triggered by LLM (default: True)
+        priority: Skill priority (lower number = higher priority, default: 999)
     """
     name: str
     description: str
@@ -43,8 +49,14 @@ class SkillMetadata:
     user_invocable: bool = True
     argument_hint: str | None = None
     allowed_tools: list[str] | None = None
+    forbidden_tools: list[str] = field(default_factory=list)  # ✅ NEW: Dynamic forbidden tools
     context: str | None = None
     license: str | None = None
+    keywords: list[str] = field(default_factory=list)  # ✅ NEW: Auto-trigger keywords
+    
+    # Phase 3: Skill matching and prioritization
+    auto_trigger: bool = True  # 🔥 NEW: Auto-trigger configuration
+    priority: int = 999  # 🔥 NEW: Priority (lower = higher priority)
     
     # Additional metadata (for future extensibility)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -82,8 +94,12 @@ class SkillMetadata:
             "user_invocable": self.user_invocable,
             "argument_hint": self.argument_hint,
             "allowed_tools": self.allowed_tools,
+            "forbidden_tools": self.forbidden_tools,  # ✅ NEW
+            "keywords": self.keywords,  # ✅ NEW
             "context": self.context,
             "license": self.license,
+            "auto_trigger": self.auto_trigger,  # 🔥 NEW
+            "priority": self.priority,  # 🔥 NEW
             **self.extra
         }
     
@@ -101,11 +117,16 @@ class SkillMetadata:
             user_invocable=data.get("user_invocable", True),
             argument_hint=data.get("argument_hint"),
             allowed_tools=data.get("allowed_tools"),
+            forbidden_tools=data.get("forbidden_tools", []),  # ✅ NEW
+            keywords=data.get("keywords", []),  # ✅ NEW
             context=data.get("context"),
             license=data.get("license"),
+            auto_trigger=data.get("auto_trigger", True),  # 🔥 NEW
+            priority=data.get("priority", 999),  # 🔥 NEW
             extra={k: v for k, v in data.items() if k not in [
                 "name", "description", "path", "has_scripts", "has_references",
                 "has_assets", "disable_model_invocation", "user_invocable",
-                "argument_hint", "allowed_tools", "context", "license"
+                "argument_hint", "allowed_tools", "forbidden_tools", "keywords",
+                "context", "license", "auto_trigger", "priority"
             ]}
         )

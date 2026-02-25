@@ -182,61 +182,6 @@ h1 { color: #2d3748; font-size: 32pt; }
 
 ## Using the html2pptx Library
 
-**CRITICAL: Common Mistake to Avoid**
-
-❌ **WRONG** - This will cause "html2pptx is not a function" error:
-```javascript
-const { html2pptx } = require('html2pptx');  // ERROR: No such npm package!
-html2pptx(htmlContent, config);  // TypeError: html2pptx is not a function
-```
-
-✅ **CORRECT** - Use one of these approaches:
-
-### Approach 1: Use the Local html2pptx.js Library (Recommended)
-
-The `html2pptx.js` library is provided in `skills/pptx/scripts/html2pptx.js`:
-
-```javascript
-const fs = require('fs');
-const pptxgenjs = require('pptxgenjs');
-const html2pptx = require('./html2pptx.js');  // Import from local file
-
-async function createPresentation() {
-  const pptx = new pptxgenjs();
-  pptx.layout = 'LAYOUT_16x9';
-  
-  // Convert HTML file to PowerPoint slide
-  const { slide, placeholders } = await html2pptx('slide.html', pptx);
-  
-  // Add charts to placeholders if needed
-  // slide.addChart(pptx.charts.LINE, data, placeholders[0]);
-  
-  await pptx.writeFile({ fileName: 'presentation.pptx' });
-}
-```
-
-### Approach 2: Direct PptxGenJS Usage
-
-For simple presentations, use PptxGenJS directly without html2pptx:
-
-```javascript
-const pptxgenjs = require('pptxgenjs');
-
-const pres = new pptxgenjs();
-pres.layout = 'LAYOUT_16x9';
-
-const slide = pres.addSlide();
-slide.addText('Hello World', { x: 1, y: 1, w: '80%', h: 1, fontSize: 24 });
-
-pres.writeFile({ fileName: 'presentation.pptx' });
-```
-
-**Key Points:**
-- The `html2pptx` function is NOT an npm package
-- It's a custom library located at `skills/pptx/scripts/html2pptx.js`
-- You must import it from the local file path, not from npm
-- Always use `pptxgenjs` (the actual npm package) for creating presentations
-
 ### Dependencies
 
 These libraries have been globally installed and are available to use:

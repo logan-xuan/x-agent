@@ -359,8 +359,51 @@ export function useChat({
           setMessages(prev => [...prev, reflectionMessage]);
         }
         break;
+        break;
+      
+      case 'problem_guidance':
+      
+      case 'problem_guidance':
+        // Interactive problem guidance card
+        console.log('🔍 [DEBUG] problem_guidance received:', msg);
+        console.log('🔍 [DEBUG] guidance data:', (msg as any).data);
+        {
+          const guidanceData = (msg as any).data;
+          if (!guidanceData) {
+            console.warn('❌ problem_guidance message missing data field');
+            break;
+          }
+          
+          console.log('✅ Guidance data structure:', {
+            type: guidanceData.type,
+            severity: guidanceData.severity,
+            title: guidanceData.title,
+            steps: guidanceData.steps?.length || 0,
+            auto_fixes: guidanceData.auto_fixes?.length || 0,
+            user_info: guidanceData.user_info_needed?.length || 0,
+          });
+          
+          const guidanceMessage: Message = {
+            id: `guidance-${Date.now()}-${Math.random()}`,
+            session_id: msg.session_id || currentSessionId || '',
+            role: 'assistant',
+            content: '', // Empty content, will render as card
+            created_at: new Date().toISOString(),
+            metadata: {
+              type: 'problem_guidance',
+              data: guidanceData,
+            } as any,
+          };
+          
+          setMessages(prev => [...prev, guidanceMessage]);
+          setIsLoading(false);
+          
+          console.log('✅ Guidance message added to state, total messages:', prev.length + 1);
+        }
+        break;
     }
   }, [currentSessionId, streamingContent]);
+
 
   // WebSocket connection - automatic based on wsUrl
   const { status: connectionStatus, send: wsSend } = useWebSocket({

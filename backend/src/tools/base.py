@@ -7,7 +7,8 @@ Tools extend the agent's capabilities by providing executable actions.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
+import re
 
 
 class ToolParameterType(str, Enum):
@@ -22,7 +23,7 @@ class ToolParameterType(str, Enum):
 
 @dataclass
 class ToolParameter:
-    """Definition of a tool parameter.
+    """Definition of a tool parameter with advanced validation.
     
     Attributes:
         name: Parameter name
@@ -31,6 +32,42 @@ class ToolParameter:
         required: Whether this parameter is required
         default: Default value if not provided
         enum: List of allowed values
+        min_length: Minimum string length (for STRING type)
+        max_length: Maximum string length (for STRING type)
+        min_value: Minimum numeric value (for NUMBER/INTEGER type)
+        max_value: Maximum numeric value (for NUMBER/INTEGER type)
+        pattern: Regex pattern for validation (for STRING type)
+        validator: Custom validation function (value) -> (is_valid, error_msg)
+        
+    Example:
+        # String with length constraint
+        ToolParameter(
+            name="username",
+            type=ToolParameterType.STRING,
+            min_length=3,
+            max_length=20,
+            pattern=r"^[a-zA-Z0-9_]+$",
+        )
+        
+        # Number with range constraint
+        ToolParameter(
+            name="port",
+            type=ToolParameterType.INTEGER,
+            min_value=1024,
+            max_value=65535,
+        )
+        
+        # Custom validator
+        def validate_email(value):
+            if "@" not in value:
+                return False, "Invalid email format"
+            return True, None
+        
+        ToolParameter(
+            name="email",
+            type=ToolParameterType.STRING,
+            validator=validate_email,
+        )
     """
     name: str
     type: ToolParameterType = ToolParameterType.STRING
@@ -39,20 +76,105 @@ class ToolParameter:
     default: Any = None
     enum: list[Any] | None = None
     
+    # String validation
+    min_length: int | None = None
+    max_length: int | None = None
+    pattern: str | None = None  # Regex pattern
+    
+    # Numeric validation
+    min_value: float | int | None = None
+    max_value: float | int | None = None
+    
+    # Custom validation
+    validator: Callable[[Any], tuple[bool, str | None]] | None = None
+    
     def to_json_schema(self) -> dict:
-        """Convert to JSON Schema format."""
+        """Convert to JSON Schema format with validation constraints."""
         schema: dict[str, Any] = {
             "type": self.type.value,
             "description": self.description,
         }
         
+        # Add enum constraint
         if self.enum:
             schema["enum"] = self.enum
         
+        # Add default value
         if self.default is not None:
             schema["default"] = self.default
         
+        # Add string constraints
+        if self.type == ToolParameterType.STRING:
+            if self.min_length is not None:
+                schema["minLength"] = self.min_length
+            if self.max_length is not None:
+                schema["maxLength"] = self.max_length
+            if self.pattern is not None:
+                schema["pattern"] = self.pattern
+        
+        # Add numeric constraints
+        if self.type in (ToolParameterType.NUMBER, ToolParameterType.INTEGER):
+            if self.min_value is not None:
+                schema["minimum"] = self.min_value
+            if self.max_value is not None:
+                schema["maximum"] = self.max_value
+        
         return schema
+    
+    def validate(self, value: Any) -> tuple[bool, str | None]:
+        """Validate a parameter value against all constraints.
+        
+        Args:
+            value: Value to validate
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Type check (basic)
+        if self.type == ToolParameterType.STRING and not isinstance(value, str):
+            return False, f"Parameter '{self.name}' must be a string"
+        elif self.type == ToolParameterType.NUMBER and not isinstance(value, (int, float)):
+            return False, f"Parameter '{self.name}' must be a number"
+        elif self.type == ToolParameterType.INTEGER and not isinstance(value, int):
+            return False, f"Parameter '{self.name}' must be an integer"
+        elif self.type == ToolParameterType.BOOLEAN and not isinstance(value, bool):
+            return False, f"Parameter '{self.name}' must be a boolean"
+        
+        # Enum check
+        if self.enum and value not in self.enum:
+            return False, f"Parameter '{self.name}' must be one of: {self.enum}"
+        
+        # String-specific validation
+        if self.type == ToolParameterType.STRING and isinstance(value, str):
+            if self.min_length is not None and len(value) < self.min_length:
+                return False, f"Parameter '{self.name}' must be at least {self.min_length} characters"
+            if self.max_length is not None and len(value) > self.max_length:
+                return False, f"Parameter '{self.name}' must be at most {self.max_length} characters"
+            if self.pattern is not None:
+                try:
+                    if not re.match(self.pattern, value):
+                        return False, f"Parameter '{self.name}' does not match required pattern"
+                except re.error as e:
+                    return False, f"Invalid regex pattern for '{self.name}': {e}"
+        
+        # Numeric-specific validation
+        if self.type in (ToolParameterType.NUMBER, ToolParameterType.INTEGER):
+            if isinstance(value, (int, float)):
+                if self.min_value is not None and value < self.min_value:
+                    return False, f"Parameter '{self.name}' must be at least {self.min_value}"
+                if self.max_value is not None and value > self.max_value:
+                    return False, f"Parameter '{self.name}' must be at most {self.max_value}"
+        
+        # Custom validator
+        if self.validator is not None:
+            try:
+                is_valid, error_msg = self.validator(value)
+                if not is_valid:
+                    return False, error_msg or f"Parameter '{self.name}' failed custom validation"
+            except Exception as e:
+                return False, f"Validation error for '{self.name}': {str(e)}"
+        
+        return True, None
 
 
 @dataclass
@@ -223,7 +345,7 @@ class BaseTool(ABC):
         }
     
     def validate_params(self, params: dict) -> tuple[bool, str | None]:
-        """Validate parameters against the schema.
+        """Validate parameters against the schema with enhanced validation.
         
         Args:
             params: Parameters to validate
@@ -232,25 +354,16 @@ class BaseTool(ABC):
             Tuple of (is_valid, error_message)
         """
         for param in self.parameters:
+            # Check required parameters
             if param.required and param.name not in params:
                 return False, f"Missing required parameter: {param.name}"
             
+            # Validate parameter value if present
             if param.name in params:
                 value = params[param.name]
-                
-                # Type check (basic)
-                if param.type == ToolParameterType.STRING and not isinstance(value, str):
-                    return False, f"Parameter '{param.name}' must be a string"
-                elif param.type == ToolParameterType.NUMBER and not isinstance(value, (int, float)):
-                    return False, f"Parameter '{param.name}' must be a number"
-                elif param.type == ToolParameterType.INTEGER and not isinstance(value, int):
-                    return False, f"Parameter '{param.name}' must be an integer"
-                elif param.type == ToolParameterType.BOOLEAN and not isinstance(value, bool):
-                    return False, f"Parameter '{param.name}' must be a boolean"
-                
-                # Enum check
-                if param.enum and value not in param.enum:
-                    return False, f"Parameter '{param.name}' must be one of: {param.enum}"
+                is_valid, error_msg = param.validate(value)
+                if not is_valid:
+                    return False, error_msg
         
         return True, None
     

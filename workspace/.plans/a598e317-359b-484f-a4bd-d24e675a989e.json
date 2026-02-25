@@ -1,0 +1,60 @@
+{
+  "original_plan": "📋 **结构化执行计划 v2.0**\n**目标**: 将 Markdown 报告转换为 PPT 演示文稿\n\n🔧 **绑定技能**: `pptx`\n\n⚠️ **工具限制**: 只能使用以下工具：run_in_terminal, write_file\n❌ **禁止工具**: 不得使用：web_search\n\n**执行步骤**:\n1. **准备 PPT 生成脚本和参数**\n   - 工具：`write_file`\n   - 预期：确认源文件路径正确，目标输出路径已准备好\n2. **执行 PPT 生成脚本**\n   - 命令：`node /workspace/x-agent/backend/src/skills/pptx/scripts/create_presentation.js --input /Users/xuan.lx/Documents/x-agent/x-agent/workspace/2026_ai_trends_report.md --output /Users/xuan.lx/Documents/x-agent/x-agent/workspace/presentations/2026_ai_trends.pptx`\n   - 工具：`run_in_terminal`\n   - 预期：PPTX 文件成功生成在指定位置\n\n**关键里程碑**:\n- ✅ 参数准备完成 (在 step_1 之后检查)\n- ✅ PPT 生成完成 (在 step_2 之后检查)\n",
+  "current_step": 1,
+  "total_steps": 2,
+  "completed_steps": [],
+  "failed_count": 0,
+  "last_adjustment": null,
+  "react_iteration_count": 0,
+  "tool_execution_count": 0,
+  "replan_count": 0,
+  "milestones_validated": [],
+  "allowed_tools_snapshot": [],
+  "created_at": "2026-02-24T22:44:49.324645",
+  "updated_at": "2026-02-24T22:44:49.324651",
+  "structured_plan": {
+    "goal": "将 Markdown 报告转换为 PPT 演示文稿",
+    "skill_binding": "pptx",
+    "tool_constraints": {
+      "allowed": [
+        "run_in_terminal",
+        "write_file"
+      ],
+      "forbidden": [
+        "web_search"
+      ],
+      "source": "plan",
+      "priority": 10
+    },
+    "steps": [
+      {
+        "id": "step_1",
+        "name": "准备 PPT 生成脚本和参数",
+        "description": "确保源 Markdown 文件存在，并准备 PPT 生成所需的参数",
+        "tool": "write_file",
+        "skill_command": null,
+        "expected_output": "确认源文件路径正确，目标输出路径已准备好"
+      },
+      {
+        "id": "step_2",
+        "name": "执行 PPT 生成脚本",
+        "description": "使用 Node.js 脚本将 Markdown 文件转换为 PPTX 格式",
+        "tool": "run_in_terminal",
+        "skill_command": "node /workspace/x-agent/backend/src/skills/pptx/scripts/create_presentation.js --input /Users/xuan.lx/Documents/x-agent/x-agent/workspace/2026_ai_trends_report.md --output /Users/xuan.lx/Documents/x-agent/x-agent/workspace/presentations/2026_ai_trends.pptx",
+        "expected_output": "PPTX 文件成功生成在指定位置"
+      }
+    ],
+    "milestones": [
+      {
+        "name": "参数准备完成",
+        "after_step": "step_1",
+        "check_type": "file_exists"
+      },
+      {
+        "name": "PPT 生成完成",
+        "after_step": "step_2",
+        "check_type": "file_exists"
+      }
+    ]
+  }
+}

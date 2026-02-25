@@ -28,7 +28,6 @@ from .react_loop import (
 )
 from .guards import SessionGuard, ResponseGuard
 from .task_analyzer import TaskAnalyzer, get_task_analyzer
-from .light_planner import LightPlanner, get_light_planner
 from .structured_planner import StructuredPlanner, get_structured_planner
 from .plan_context import PlanContext, PlanState, get_plan_context
 # Use relative imports within the orchestrator package
@@ -141,8 +140,6 @@ class Orchestrator:
             # Fallback to default without skills config
             self._task_analyzer = TaskAnalyzer()
         
-        self._light_planner: LightPlanner | None = None
-        
         # Structured Planner for v2.0 (optional, used when skill is specified)
         self._structured_planner: StructuredPlanner | None = None
         
@@ -219,12 +216,6 @@ class Orchestrator:
                 )
                 self._hybrid_search = HybridSearch()
         return self._hybrid_search
-    
-    def _get_light_planner(self) -> LightPlanner:
-        """Get or create light planner instance."""
-        if self._light_planner is None:
-            self._light_planner = LightPlanner(self._llm_router)
-        return self._light_planner
     
     def _get_structured_planner(self) -> StructuredPlanner:
         """Get or create structured planner instance."""
@@ -347,7 +338,7 @@ class Orchestrator:
         
         # Step 0: Task Analysis (fast rule-based, no LLM call)
         logger.info(f"[TASK_ANALYSIS_START] Analyzing message: {user_message[:50]}...")
-        analysis = self._task_analyzer.analyze(user_message)
+        analysis = await self._task_analyzer.analyze(user_message)
         logger.info(f"[TASK_ANALYSIS_DONE] complexity={analysis.complexity}, needs_plan={analysis.needs_plan}, matched_skills={analysis.matched_skills}")
         logger.info(
             "Task analysis completed",
@@ -673,16 +664,16 @@ class Orchestrator:
                         }
                     )
                 else:
-                    # Fallback to LightPlanner v1.0
-                    light_planner = self._get_light_planner()
-                    plan_text = await light_planner.generate(
+                    # Use StructuredPlanner as fallback
+                    structured_planner = self._get_structured_planner()
+                    plan_result = await structured_planner.generate(
                         goal=user_message,
-                        tools=[t.name for t in self._tool_manager.get_all_tools()],
                     )
+                    plan_text = plan_result.to_prompt()
                     plan_state = PlanState(
                         original_plan=plan_text,
                         current_step=1,
-                        total_steps=plan_text.count("\n") + 1,
+                        total_steps=len(plan_result.steps),
                         completed_steps=[],
                         failed_count=0,
                         last_adjustment=None,
@@ -736,6 +727,8 @@ class Orchestrator:
                 tools=self._tool_manager.get_all_tools(),
                 session_id=session_id,
                 skill_context=self._current_skill_context,  # Phase 2 - Pass skill context for tool restrictions
+                plan_state=plan_state,  # 🔥 NEW: Pass plan state for structured plan execution
+                original_goal=user_message,  # 🔥 NEW: Pass original goal for completion verification
             ):
                 event_type = event.get("type")
                 
@@ -967,6 +960,23 @@ class Orchestrator:
                         "confirmation_id": event.get("confirmation_id"),
                         "command": event.get("command"),
                     }
+                
+                # 🔥 NEW: Forward problem_guidance events to frontend (main loop)
+                elif event_type == "problem_guidance":
+                    logger.info(
+                        "🚀 Main loop: Forwarding problem_guidance to frontend",
+                        extra={
+                            "session_id": session_id,
+                            "guidance_type": event.get("data", {}).get("type"),
+                            "has_data": "data" in event,
+                        }
+                    )
+                    yield {
+                        "type": "problem_guidance",
+                        "data": event.get("data"),
+                        "session_id": session_id,
+                    }
+                    
                 elif event_type == REACT_EVENT_ERROR:
                     error_msg = event.get("error", "Unknown error")
                     
@@ -997,22 +1007,23 @@ class Orchestrator:
                         }
                         # Generate plan and continue execution with plan injection
                         try:
-                            light_planner = self._get_light_planner()
-                            plan_text = await light_planner.generate(
+                            # Use StructuredPlanner instead of LightPlanner
+                            structured_planner = self._get_structured_planner()
+                            plan_result = await structured_planner.generate(
                                 goal=user_message,
-                                tools=[t.name for t in self._tool_manager.get_all_tools()],
                             )
+                            plan_text = plan_result.to_prompt()
                             
                             # Create or update plan state
                             if plan_state:
                                 self._plan_context.record_replan(plan_state, "max_iterations_reached")
                                 plan_state.original_plan = plan_text
-                                plan_state.total_steps = plan_text.count("\n") + 1
+                                plan_state.total_steps = len(plan_result.steps)
                             else:
                                 plan_state = PlanState(
                                     original_plan=plan_text,
                                     current_step=1,
-                                    total_steps=plan_text.count("\n") + 1,
+                                    total_steps=len(plan_result.steps),
                                     completed_steps=[],
                                     failed_count=0,
                                     last_adjustment=None,
@@ -1063,6 +1074,7 @@ class Orchestrator:
                                     tools=self._tool_manager.get_all_tools(),
                                     session_id=session_id,
                                     skill_context=self._current_skill_context,  # Phase 2
+                                    original_goal=user_message,  # 🔥 NEW: Pass original goal for completion verification
                                 ):
                                     event_type = event.get("type")
                                     

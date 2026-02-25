@@ -1,4 +1,63 @@
-"""Structured JSON logging configuration with automatic Trace ID injection."""
+"""Structured JSON logging configuration with automatic Trace ID injection.
+
+LOGGING BEST PRACTICES (P2 Improvement):
+========================================
+
+1. Log Level Guidelines:
+   - ERROR: Critical failures that require immediate attention
+   - WARNING: Unexpected behavior or configuration issues (e.g., retries, fallbacks)
+   - INFO: Important business events (e.g., task start/completion, major decisions)
+   - DEBUG: Routine operations and detailed execution flow (e.g., iterations, tool calls)
+
+2. When to Use DEBUG vs INFO:
+   - Use DEBUG for:
+     * ReAct loop iterations
+     * Tool call/result events (unless errors occur)
+     * Cache hits/misses
+     * Routine initialization
+   
+   - Use INFO for:
+     * Task start/completion
+     * User interactions (messages sent/received)
+     * Strategy changes or adjustments
+     * Final answers generated
+
+3. Structured Logging:
+   Always use the `extra` parameter for contextual data:
+   
+   # Good: Structured
+   logger.info(
+       "Task completed",
+       extra={
+           "task_id": task_id,
+           "duration_ms": duration,
+           "iterations": 5,
+       }
+   )
+   
+   # Bad: Unstructured string interpolation
+   logger.info(f"Task {task_id} completed in {duration}ms after 5 iterations")
+
+4. Avoid Logging PII/Secrets:
+   Never log passwords, API keys, or personally identifiable information.
+   
+5. Context Propagation:
+   Use trace_id for distributed tracing (automatically injected by this module).
+
+Example:
+    from ..utils.logger import get_logger
+    
+    logger = get_logger(__name__)
+    
+    # Routine event → DEBUG
+    logger.debug("ReAct iteration started", extra={"iteration": 1})
+    
+    # Important decision → INFO
+    logger.info("Switching to fallback LLM", extra={"reason": "rate_limit"})
+    
+    # Unexpected issue → WARNING
+    logger.warning("Tool execution timeout", extra={"tool": "web_search", "timeout_s": 30})
+"""
 
 import functools
 import inspect

@@ -1,7 +1,20 @@
 ---
 name: pdf
-description: Comprehensive PDF manipulation toolkit for extracting text and tables, creating new PDFs, merging/splitting documents, and handling forms. When Claude needs to fill in a PDF form or programmatically process, generate, or analyze PDF documents at scale.
+description: "专业 PDF 处理工具，支持文本/表格提取、创建/合并/拆分 PDF、表单填写和批量处理"
 license: Proprietary. LICENSE.txt has complete terms
+keywords:
+  - pdf
+  - PDF
+  - 生成 pdf
+  - 创建 pdf
+  - pdf 文档
+  - pdf 文件
+  - pdf 报告
+auto-trigger: true
+priority: 1
+allowed_tools:
+  - run_in_terminal
+  - write_file
 ---
 
 # PDF Processing Guide
@@ -11,6 +24,25 @@ license: Proprietary. LICENSE.txt has complete terms
 This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see reference.md. If you need to fill out a PDF form, read forms.md and follow its instructions.
 
 ## Quick Start
+
+### 🎯 **Creating PDF from Scratch (NEW)**
+
+**Use the PDF Skill Script:**
+```bash
+# Simple usage
+python scripts/create_simple_pdf.py output.pdf "Title" "Line 1" "Line 2"
+
+# Example: Create AI trends report
+python scripts/create_simple_pdf.py ai_trends.pdf "2026 AI 发展趋势报告" "深度研究" "关键洞察" "建议"
+```
+
+**What it does:**
+- ✅ Automatically registers Chinese fonts (macOS)
+- ✅ Creates proper binary PDF format
+- ✅ Supports Chinese text out of the box
+- ✅ Expected file size: ~65KB (with embedded font)
+
+---
 
 ### ⚠️ CRITICAL: How to Create PDF Files
 

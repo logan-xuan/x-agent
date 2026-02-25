@@ -48,6 +48,34 @@ class ToolManager:
         
         logger.info("ToolManager initialized")
     
+    def _correct_tool_parameters(self, tool_name: str, arguments: dict) -> dict:
+        """Correct known tool parameter mismatches to prevent execution failures.
+        
+        Args:
+            tool_name: Name of the tool
+            arguments: Original arguments from LLM
+            
+        Returns:
+            Corrected arguments dictionary
+        """
+        corrected = arguments.copy()
+        
+        # Fix search_files tool parameter mismatch
+        # LLM often uses 'search_dir' but the tool expects 'path'
+        if tool_name == "search_files" and "search_dir" in corrected:
+            corrected["path"] = corrected.pop("search_dir")
+            logger.debug(
+                "Fixed search_files parameter: search_dir -> path",
+                extra={"tool_name": tool_name}
+            )
+        
+        # Add more parameter corrections here as needed
+        # Example pattern:
+        # if tool_name == "some_tool" and "wrong_param" in corrected:
+        #     corrected["correct_param"] = corrected.pop("wrong_param")
+        
+        return corrected
+    
     def register(self, tool: BaseTool) -> None:
         """Register a tool.
         
@@ -184,6 +212,9 @@ class ToolManager:
                 "params": str(params)[:200],
             }
         )
+        
+        # ✅ FIX: Correct known tool parameter mismatches before execution
+        params = self._correct_tool_parameters(name, params)
         
         try:
             result = await tool.execute(**params)

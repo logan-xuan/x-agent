@@ -1,0 +1,2 @@
+需求：在首页->trace->全链路观测，通过traceId 结合代码分析日志 backend/logs/prompt-llm.log x-agent.log，能可视化观测每次调用链路，清楚的观测到从端面发出的用户goal ，plan具体的计划，到每次LLM的prompt和响应，每次tools和skills调用参数和响应出参，tools/skill的名字，调用时间，耗时等数据，按时间顺序进行展现,记忆存储和查询数据。
+案例：可以结合Trace: b7d8cffb-94bc-41ba-b762-6b07a3c90024  进行分析给出链路调用流程

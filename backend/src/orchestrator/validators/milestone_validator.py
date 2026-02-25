@@ -4,7 +4,7 @@ Validates if a milestone has been achieved after completing a plan step.
 """
 
 from ..models.plan import StructuredPlan, Milestone, PlanStep
-from src.utils.logger import get_logger
+from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
 

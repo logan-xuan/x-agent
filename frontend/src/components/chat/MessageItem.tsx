@@ -1,22 +1,15 @@
 /** Individual message display component */
 
 import { Message } from '../../types';
+import { ProblemGuidanceCard, ProblemGuidanceData } from './ProblemGuidanceCard';
 import { TerminalCard } from './TerminalCard';
 
-interface MessageItemProps {
-  message: Message;
-  isStreaming?: boolean;
-  onToolConfirm?: (toolCallId: string, confirmationId?: string, command?: string) => void;
-}
-
-// AI Icon - 未来感神经网络/AI风格
+// AI Icon
 function AIIcon() {
   return (
     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/25">
       <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        {/* 中心核心 */}
         <circle cx="12" cy="12" r="3" fill="currentColor" />
-        {/* 神经网络节点 */}
         <circle cx="12" cy="5" r="1.5" />
         <circle cx="12" cy="19" r="1.5" />
         <circle cx="5" cy="12" r="1.5" />
@@ -25,39 +18,26 @@ function AIIcon() {
         <circle cx="17" cy="7" r="1.5" />
         <circle cx="7" cy="17" r="1.5" />
         <circle cx="17" cy="17" r="1.5" />
-        {/* 连接线 */}
         <path d="M12 5v4M12 15v4M5 12h4M15 12h4M7 7l3 3M14 14l3 3M7 17l3-3M14 10l3-3" opacity="0.6" />
       </svg>
     </div>
   );
 }
 
-// User Icon - 未来感简约用户图标
+// User Icon
 function UserIcon() {
   return (
     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/25">
       <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        {/* 头部 */}
         <circle cx="12" cy="8" r="4" fill="currentColor" />
-        {/* 身体 - 六边形风格 */}
-        <path 
-          d="M4 20c0-4 3.5-7 8-7s8 3 8 7" 
-          stroke="currentColor" 
-          strokeLinecap="round"
-        />
-        {/* 科技感装饰线 */}
-        <path 
-          d="M12 16v3M9 18l3 2 3-2" 
-          opacity="0.5" 
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <path d="M4 20c0-4 3.5-7 8-7s8 3 8 7" stroke="currentColor" strokeLinecap="round" />
+        <path d="M12 16v3M9 18l3 2 3-2" opacity="0.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </div>
   );
 }
 
-export function MessageItem({ message, isStreaming = false, onToolConfirm }: MessageItemProps) {
+export function MessageItem({ message, isStreaming = false, onToolConfirm }: any) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
@@ -75,6 +55,33 @@ export function MessageItem({ message, isStreaming = false, onToolConfirm }: Mes
             {message.content}
           </pre>
         </details>
+      </div>
+    );
+  }
+
+  // Problem Guidance Card rendering
+  if (message.metadata?.type === 'problem_guidance') {
+    const guidanceData = message.metadata.data as ProblemGuidanceData;
+    
+    return (
+      <div className="flex w-full mb-4 gap-3">
+        <div className="flex-shrink-0 mt-1">
+          <AIIcon />
+        </div>
+        <div className="flex-1">
+          <ProblemGuidanceCard
+            data={guidanceData}
+            onCopyCommand={(cmd) => {
+              console.log('Copied command:', cmd);
+            }}
+            onProvideInfo={(request, value) => {
+              // Send user provided info back to backend via custom event
+              window.dispatchEvent(new CustomEvent('user-provide-info', {
+                detail: { request, value, sessionId: message.session_id },
+              }));
+            }}
+          />
+        </div>
       </div>
     );
   }
@@ -119,11 +126,11 @@ export function MessageItem({ message, isStreaming = false, onToolConfirm }: Mes
         {/* Tool calls - Terminal cards */}
         {hasToolCalls && (
           <div className="mt-3 space-y-2">
-            {message.tool_calls?.map((toolCall) => (
+            {message.tool_calls?.map((toolCall: any) => (
               <TerminalCard
                 key={toolCall.id}
                 toolCall={toolCall}
-                onConfirm={(id, confirmationId, command) => onToolConfirm?.(id, confirmationId, command)}
+                onConfirm={(id: string, confirmationId?: string, command?: string) => onToolConfirm?.(id, confirmationId, command)}
               />
             ))}
           </div>
