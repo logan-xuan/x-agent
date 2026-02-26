@@ -509,7 +509,23 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                             )
                             try:
                                 # Forward final answer to frontend
+                                logger.info(
+                                    "⏳ About to call websocket.send_json() for final_answer",
+                                    extra={
+                                        "trace_id": message_context.trace_id,
+                                        "session_id": session_id,
+                                        "chunk_size_bytes": len(str(chunk)),
+                                    }
+                                )
+                                # Forward final answer to frontend
                                 await websocket.send_json(chunk)
+                                logger.info(
+                                    "✅ websocket.send_json() returned successfully",
+                                    extra={
+                                        "trace_id": message_context.trace_id,
+                                        "session_id": session_id,
+                                    }
+                                )
                                 logger.info(
                                     "✅ Final answer sent successfully via WebSocket",
                                     extra={
@@ -526,7 +542,9 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                         "session_id": session_id,
                                         "error": str(e),
                                         "error_type": type(e).__name__,
-                                    }
+                                        "exception_repr": repr(e),
+                                    },
+                                    exc_info=True  # Include full stack trace
                                 )
                                 raise  # Re-raise to let caller handle
                             logger.info(
