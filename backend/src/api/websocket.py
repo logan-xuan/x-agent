@@ -497,14 +497,28 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                 "✅ DEBUG: problem_guidance sent successfully"
                             )
                         
+                        elif chunk_type == "final_answer":
+                            # Final answer from engine - this is the main response
+                            logger.info(
+                                "🚀 Sending final_answer to frontend",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "content_preview": str(chunk.get("content", ""))[:100],
+                                    "session_id": session_id,
+                                }
+                            )
+                            # Forward final answer to frontend
+                            await websocket.send_json(chunk)
+                            logger.info(
+                                "✅ Final answer sent successfully"
+                            )
+                        
                         else:
-                            # Default: forward any other dict chunks
+                            # Default: forward any other dict chunks (only once!)
                             logger.debug(
                                 "Forwarding default chunk",
                                 extra={"chunk_type": chunk_type}
                             )
-                            await websocket.send_json(chunk)
-                            # Default: forward any other dict chunks
                             await websocket.send_json(chunk)
                     
                     else:
