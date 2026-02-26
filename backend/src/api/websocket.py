@@ -364,8 +364,18 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                     if isinstance(chunk, dict):
                         chunk["trace_id"] = message_context.trace_id
                         
-                        # 🔍 DEBUG: Log ALL chunks received from engine
+                        # 🔍 CRITICAL DEBUG: Log ALL chunks received from engine
                         chunk_type_debug = chunk.get("type")
+                        logger.info(
+                            "📥 WebSocket received chunk from Engine",
+                            extra={
+                                "chunk_type": chunk_type_debug,
+                                "chunk_keys": list(chunk.keys()),
+                                "content_preview": str(chunk.get("content", ""))[:100] if chunk.get("content") else None,
+                                "has_session_id": "session_id" in chunk,
+                            }
+                        )
+                        
                         if chunk_type_debug in ("problem_guidance", "error"):
                             logger.info(
                                 "📥 WebSocket stream received chunk type",
