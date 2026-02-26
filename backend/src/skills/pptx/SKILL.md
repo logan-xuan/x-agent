@@ -1,7 +1,10 @@
 ---
 name: pptx
-description: "Presentation creation, editing, and analysis. When Claude needs to work with presentations (.pptx files) for: (1) Creating new presentations, (2) Modifying or editing content, (3) Working with layouts, (4) Adding comments or speaker notes, or any other presentation tasks"
+description: "专业 PPT 演示文稿制作工具，支持创建、编辑幻灯片、布局设计、备注和评论功能"
 license: Proprietary. LICENSE.txt has complete terms
+keywords: ["PPT", "演示文稿", "幻灯片", "presentation", "slides", "报告", "演讲"]
+auto-trigger: true
+priority: 1  # High priority for presentation tasks
 ---
 
 # PPTX creation, editing, and analysis
@@ -46,7 +49,185 @@ You need raw XML access for: comments, speaker notes, slide layouts, animations,
 
 ## Creating a new PowerPoint presentation **without a template**
 
-When creating a new PowerPoint presentation from scratch, use the **html2pptx** workflow to convert HTML slides to PowerPoint with accurate positioning.
+When creating a new PowerPoint presentation from scratch, use the **create_presentation.js** script to convert Markdown to PPTX.
+
+### Usage
+
+```bash
+node scripts/create_presentation.js <input.md> <output.pptx>
+```
+
+### Example
+
+```bash
+# Create PPTX from markdown
+node scripts/create_presentation.js /workspace/report.md /workspace/report.pptx
+
+# With flags
+node scripts/create_presentation.js --input input.md --output output.pptx
+```
+
+### Script Location
+
+The `create_presentation.js` script is located at:
+- Relative to skill root: `scripts/create_presentation.js`
+- Absolute path: `/Users/xuan.lx/Documents/x-agent/x-agent/backend/src/skills/pptx/scripts/create_presentation.js`
+
+**Important**: Always use the correct script path. Do NOT try to use Python scripts like `pptx_converter.py` or `presentation.py` - these do not exist.
+
+### ⚠️ CRITICAL: Avoid Common Mistakes
+
+**COMMON ERROR TO AVOID:**
+```javascript
+// ❌ WRONG: Creating a .txt file with text content
+fs.writeFileSync('presentation-outline.txt', 'Slide 1: Title...');
+console.log('Created presentation.txt');
+```
+
+**CORRECT APPROACH:**
+```javascript
+// ✅ RIGHT: Using PptxGenJS to create actual .pptx file
+const pptx = new PptxGenJS();
+pptx.addSlide().addText('Title', { fontSize: 36 });
+await pptx.writeFile({ fileName: 'presentations/my-presentation.pptx' });
+```
+
+**KEY DIFFERENCE:**
+- ❌ `.txt` file = Plain text outline (NOT a presentation)
+- ✅ `.pptx` file = Actual PowerPoint file that can be opened in PowerPoint/Keynote
+
+### Quick Method: Direct PptxGenJS (Recommended for Simple Presentations)
+
+**For simple presentations without complex layouts**, you can use PptxGenJS directly:
+
+**TEMPLATE - COPY AND USE THIS:**
+```javascript
+const PptxGenJS = require('pptxgenjs');
+const path = require('path');
+
+// Create presentation instance
+const pptx = new PptxGenJS();
+pptx.layout = 'LAYOUT_16x9';
+
+// Slide 1: Title
+let slide1 = pptx.addSlide();
+slide1.addText('2026 创业方向分析', { 
+  x: 0.5, y: 1.5, w: 9, h: 1, 
+  fontSize: 36, bold: true, 
+  color: '1C2833' 
+});
+slide1.addText('抓住未来商业机遇', { 
+  x: 0.5, y: 2.5, w: 9, h: 0.5, 
+  fontSize: 18, 
+  color: '666666' 
+});
+
+// Slide 2: Content
+let slide2 = pptx.addSlide();
+slide2.addText('市场环境分析', { 
+  x: 0.5, y: 0.3, w: 9, h: 0.6, 
+  fontSize: 28, bold: true 
+});
+slide2.addText([
+  { text: '• 经济复苏与增长趋势\\n', options: { bullet: true } },
+  { text: '• 消费者行为变化\\n', options: { bullet: true } },
+], { x: 0.5, y: 1.2, w: 9, h: 4, fontSize: 16 });
+
+// IMPORTANT: Use writeFile() to generate ACTUAL .pptx file
+const outputPath = path.join(__dirname, '..', 'presentations', '2026-entrepreneurship-direction.pptx');
+pptx.writeFile({ fileName: outputPath })
+  .then(() => console.log(`✅ PPT saved: ${outputPath}`))
+  .catch(err => console.error('Error:', err));
+```
+
+**CRITICAL Requirements**:
+1. **Save to `presentations/` subdirectory** (e.g., `workspace/presentations/my-presentation.pptx`)
+2. **Use `pptx.writeFile()`** to generate the actual `.pptx` file (NOT `fs.writeFileSync`)
+3. **Scripts go to `scripts/` subdirectory** (e.g., `workspace/scripts/my-presentation.js`)
+
+### Workspace and File Organization
+
+**IMPORTANT**: All created presentations should be saved in the user's configured workspace directory or a user-specified location.
+
+#### Default Workspace Path
+
+**Read from configuration**: The default workspace path is defined in `x-agent.yaml`:
+```yaml
+workspace:
+  path: ../workspace  # Relative to backend directory
+  skills_dir: skills
+```
+
+**Resolved path**: `/path/to/workspace/` (or as configured by user)
+
+#### User-Specified Paths
+
+**Always ask or confirm**: If the user mentions a specific location in their request, use that instead:
+- User: "Save it to `/projects/client-x/presentation.pptx`"
+- You: Use the specified path
+
+**If unclear**: Ask the user where they want to save the file:
+- "Where would you like me to save this presentation?"
+- "Should I save it in the workspace directory or somewhere else?"
+
+#### File Organization Patterns
+
+**MANDATORY**: All generated files MUST be saved to appropriate subdirectories within the workspace. NEVER save files in the workspace root directory - treat it as a clean workspace, not a dumping ground.
+
+1. **Python Scripts** (REQUIRED):
+   ```javascript
+   // All generated Python scripts MUST go to scripts/ directory
+   const scriptPath = 'scripts/chinese_new_year_eating.py';
+   // Write script content to scriptPath
+   ```
+
+2. **Presentations** (REQUIRED):
+   ```javascript
+   // All generated .pptx files MUST go to presentations/ directory
+   const outputPath = 'presentations/chinese_new_year_eating.pptx';
+   await pptx.writeFile(outputPath);
+   ```
+
+3. **Project-based subfolders** (RECOMMENDED for organization):
+   ```javascript
+   // Organize by project/category
+   const scriptPath = 'scripts/project-alpha/generate-presentation.py';
+   const outputPath = 'presentations/project-alpha/q4-review.pptx';
+   ```
+
+4. **User-specified paths** (only if explicitly requested):
+   - If user says "Save to /my/custom/path.pptx", use that path
+   - Otherwise, always default to the appropriate directory pattern
+
+#### Directory Structure Example
+
+```
+workspace/
+├── scripts/                    # All generated Python scripts
+│   ├── chinese_new_year_eating.py
+│   ├── thumbnail_generator.py
+│   └── project-alpha/
+│       └── generate_pptx.py
+├── presentations/              # All .pptx presentation files
+│   ├── chinese_new_year_eating.pptx
+│   └── project-alpha/
+│       └── q4-review.pptx
+├── documents/                  # .docx documents
+├── spreadsheets/               # .xlsx spreadsheets
+├── pdfs/                       # .pdf files
+└── images/                     # Generated images
+```
+
+#### Best Practices
+
+- **NEVER use workspace root**: Always create and use appropriate subdirectories
+- **Scripts go to scripts/**: All Python/JavaScript helper scripts
+- **Output goes to type-specific dirs**: presentations/, documents/, etc.
+- **Organize by project**: Use subdirectories for related files
+- **Ask when unclear**: If the user doesn't specify and context doesn't make it clear, ask
+- **Create directories**: Automatically create intermediate directories as needed
+- **Descriptive names**: Use filenames that indicate content and date
+- **Relative paths**: Always use paths relative to the workspace root
 
 ### Design Principles
 
@@ -159,7 +340,14 @@ When creating a new PowerPoint presentation from scratch, use the **html2pptx** 
    - Add charts and tables to placeholder areas using PptxGenJS API
    - Save the presentation using `pptx.writeFile()`
 4. **Visual validation**: Generate thumbnails and inspect for layout issues
-   - Create thumbnail grid: `python scripts/thumbnail.py output.pptx workspace/thumbnails --cols 4`
+   - Create thumbnail grid (save in workspace): 
+     ```bash
+     # Navigate to workspace first (default from x-agent.yaml config)
+     cd /path/to/workspace  # User's configured workspace
+     
+     # Generate thumbnails in workspace subdirectory
+     python scripts/thumbnail.py project-alpha/output.pptx workspace/thumbnails/project-alpha --cols 4
+     ```
    - Read and carefully examine the thumbnail image for:
      - **Text cutoff**: Text being cut off by header bars, shapes, or slide edges
      - **Text overlap**: Text overlapping with other text or shapes
@@ -245,18 +433,31 @@ When you need to create a presentation that follows an existing template's desig
 4. **Duplicate, reorder, and delete slides using `rearrange.py`**:
    * Use the `scripts/rearrange.py` script to create a new presentation with slides in the desired order:
      ```bash
-     python scripts/rearrange.py template.pptx working.pptx 0,34,34,50,52
+     # IMPORTANT: Always work in the user's workspace directory (or user-specified location)
+     # Navigate to workspace first (default from x-agent.yaml config)
+     cd /path/to/workspace  # User should navigate to their configured workspace
+     
+     # Create presentations in workspace or subdirectories
+     python scripts/rearrange.py template.pptx project-alpha/working.pptx 0,34,34,50,52
      ```
    * The script handles duplicating repeated slides, deleting unused slides, and reordering automatically
    * Slide indices are 0-based (first slide is 0, second is 1, etc.)
    * The same slide index can appear multiple times to duplicate that slide
+   * **File organization**: Save working files in workspace subdirectories by project/category
+   * **User override**: If user specified a different path, use that instead
 
 5. **Extract ALL text using the `inventory.py` script**:
-   * **Run inventory extraction**:
+   * **Run inventory extraction** (always work in workspace directory or user-specified location):
      ```bash
-     python scripts/inventory.py working.pptx text-inventory.json
+     # Navigate to workspace first (default from x-agent.yaml config)
+     cd /path/to/workspace  # User's configured workspace
+     
+     # Extract inventory from presentation in workspace
+     python scripts/inventory.py project-alpha/working.pptx text-inventory.json
      ```
    * **Read text-inventory.json**: Read the entire text-inventory.json file to understand all shapes and their properties. **NEVER set any range limits when reading this file.**
+   * **File location**: Inventory JSON is saved in current directory (workspace)
+   * **User override**: If user specified a different path, use that instead
 
    * The inventory JSON structure:
       ```json
@@ -381,7 +582,11 @@ When you need to create a presentation that follows an existing template's desig
 
 7. **Apply replacements using the `replace.py` script**
    ```bash
-   python scripts/replace.py working.pptx replacement-text.json output.pptx
+   # Always work from workspace directory (or user-specified location)
+   cd /path/to/workspace  # User's configured workspace
+   
+   # Apply replacements and save output in workspace or subdirectory
+   python scripts/replace.py project-alpha/working.pptx replacement-text.json project-alpha/output.pptx
    ```
 
    The script will:
@@ -391,7 +596,8 @@ When you need to create a presentation that follows an existing template's desig
    - Apply new text only to shapes with "paragraphs" defined in the replacement JSON
    - Preserve formatting by applying paragraph properties from the JSON
    - Handle bullets, alignment, font properties, and colors automatically
-   - Save the updated presentation
+   - Save the updated presentation in the specified workspace path
+   * **User override**: If user specified a different path, use that instead
 
    Example validation errors:
    ```
@@ -409,18 +615,34 @@ When you need to create a presentation that follows an existing template's desig
 
 To create visual thumbnail grids of PowerPoint slides for quick analysis and reference:
 
+**IMPORTANT**: Always work from the workspace directory (or user-specified location) to keep all outputs organized.
+
 ```bash
-python scripts/thumbnail.py template.pptx [output_prefix]
+# Navigate to workspace first (default from x-agent.yaml config)
+cd /path/to/workspace  # User's configured workspace
+
+# Create thumbnails in workspace subdirectory
+python scripts/thumbnail.py project-alpha/template.pptx workspace/thumbnails/project-alpha
 ```
 
 **Features**:
 - Creates: `thumbnails.jpg` (or `thumbnails-1.jpg`, `thumbnails-2.jpg`, etc. for large decks)
 - Default: 5 columns, max 30 slides per grid (5×6)
-- Custom prefix: `python scripts/thumbnail.py template.pptx my-grid`
-  - Note: The output prefix should include the path if you want output in a specific directory (e.g., `workspace/my-grid`)
+- Custom prefix: Always use workspace-relative paths
+  ```bash
+  # Good examples:
+  python scripts/thumbnail.py template.pptx workspace/thumbnails/sales-deck
+  python scripts/thumbnail.py template.pptx workspace/thumbnails/client-proposals/acme
+  ```
 - Adjust columns: `--cols 4` (range: 3-6, affects slides per grid)
 - Grid limits: 3 cols = 12 slides/grid, 4 cols = 20, 5 cols = 30, 6 cols = 42
 - Slides are zero-indexed (Slide 0, Slide 1, etc.)
+
+**Best practices**:
+- Organize thumbnails by project/category in workspace subdirectories
+- Use descriptive names that indicate the presentation content
+- Keep all generated files within the workspace directory structure
+- **User override**: If user specified a different path, use that instead
 
 **Use cases**:
 - Template analysis: Quickly understand slide layouts and design patterns
@@ -441,28 +663,42 @@ python scripts/thumbnail.py template.pptx analysis --cols 4
 
 To visually analyze PowerPoint slides, convert them to images using a two-step process:
 
-1. **Convert PPTX to PDF**:
+**IMPORTANT**: Always work in the workspace directory (or user-specified location) to keep all generated files organized.
+
+1. **Convert PPTX to PDF** (in workspace):
    ```bash
-   soffice --headless --convert-to pdf template.pptx
+   # Navigate to workspace (default from x-agent.yaml config)
+   cd /path/to/workspace  # User's configured workspace
+   
+   # Convert presentation to PDF
+   soffice --headless --convert-to pdf project-alpha/template.pptx
    ```
 
-2. **Convert PDF pages to JPEG images**:
+2. **Convert PDF pages to JPEG images** (in workspace):
    ```bash
-   pdftoppm -jpeg -r 150 template.pdf slide
+   # Still in workspace directory
+   pdftoppm -jpeg -r 150 project-alpha/template.pdf project-alpha/slides/slide
    ```
-   This creates files like `slide-1.jpg`, `slide-2.jpg`, etc.
+   This creates files like `project-alpha/slides/slide-1.jpg`, `slide-2.jpg`, etc.
 
 Options:
 - `-r 150`: Sets resolution to 150 DPI (adjust for quality/size balance)
 - `-jpeg`: Output JPEG format (use `-png` for PNG if preferred)
 - `-f N`: First page to convert (e.g., `-f 2` starts from page 2)
 - `-l N`: Last page to convert (e.g., `-l 5` stops at page 5)
-- `slide`: Prefix for output files
+- Prefix for output files (use workspace-relative path)
 
 Example for specific range:
 ```bash
-pdftoppm -jpeg -r 150 -f 2 -l 5 template.pdf slide  # Converts only pages 2-5
+# All paths relative to workspace
+pdftoppm -jpeg -r 150 -f 2 -l 5 project-alpha/template.pdf project-alpha/slides/slide  # Converts only pages 2-5
 ```
+
+**Best practices**:
+- Keep all generated images in workspace subdirectories by project
+- Use descriptive folder names to organize different presentations
+- Clean up temporary PDF files after extracting images
+- **User override**: If user specified a different path, use that instead
 
 ## Code Style Guidelines
 **IMPORTANT**: When generating code for PPTX operations:
@@ -470,15 +706,353 @@ pdftoppm -jpeg -r 150 -f 2 -l 5 template.pdf slide  # Converts only pages 2-5
 - Avoid verbose variable names and redundant operations
 - Avoid unnecessary print statements
 
+## Example: Complete Workflow with Proper File Organization
+
+Here's a complete example of creating a presentation with proper file organization:
+
+### Step 1: Create the Python Script in scripts/ Directory
+
+```python
+# File: scripts/chinese_new_year_eating.py
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+import os
+
+def create_chinese_new_year_eating_ppt():
+    """Create a presentation about Chinese New Year eating customs."""
+    prs = Presentation()
+    
+    # Add title slide
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    
+    title.text = "春节美食文化"
+    subtitle.text = "传统饮食习俗与现代庆祝方式"
+    
+    # Add content slides...
+    # [Your slide content here]
+    
+    # CRITICAL: Save to presentations/ directory, NOT workspace root!
+    output_dir = 'presentations'
+    os.makedirs(output_dir, exist_ok=True)  # Create directory if needed
+    
+    output_path = os.path.join(output_dir, 'chinese_new_year_eating.pptx')
+    prs.save(output_path)
+    
+    print(f"✅ PPTX saved to: {output_path}")
+    return output_path
+
+if __name__ == "__main__":
+    create_chinese_new_year_eating_ppt()
+```
+
+### Step 2: Execute the Script
+
+**CRITICAL**: The script MUST be executed with workspace as the working directory!
+
+```bash
+# Navigate to workspace first (REQUIRED!)
+cd /path/to/workspace
+
+# Run the script from workspace directory
+python scripts/chinese_new_year_eating.py
+```
+
+**When using run_in_terminal tool, ALWAYS specify working_dir**:
+```json
+{
+  "command": "python scripts/chinese_new_year_eating.py",
+  "working_dir": "/path/to/workspace"
+}
+```
+
+**WRONG - Do NOT execute from backend directory**:
+```bash
+# ❌ WRONG - This saves files to backend/presentations/ instead of workspace/presentations/
+python scripts/chinese_new_year_eating.py
+```
+
+### Expected Output Structure
+
+After execution, your workspace should look like:
+
+```
+workspace/
+├── scripts/
+│   └── chinese_new_year_eating.py    ✅ Script in correct location
+├── presentations/
+│   └── chinese_new_year_eating.pptx  ✅ Output in correct location
+└── (NO files in root directory)      ✅ Clean workspace
+```
+
+### WRONG: What NOT to Do
+
+❌ **NEVER do this** - saves to workspace root:
+```python
+# BAD CODE - DON'T DO THIS
+filename = "chinese_new_year_eating.pptx"
+filepath = os.path.join(os.getcwd(), filename)  # Saves to workspace root!
+prs.save(filepath)
+```
+
+❌ **NEVER save scripts in workspace root**:
+```
+workspace/
+├── chinese_new_year_eating.py    ❌ WRONG location
+└── chinese_new_year_eating.pptx  ❌ WRONG location
+```
+
+This creates clutter and treats the workspace as a dumping ground.
+
 ## Dependencies
 
-Required dependencies (should already be installed):
+### Check Before Installing
 
+**CRITICAL**: Before installing any dependencies, ALWAYS check if they are already installed:
+
+```bash
+# Check Python packages
+pip show python-pptx
+pip show markitdown
+pip show defusedxml
+
+# Check Node.js packages
+npm list -g pptxgenjs
+npm list -g playwright
+npm list -g sharp
+```
+
+Only install if the package is NOT found. This prevents unnecessary re-installation loops.
+
+### Required Dependencies
+
+- **python-pptx**: `pip install python-pptx` (for programmatic PPTX manipulation)
 - **markitdown**: `pip install "markitdown[pptx]"` (for text extraction from presentations)
+- **defusedxml**: `pip install defusedxml` (for secure XML parsing)
 - **pptxgenjs**: `npm install -g pptxgenjs` (for creating presentations via html2pptx)
 - **playwright**: `npm install -g playwright` (for HTML rendering in html2pptx)
 - **react-icons**: `npm install -g react-icons react react-dom` (for icons)
 - **sharp**: `npm install -g sharp` (for SVG rasterization and image processing)
 - **LibreOffice**: `sudo apt-get install libreoffice` (for PDF conversion)
 - **Poppler**: `sudo apt-get install poppler-utils` (for pdftoppm to convert PDF to images)
-- **defusedxml**: `pip install defusedxml` (for secure XML parsing)
+
+### Installation Best Practices
+
+1. **Check first**: Always verify if a package is already installed before attempting installation
+2. **Use confirmation flow**: For pip/npm install commands, the system will require user confirmation for security
+3. **Install once**: After successful installation, assume the package remains available
+4. **Don't re-install unnecessarily**: If a package was installed earlier in the conversation, do not install it again unless there's a specific error indicating it's missing
+5. **Handle confirmation delays**: After requesting user confirmation for installation, wait for the result before proceeding. Do not assume failure if the response is delayed.
+
+## Execution Best Practices
+
+### Pre-flight Checklist (P0 Priority)
+
+**BEFORE** creating any presentation, follow this checklist:
+
+1. **Check Python dependencies FIRST** (prevents 90% of failures):
+   ```bash
+   # Check if python-pptx is installed
+   pip show python-pptx
+   
+   # Expected output if installed:
+   # Name: python-pptx
+   # Version: 1.x.x
+   # ...
+   
+   # If NOT installed (returncode != 0), install with:
+   pip install --user python-pptx
+   ```
+
+2. **Check Node.js dependencies** (if using html2pptx workflow):
+   ```bash
+   # Check if pptxgenjs is installed globally
+   npm list -g pptxgenjs
+   
+   # Expected output if installed:
+   # /path/to/node_modules
+   # └── pptxgenjs@3.x.x
+   
+   # If NOT installed, install with:
+   npm install -g pptxgenjs
+   
+   # ⚠️ IMPORTANT: Do NOT run npm install every time!
+   # Only install if the package is NOT found.
+   ```
+
+3. **Verify installation succeeded**:
+   ```bash
+   # Quick verification command for Python
+   python -c "from pptx import Presentation; print('✅ python-pptx ready')"
+   
+   # Quick verification for Node.js
+   node -e "const pptxgen = require('pptxgenjs'); console.log('✅ pptxgenjs ready')"
+   ```
+
+4. **Create target directories**:
+   ```bash
+   # Ensure output directories exist in workspace (NOT backend!)
+   mkdir -p workspace/scripts workspace/presentations
+   ```
+
+### Error Handling Patterns
+
+**Common errors and their solutions:**
+
+1. **ImportError: No module named 'pptx'**
+   ```python
+   # ❌ WRONG - Don't just try to run the script
+   try:
+       from pptx import Presentation
+   except ImportError:
+       # This will fail silently
+       pass
+   
+   # ✅ CORRECT - Check and install proactively
+   import subprocess
+   import sys
+   
+   def ensure_dependencies():
+       """Check and install dependencies if needed."""
+       try:
+           from pptx import Presentation
+           return True
+       except ImportError:
+           print("Installing python-pptx...")
+           subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "python-pptx"])
+           return True
+   ```
+
+2. **FileNotFoundError: [Errno 2] No such file or directory**
+   ```python
+   # ✅ Always create directories before writing files
+   import os
+   
+   output_dir = 'presentations'
+   os.makedirs(output_dir, exist_ok=True)  # Create if not exists
+   output_path = os.path.join(output_dir, 'presentation.pptx')
+   ```
+
+3. **PermissionError: [Errno 13] Permission denied**
+   ```python
+   # ✅ Use --user flag for pip installations
+   # pip install --user python-pptx
+   
+   # ✅ Or check file permissions
+   import os
+   import stat
+   
+   # Make script executable if needed
+   os.chmod(script_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+   ```
+
+### Fallback Strategies
+
+**If primary method fails, have backup plans:**
+
+1. **If python-pptx fails completely:**
+   - Option A: Use HTML + Sharp workflow (see html2pptx.md)
+   - Option B: Generate markdown outline for manual editing
+   - Option C: Provide step-by-step instructions for user
+
+2. **If file creation fails:**
+   - Try alternative paths (current directory, /tmp, etc.)
+   - Ask user for preferred location
+   - Generate content but let user save manually
+
+3. **If execution timeout occurs:**
+   - Break into smaller steps
+   - Create simpler version first
+   - Provide partial results
+
+### Step-by-Step Execution Flow
+
+**For complex tasks, use incremental approach:**
+
+```python
+def create_presentation_safe():
+    """Create PPTX with safety checks at each step."""
+    
+    # Step 1: Verify environment
+    print("Step 1: Checking environment...")
+    if not check_python_version(3, 8):
+        raise Exception("Python 3.8+ required")
+    
+    # Step 2: Check/install dependencies
+    print("Step 2: Verifying dependencies...")
+    ensure_dependencies()
+    
+    # Step 3: Create test slide (quick validation)
+    print("Step 3: Creating test slide...")
+    test_prs = Presentation()
+    test_prs.slides.add_slide(test_prs.slide_layouts[0])
+    test_path = '/tmp/test.pptx'
+    test_prs.save(test_path)
+    
+    # Step 4: Verify test succeeded
+    print("Step 4: Verifying test output...")
+    if not os.path.exists(test_path):
+        raise Exception("Test failed - cannot create PPTX")
+    
+    # Step 5: Create full presentation
+    print("Step 5: Creating final presentation...")
+    prs = create_full_presentation()
+    
+    # Step 6: Save and verify
+    print("Step 6: Saving and validating...")
+    output_path = 'presentations/final.pptx'
+    os.makedirs('presentations', exist_ok=True)
+    prs.save(output_path)
+    
+    # Step 7: Final validation
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print(f"✅ Success! File saved to: {output_path}")
+        return output_path
+    else:
+        raise Exception("Final validation failed")
+```
+
+### Testing Guidelines
+
+**Before delivering to user, verify:**
+
+1. **File exists**: `os.path.exists(output_path)`
+2. **File size > 0**: `os.path.getsize(output_path) > 0`
+3. **Can be opened**: Try opening with python-pptx
+4. **Slide count correct**: Verify expected number of slides
+5. **Content present**: Spot-check key slides
+
+```python
+def validate_presentation(filepath, expected_slides=None):
+    """Validate PPTX file integrity."""
+    from pptx import Presentation
+    
+    # Check file exists
+    if not os.path.exists(filepath):
+        return False, "File does not exist"
+    
+    # Check file size
+    size = os.path.getsize(filepath)
+    if size == 0:
+        return False, "File is empty"
+    if size < 1024:  # Less than 1KB suspicious
+        return False, f"File too small: {size} bytes"
+    
+    # Try to open
+    try:
+        prs = Presentation(filepath)
+    except Exception as e:
+        return False, f"Cannot open file: {e}"
+    
+    # Check slide count
+    actual_slides = len(prs.slides)
+    if expected_slides and actual_slides != expected_slides:
+        return False, f"Expected {expected_slides} slides, got {actual_slides}"
+    
+    # All checks passed
+    return True, f"Valid PPTX with {actual_slides} slides"
+```

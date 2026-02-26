@@ -15,7 +15,7 @@ class SkillMetadata:
     
     Attributes:
         name: Skill identifier (lowercase/alphanumeric/hyphens, 1-64 chars)
-        description: What the skill does and when to use it (1-1-1024 chars)
+        description: What the skill does and when to use it (1-1024 chars)
         path: Path to the skill directory
         keywords: List of trigger keywords for auto-detection (comma-separated)
         has_scripts: Whether the skill has a scripts/ directory
@@ -30,10 +30,6 @@ class SkillMetadata:
         forbidden_tools: List of tools forbidden when this skill is active
         context: Execution context ("fork" for isolated execution)
         license: License identifier (e.g., "Apache-2.0", "Proprietary")
-        
-        # Phase 3: Skill matching and prioritization
-        auto_trigger: Whether skill can be auto-triggered by LLM (default: True)
-        priority: Skill priority (lower number = higher priority, default: 999)
     """
     name: str
     description: str
@@ -53,10 +49,6 @@ class SkillMetadata:
     context: str | None = None
     license: str | None = None
     keywords: list[str] = field(default_factory=list)  # ✅ NEW: Auto-trigger keywords
-    
-    # Phase 3: Skill matching and prioritization
-    auto_trigger: bool = True  # 🔥 NEW: Auto-trigger configuration
-    priority: int = 999  # 🔥 NEW: Priority (lower = higher priority)
     
     # Additional metadata (for future extensibility)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -98,8 +90,6 @@ class SkillMetadata:
             "keywords": self.keywords,  # ✅ NEW
             "context": self.context,
             "license": self.license,
-            "auto_trigger": self.auto_trigger,  # 🔥 NEW
-            "priority": self.priority,  # 🔥 NEW
             **self.extra
         }
     
@@ -121,12 +111,10 @@ class SkillMetadata:
             keywords=data.get("keywords", []),  # ✅ NEW
             context=data.get("context"),
             license=data.get("license"),
-            auto_trigger=data.get("auto_trigger", True),  # 🔥 NEW
-            priority=data.get("priority", 999),  # 🔥 NEW
             extra={k: v for k, v in data.items() if k not in [
                 "name", "description", "path", "has_scripts", "has_references",
                 "has_assets", "disable_model_invocation", "user_invocable",
                 "argument_hint", "allowed_tools", "forbidden_tools", "keywords",
-                "context", "license", "auto_trigger", "priority"
+                "context", "license"
             ]}
         )

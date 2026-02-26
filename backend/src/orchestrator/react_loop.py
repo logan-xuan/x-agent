@@ -13,7 +13,6 @@ This creates an iterative problem-solving capability with self-reflection.
 
 import json
 import re
-import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from enum import Enum
@@ -428,8 +427,6 @@ class ReActLoop:
         session_id: str | None = None,
         skill_context: Any = None,  # Phase 2 - Skill metadata for tool restrictions
         plan_state: PlanState | None = None,  # NEW: PlanState for structured plan tool constraints
-        original_goal: str | None = None,  # 🔥 NEW: Original task goal for completion verification
-        trace_id: str | None = None,  # 🔥 NEW: Trace ID for logging and verification
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run the ReAct loop with streaming events.
         
@@ -451,9 +448,6 @@ class ReActLoop:
         Yields:
             Event dictionaries
         """
-        # 🔥 NEW: Store original goal for completion verification
-        self._original_goal = original_goal or ""
-        
         # Working message list
         working_messages = list(messages)
         
@@ -1027,38 +1021,6 @@ class ReActLoop:
                         # Update strategy state
                         self._update_strategy_state(strategy_state, tool_call.name, result.success)
                         
-                        # 🔥 NEW: Universal Task Completion Detection - Check if goal achieved
-                        if result.success:
-                            completion_analysis = await self._analyze_task_completion(
-                                tool_call=tool_call,
-                                result=result,
-                                session_id=session_id,
-                                trace_id=trace_id or session_id or str(uuid.uuid4()),  # Use trace_id, session_id, or generate new
-                                strategy_state=strategy_state,  # 🔥 NEW: Pass strategy state for multi-step detection
-                            )
-                            
-                            if completion_analysis.should_conclude:
-                                logger.info(
-                                    "🎯 Task completion detected, prompting for final_answer",
-                                    extra={
-                                        "session_id": session_id,
-                                        "completion_type": completion_analysis.type,
-                                        "confidence": completion_analysis.confidence,
-                                        "reasons": completion_analysis.reasons,
-                                    }
-                                )
-                                
-                                # Add system message to prompt LLM to conclude with comprehensive feedback
-                                working_messages.append({
-                                    "role": "system",
-                                    "content": (
-                                        f"✅ 检测到任务已完成（{completion_analysis.type}）。"
-                                        "请立即总结任务完成情况并向用户返回最终结果（final_answer），包括：\n"
-                                        f"{completion_analysis.guidance}\n"
-                                        "\n请不要再次调用工具，直接返回 final_answer。"
-                                    ),
-                                })
-                        
                         # Add tool result to messages
                         working_messages.append({
                             "role": "assistant",
@@ -1140,65 +1102,11 @@ class ReActLoop:
                                 "max_retry": self.MAX_RETRY_WITHOUT_TOOL,
                             }
                         )
-                        # Exceeded retry limit or past early iterations - fail with error
-                        logger.error(
-                            "LLM persistently not calling tools, task cannot continue",
-                            extra={
-                                "iteration": iteration + 1,
-                                "retry_count": retry_without_tool_count,
-                                "max_retry": self.MAX_RETRY_WITHOUT_TOOL,
-                            }
-                        )
-                        
-                        # 🔥 NEW: Generate problem guidance data
-                        from .self_healing_monitor import generate_problem_guidance_for_frontend
-                        guidance_data = generate_problem_guidance_for_frontend(
-                            error_type="llm_not_calling_tools",
-                            error_message=f"LLM 持续不调用工具（重试{retry_without_tool_count}次），任务无法继续",
-                            context={
-                                "retry_count": retry_without_tool_count,
-                                "max_retry": self.MAX_RETRY_WITHOUT_TOOL,
-                                "iteration": iteration + 1,
-                                "possible_causes": [
-                                    "用户问题需要工具但 LLM 未识别",
-                                    "工具描述不够清晰",
-                                    "LLM 理解偏差",
-                                ],
-                            }
-                        )
-                        
-                        # Send error message
                         yield {
                             "type": REACT_EVENT_ERROR,
-                            "error": f"LLM 持续不调用工具（重试{retry_without_tool_count}次），任务无法继续",
+                            "error": f"LLM持续不调用工具（重试{retry_without_tool_count}次），任务无法继续",
                             "retry_count": retry_without_tool_count,
                         }
-                        
-                        # 🔥 NEW: Send guidance card immediately after error
-                        
-                        # 🔥 NEW: Send guidance card immediately after error
-                        # Log the guidance data before sending
-                        from ..utils.logger import get_logger
-                        logger_local = get_logger(__name__)
-                        logger_local.info(
-                            "🔍 react_loop: Sending problem_guidance",
-                            extra={
-                                "guidance_type": guidance_data.get("type") if isinstance(guidance_data, dict) else "not a dict",
-                                "has_steps": len(guidance_data.get("steps", [])) if isinstance(guidance_data, dict) else 0,
-                                "session_id": session_id or "unknown",
-                            }
-                        )
-                        
-                        yield {
-                            "type": "problem_guidance",
-                            "data": guidance_data,
-                        }
-                        
-                        logger_local.info(
-                            "✅ react_loop: problem_guidance sent",
-                            extra={"session_id": session_id}
-                        )
-                        
                         return  # Terminate loop
                     
                     logger.warning(
@@ -1291,29 +1199,14 @@ class ReActLoop:
                 return
                 
             except Exception as e:
-                # 🔥 DEBUG: Log full exception details
-                import traceback
-                error_stack = traceback.format_exc()
                 logger.error(
-                    f"ReAct iteration failed - EXCEPTION DETAILS",
+                    "ReAct iteration failed",
                     extra={
                         "iteration": iteration + 1,
                         "error": str(e),
                         "error_type": type(e).__name__,
-                        "error_repr": repr(e),
-                        "error_stack": error_stack[:2000],  # Limit log size
                     }
                 )
-                
-                # Check if this is a KeyError related to ProblemType
-                if isinstance(e, KeyError):
-                    logger.critical(
-                        f"KEYERROR DETECTED - This might be causing the enum string issue!",
-                        extra={
-                            "key_error_args": e.args,
-                            "key_error_str": str(e),
-                        }
-                    )
                 
                 # ALWAYS trigger failure reflection on exception (regardless of enable_reflection)
                 failure_analysis = self._generate_failure_analysis(strategy_state, iteration + 1)
@@ -1322,31 +1215,16 @@ class ReActLoop:
                 yield {
                     "type": REACT_EVENT_REFLECTION,
                     "reflection_type": ReflectionType.FAILURE_ANALYSIS.value,
-                    "content": f"异常退出：{type(e).__name__} (详情见日志)",
+                    "content": f"异常退出: {str(e)}",
                     "suggestion": failure_analysis["recommendation"],
                     "failure_details": failure_analysis,
                     "exception_type": type(e).__name__,
                 }
                 
                 # Emit error event
-                
-                # Emit error event
-                # 🔥 FIX: Ensure error is always a clean string, not enum representation
-                error_str = str(e)
-                if error_str.startswith('<') and 'ProblemType' in error_str:
-                    # This is an enum representation, use a safer message
-                    error_str = f"系统错误：{type(e).__name__} (详情见日志)"
-                    logger.critical(
-                        "Prevented sending ProblemType enum as error message!",
-                        extra={
-                            "original_error": repr(e),
-                            "sanitized_error": error_str,
-                        }
-                    )
-                
                 yield {
                     "type": REACT_EVENT_ERROR,
-                    "error": error_str,
+                    "error": str(e),
                     "iteration": iteration + 1,
                     "failure_analysis": failure_analysis,
                 }
@@ -1658,283 +1536,6 @@ class ReActLoop:
         else:
             state.same_tool_repeated = 0
             state.last_tool_name = tool_name
-    
-    async def _analyze_task_completion(
-        self,
-        tool_call: ToolCallRequest,
-        result: ToolResult,
-        session_id: str,
-        trace_id: str,
-        strategy_state: "StrategyState | None" = None,  # 🔥 NEW: Pass strategy state for multi-step detection
-    ) -> "TaskCompletionAnalysis":
-        """Analyze whether task goal has been achieved - universal completion detection.
-        
-        Returns analysis with:
-        - should_conclude: Whether to prompt LLM for final_answer
-        - type: Type of completion (file_generated, data_retrieved, action_completed, etc.)
-        - confidence: Confidence score (0.0-1.0)
-        - reasons: List of reasons for conclusion
-        - guidance: Specific guidance for final_answer content
-        """
-        from .models.completion import TaskCompletionAnalysis
-        
-        reasons = []
-        confidence = 0.0
-        completion_type = None
-        guidance_parts = []
-        
-        # ===== 1. File Generation Detection =====
-        file_extensions = [".pptx", ".pdf", ".xlsx", ".xls", ".docx", ".txt", ".md", ".json", ".csv"]
-        detected_file = None
-        
-        if tool_call.name == "run_in_terminal":
-            command = tool_call.arguments.get("command", "")
-            for ext in file_extensions:
-                if ext in command.lower():
-                    detected_file = ext
-                    break
-        elif tool_call.name == "write_file":
-            file_path = tool_call.arguments.get("file_path", "")
-            for ext in file_extensions:
-                if file_path.lower().endswith(ext):
-                    detected_file = ext
-                    break
-        
-        if detected_file:
-            completion_type = f"文件生成 ({detected_file.upper()})"
-            confidence = 0.9
-            reasons.append(f"成功生成{detected_file.upper()}文件")
-            guidance_parts.append(f"1) 生成的文件路径和类型说明")
-            guidance_parts.append(f"2) 文件的主要内容和用途")
-            guidance_parts.append(f"3) 如何打开或使用该文件的建议")
-        
-        # ===== 2. Data Retrieval Detection =====
-        if tool_call.name in ("web_search", "read_file", "fetch_web_content"):
-            if result.success and result.output:
-                output_length = len(result.output) if isinstance(result.output, str) else 0
-                if output_length > 100:  # Substantial content retrieved
-                    completion_type = "数据检索"
-                    confidence = max(confidence, 0.8)
-                    reasons.append(f"成功检索到{output_length}字符的数据")
-                    guidance_parts.append(f"1) 检索到的核心信息总结")
-                    guidance_parts.append(f"2) 信息来源和可靠性说明")
-                    guidance_parts.append(f"3) 基于信息的建议或下一步行动")
-        
-        # ===== 3. Code Execution Success =====
-        if tool_call.name == "run_in_terminal":
-            command = tool_call.arguments.get("command", "")
-            if result.success:
-                # Check if it's a build/compile command
-                build_keywords = ["build", "compile", "make", "npm run", "yarn", "webpack", "vite"]
-                if any(keyword in command.lower() for keyword in build_keywords):
-                    completion_type = "构建完成"
-                    confidence = max(confidence, 0.85)
-                    reasons.append("代码构建/编译成功")
-                    guidance_parts.append(f"1) 构建产物位置和格式")
-                    guidance_parts.append(f"2) 构建是否包含警告或注意事项")
-                    guidance_parts.append(f"3) 如何运行或部署的建议")
-        
-        # ===== 4. Multi-step Task Completion =====
-        # If we've executed multiple different tools successfully, might be complete
-        if strategy_state and len(set([e.tool_name for e in strategy_state.tool_execution_history[-5:]])) >= 3:
-            # Multiple different tools used successfully
-            recent_successes = sum(1 for e in strategy_state.tool_execution_history[-5:] if e.success)
-            if recent_successes >= 4:
-                completion_type = "多步骤任务完成"
-                confidence = max(confidence, 0.75)
-                reasons.append("连续成功执行多个不同工具")
-                guidance_parts.append(f"1) 完成的所有步骤总结")
-                guidance_parts.append(f"2) 最终成果展示")
-                guidance_parts.append(f"3) 整体质量评估")
-        
-        # ===== 5. Plan Mode Milestone Achievement =====
-        # If in plan mode and milestone reached
-        # (This would need plan_state parameter - skip for now)
-        
-        # Determine if should conclude
-        should_conclude = confidence >= 0.75
-        
-        # 🔥 Hybrid method: Mark for LLM verification if confidence is in medium range
-        requires_llm_verification = 0.6 <= confidence < 0.9
-        
-        analysis = TaskCompletionAnalysis(
-            should_conclude=should_conclude,
-            type=completion_type or "未知",
-            confidence=confidence,
-            reasons=reasons,
-            guidance="\n".join(guidance_parts) if guidance_parts else "请总结任务完成情况。",
-            requires_llm_verification=requires_llm_verification,
-        )
-        
-        # If LLM verification is needed, do it now
-        if requires_llm_verification:
-            llm_result = await self._llm_verify_task_completion(
-                original_goal=self._original_goal if hasattr(self, '_original_goal') else "",
-                tool_execution_history=strategy_state.tool_execution_history,
-                preliminary_analysis=analysis,
-                session_id=session_id,
-                trace_id=trace_id or session_id or str(uuid.uuid4()),  # 🔥 FIX: Use provided trace_id
-            )
-            
-            # Combine rule-based and LLM confidence scores
-            combined_confidence = confidence * 0.4 + llm_result.confidence * 0.6
-            
-            analysis.confidence = combined_confidence
-            analysis.should_conclude = combined_confidence >= 0.75
-            
-            if llm_result.is_complete:
-                analysis.reasons.extend(llm_result.reasons)
-                if llm_result.suggestions:
-                    analysis.guidance += "\n\n特别建议:\n" + "\n".join(llm_result.suggestions)
-            else:
-                # LLM thinks task is incomplete - don't trigger final_answer
-                analysis.should_conclude = False
-                analysis.type += " (LLM 验证：未完成)"
-        
-        return analysis
-    
-    async def _llm_verify_task_completion(
-        self,
-        original_goal: str,
-        tool_execution_history: list,
-        preliminary_analysis: "TaskCompletionAnalysis",
-        session_id: str,
-        trace_id: str,
-    ) -> "LLMVerificationResult":
-        """Use LLM to verify whether task goal has been achieved.
-        
-        Args:
-            original_goal: The user's original task/goal
-            tool_execution_history: History of tool executions
-            preliminary_analysis: Preliminary analysis from rule-based detection
-            session_id: Session ID for logging
-            trace_id: Trace ID for logging
-            
-        Returns:
-            LLMVerificationResult with LLM's assessment
-        """
-        from .models.completion import LLMVerificationResult
-        
-        try:
-            # Format tool history for LLM
-            tool_summary = []
-            for i, record in enumerate(tool_execution_history[-10:], 1):  # Last 10 executions
-                status = "✅" if record.success else "❌"
-                tool_summary.append(f"{i}. {status} {record.tool_name}: {str(record.arguments)[:100]}")
-            
-            # Build verification prompt
-            verification_prompt = f"""你是一个任务完成度评估专家。请快速判断以下任务是否已完成。
-
-【原始目标】
-{original_goal if original_goal else "（未提供具体目标）"}
-
-【已执行的操作】
-{chr(10).join(tool_summary) if tool_summary else "暂无记录"}
-
-【初步检测结果】
-检测类型：{preliminary_analysis.type}
-检测置信度：{preliminary_analysis.confidence:.2f}
-检测依据：{", ".join(preliminary_analysis.reasons)}
-
-请用是/否/不确定回答：
-1. 任务是否与原始目标一致？
-2. 是否产生了有价值的成果？
-3. 是否应该立即向用户返回最终结果？
-
-如果任务未完成，还缺少什么关键内容？
-
-请严格按照以下 JSON 格式回答：
-{{
-    "is_complete": true/false,
-    "confidence": 0.0-1.0,
-    "reasons": ["原因 1", "原因 2"],
-    "missing_elements": ["缺失项 1"],
-    "suggestions": ["建议 1"]
-}}
-"""
-            
-            # Call LLM with fast/cheap model
-            from ...main import get_llm_router  # 🔥 FIX: Import from main.py
-            llm_router = get_llm_router()
-            
-            # 🔥 FIX: Add timeout control to prevent hanging
-            import asyncio
-            try:
-                response = await asyncio.wait_for(
-                    llm_router.chat(
-                        messages=[{"role": "user", "content": verification_prompt}],
-                        temperature=0.1,  # Low temperature for objective analysis
-                        stream=False,
-                    ),
-                    timeout=5.0,  # 5 seconds timeout
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "LLM verification timed out, using fallback",
-                    extra={
-                        "session_id": session_id,
-                        "trace_id": trace_id,
-                    }
-                )
-                return LLMVerificationResult(
-                    is_complete=False,
-                    confidence=0.5,
-                    reasons=["LLM 验证超时"],
-                )
-            
-            # Parse LLM response
-            import json
-            try:
-                # Try to extract JSON from response
-                content = response.content
-                # Handle markdown code blocks
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0]
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0]
-                
-                llm_result_dict = json.loads(content.strip())
-                
-                return LLMVerificationResult(
-                    is_complete=llm_result_dict.get("is_complete", False),
-                    confidence=float(llm_result_dict.get("confidence", 0.5)),
-                    reasons=llm_result_dict.get("reasons", []),
-                    missing_elements=llm_result_dict.get("missing_elements", []),
-                    suggestions=llm_result_dict.get("suggestions", []),
-                )
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.warning(
-                    "Failed to parse LLM verification response, using fallback",
-                    extra={
-                        "session_id": session_id,
-                        "trace_id": trace_id,
-                        "error": str(e),
-                    }
-                )
-                # Fallback: conservative approach
-                return LLMVerificationResult(
-                    is_complete=False,
-                    confidence=0.5,
-                    reasons=["LLM 响应解析失败"],
-                    suggestions=["请继续完成任务"],
-                )
-                
-        except Exception as e:
-            logger.error(
-                "LLM verification failed",
-                extra={
-                    "session_id": session_id,
-                    "trace_id": trace_id,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
-            # Fallback on error - don't block final_answer
-            return LLMVerificationResult(
-                is_complete=False,
-                confidence=0.5,
-                reasons=["LLM 验证异常"],
-            )
     
     async def _reflect_on_tool_result(
         self,
