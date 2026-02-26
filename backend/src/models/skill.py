@@ -107,14 +107,11 @@ class SkillMetadata:
             user_invocable=data.get("user_invocable", True),
             argument_hint=data.get("argument_hint"),
             allowed_tools=data.get("allowed_tools"),
-            forbidden_tools=data.get("forbidden_tools", []),  # ✅ NEW
-            keywords=data.get("keywords", []),  # ✅ NEW
             context=data.get("context"),
             license=data.get("license"),
             extra={k: v for k, v in data.items() if k not in [
                 "name", "description", "path", "has_scripts", "has_references",
                 "has_assets", "disable_model_invocation", "user_invocable",
-                "argument_hint", "allowed_tools", "forbidden_tools", "keywords",
-                "context", "license"
+                "argument_hint", "allowed_tools", "context", "license"
             ]}
         )
