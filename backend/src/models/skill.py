@@ -50,6 +50,10 @@ class SkillMetadata:
     license: str | None = None
     keywords: list[str] = field(default_factory=list)  # ✅ NEW: Auto-trigger keywords
     
+    # Phase 3: Skill matching and prioritization
+    auto_trigger: bool = True  # 🔥 NEW: Auto-trigger configuration
+    priority: int = 999  # 🔥 NEW: Priority (lower = higher priority)
+    
     # Additional metadata (for future extensibility)
     extra: dict[str, Any] = field(default_factory=dict)
     
@@ -90,6 +94,8 @@ class SkillMetadata:
             "keywords": self.keywords,  # ✅ NEW
             "context": self.context,
             "license": self.license,
+            "auto_trigger": self.auto_trigger,  # 🔥 NEW
+            "priority": self.priority,  # 🔥 NEW
             **self.extra
         }
     
@@ -109,9 +115,13 @@ class SkillMetadata:
             allowed_tools=data.get("allowed_tools"),
             context=data.get("context"),
             license=data.get("license"),
+            keywords=data.get("keywords", []),  # 🔥 NEW
+            auto_trigger=data.get("auto_trigger", True),  # 🔥 NEW
+            priority=data.get("priority", 999),  # 🔥 NEW
             extra={k: v for k, v in data.items() if k not in [
                 "name", "description", "path", "has_scripts", "has_references",
                 "has_assets", "disable_model_invocation", "user_invocable",
-                "argument_hint", "allowed_tools", "context", "license"
+                "argument_hint", "allowed_tools", "context", "license",
+                "keywords", "auto_trigger", "priority"  # 🔥 NEW
             ]}
         )

@@ -464,23 +464,54 @@ class StructuredPlanner:
         
         guidance_parts = []
         
-        # 查找 Usage/Commands/CLI 相关章节
-        usage_patterns = [
-            (r'^##\s*Usage[\s\S]*?(?=^##|\Z)', "使用方法"),
-            (r'^##\s*Commands[\s\S]*?(?=^##|\Z)', "命令"),
-            (r'^##\s*CLI[\s\S]*?(?=^##|\Z)', "命令行接口"),
-            (r'^##\s*How to use[\s\S]*?(?=^##|\Z)', "如何使用"),
+        # 🔥 CRITICAL: 首先查找 Workflow/Steps/Procedure 章节（强制遵循的工作流程）
+        workflow_patterns = [
+            (r'^###\s*(?:Workflow|Work Flow|Flow)[\s\S]*?(?=^###|\Z)', "工作流程"),
+            (r'^##\s*(?:Workflow|Work Flow|Flow)[\s\S]*?(?=^##|\Z)', "工作流程"),
+            (r'^###\s*(?:Steps|Procedure|Process)[\s\S]*?(?=^###|\Z)', "执行步骤"),
+            (r'^##\s*(?:Steps|Procedure|Process)[\s\S]*?(?=^##|\Z)', "执行步骤"),
         ]
         
-        for pattern, title in usage_patterns:
+        for pattern, title in workflow_patterns:
             match = re.search(pattern, skill_md_content, re.MULTILINE | re.IGNORECASE)
             if match:
                 content = match.group(0).strip()
-                # 提取关键命令格式（前 500 字符）
-                if len(content) > 500:
-                    content = content[:500] + "..."
-                guidance_parts.append(f"\n\n## 🔧 {title}\n{content}")
+                # 提取关键步骤（前 800 字符，保留完整步骤信息）
+                if len(content) > 800:
+                    content = content[:800] + "..."
+                
+                guidance_parts.append(f"""
+⚠️ **{title}（必须严格遵循）**
+
+根据 SKILL.md，你必须按照以下步骤执行：
+
+{content}
+
+**重要**：
+1. ✅ 按顺序执行每个步骤，不要跳过或重新排序
+2. ❌ 禁止发明 SKILL.md 中没有的步骤
+3. 🔄 如果遇到困难，可以调整实现细节，但保持整体流程不变
+""")
                 break
+        
+        # 如果没有找到 Workflow，再查找 Usage/Commands/CLI 章节
+        if not guidance_parts:
+            usage_patterns = [
+                (r'^##\s*Usage[\s\S]*?(?=^##|\Z)', "使用方法"),
+                (r'^##\s*Commands[\s\S]*?(?=^##|\Z)', "命令"),
+                (r'^##\s*CLI[\s\S]*?(?=^##|\Z)', "命令行接口"),
+                (r'^##\s*How to use[\s\S]*?(?=^##|\Z)', "如何使用"),
+            ]
+            
+            for pattern, title in usage_patterns:
+                match = re.search(pattern, skill_md_content, re.MULTILINE | re.IGNORECASE)
+                if match:
+                    content = match.group(0).strip()
+                    # 提取关键命令格式（前 500 字符）
+                    if len(content) > 500:
+                        content = content[:500] + "..."
+                    guidance_parts.append(f"\n\n## 🔧 {title}\n{content}")
+                    break
         
         # 如果有多个部分，只取第一个匹配的
         if guidance_parts:

@@ -570,6 +570,23 @@ class ReActLoop:
         completed_early = False
         retry_without_tool_count = 0  # NEW: Track retry attempts when no tools called
         
+        # 🔥 NEW: Track web_search usage for mixed research+creation tasks
+        web_search_count = 0
+        web_search_max_allowed = float('inf')  # Default: unlimited
+        
+        # Check if plan has metadata with web_search constraints
+        if plan_state and hasattr(plan_state, 'structured_plan') and plan_state.structured_plan:
+            plan = plan_state.structured_plan
+            if hasattr(plan, 'metadata') and isinstance(plan.metadata, dict):
+                web_search_max_allowed = plan.metadata.get('web_search_max_iterations', float('inf'))
+                logger.info(
+                    "Plan metadata specifies web_search constraints",
+                    extra={
+                        "web_search_max_allowed": web_search_max_allowed,
+                        "plan_metadata": plan.metadata,
+                    }
+                )
+        
         # Initialize strategy state for reflection and adjustment
         strategy_state = StrategyState()
         
@@ -611,7 +628,103 @@ class ReActLoop:
                     
                     # Process each tool call
                     for tool_call in tool_calls:
+                        # 🔥 CRITICAL: Check if this tool call violates plan metadata constraints
+                        if tool_call.name == "web_search" and web_search_count >= web_search_max_allowed:
+                            logger.warning(
+                                "🚨 BLOCKED: web_search exceeds plan metadata constraint",
+                                extra={
+                                    "web_search_count": web_search_count,
+                                    "web_search_max_allowed": web_search_max_allowed,
+                                    "tool_call_id": tool_call.id,
+                                }
+                            )
+                            
+                            # Add system message to inform LLM about the constraint
+                            working_messages.append({
+                                "role": "system",
+                                "content": (
+                                    f"⛔ **禁止使用 web_search**\n\n"
+                                    f"原因：已达到计划规定的搜索次数上限 ({web_search_max_allowed} 次)\n"
+                                    f"当前已搜索：{web_search_count} 次\n\n"
+                                    f"请根据已收集的信息继续下一步任务，不要继续搜索。"
+                                ),
+                            })
+                            
+                            # Skip this tool call - continue to next iteration or finish
+                            strategy_state.consecutive_failures += 1
+                            continue
+                                            
+                        # 🔥 CRITICAL: Check if this tool call violates ToolConstraints from plan
+                        if (plan_state and 
+                            hasattr(plan_state, 'structured_plan') and 
+                            plan_state.structured_plan and
+                            hasattr(plan_state.structured_plan, 'tool_constraints') and
+                            plan_state.structured_plan.tool_constraints):
+                                                
+                            tool_constraints = plan_state.structured_plan.tool_constraints
+                                                
+                            # Check forbidden list
+                            if (tool_constraints.forbidden and 
+                                tool_call.name in tool_constraints.forbidden):
+                                logger.warning(
+                                    f"🚨 BLOCKED: tool_call violates forbidden constraint",
+                                    extra={
+                                        "tool_name": tool_call.name,
+                                        "forbidden_tools": tool_constraints.forbidden,
+                                        "tool_call_id": tool_call.id,
+                                    }
+                                )
+                                                    
+                                working_messages.append({
+                                    "role": "system",
+                                    "content": (
+                                        f"⛔ **禁止使用 {tool_call.name}**\n\n"
+                                        f"原因：计划明确禁止使用该工具\n"
+                                        f"禁止的工具列表：{', '.join(tool_constraints.forbidden)}\n\n"
+                                        f"请使用其他允许的工具继续任务。"
+                                    ),
+                                })
+                                                    
+                                strategy_state.consecutive_failures += 1
+                                continue
+                                                
+                            # Check allowed list (if specified)
+                            if (tool_constraints.allowed and 
+                                tool_call.name not in tool_constraints.allowed):
+                                logger.warning(
+                                    f"🚨 BLOCKED: tool_call not in allowed list",
+                                    extra={
+                                        "tool_name": tool_call.name,
+                                        "allowed_tools": tool_constraints.allowed,
+                                        "tool_call_id": tool_call.id,
+                                    }
+                                )
+                                                    
+                                working_messages.append({
+                                    "role": "system",
+                                    "content": (
+                                        f"⛔ **未授权使用 {tool_call.name}**\n\n"
+                                        f"原因：该工具不在计划允许的范围内\n"
+                                        f"允许的工具列表：{', '.join(tool_constraints.allowed)}\n\n"
+                                        f"请从允许的工具中选择合适的工具继续任务。"
+                                    ),
+                                })
+                                                    
+                                strategy_state.consecutive_failures += 1
+                                continue
+                                            
                         tool_calls_count += 1
+                        
+                        # Track web_search usage
+                        if tool_call.name == "web_search":
+                            web_search_count += 1
+                            logger.info(
+                                "web_search usage tracked",
+                                extra={
+                                    "web_search_count": web_search_count,
+                                    "web_search_max_allowed": web_search_max_allowed,
+                                }
+                            )
                         
                         # Emit tool_call event
                         tool_call_event = {
