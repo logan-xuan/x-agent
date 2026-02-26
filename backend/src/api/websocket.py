@@ -507,10 +507,30 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                                     "session_id": session_id,
                                 }
                             )
-                            # Forward final answer to frontend
-                            await websocket.send_json(chunk)
+                            try:
+                                # Forward final answer to frontend
+                                await websocket.send_json(chunk)
+                                logger.info(
+                                    "✅ Final answer sent successfully via WebSocket",
+                                    extra={
+                                        "trace_id": message_context.trace_id,
+                                        "session_id": session_id,
+                                        "content_length": len(chunk.get("content", "")),
+                                    }
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    "❌ Failed to send final_answer via WebSocket",
+                                    extra={
+                                        "trace_id": message_context.trace_id,
+                                        "session_id": session_id,
+                                        "error": str(e),
+                                        "error_type": type(e).__name__,
+                                    }
+                                )
+                                raise  # Re-raise to let caller handle
                             logger.info(
-                                "✅ Final answer sent successfully"
+                                "✅ Final answer sending confirmed"
                             )
                         
                         else:
@@ -523,7 +543,18 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                     
                     else:
                         # Non-dict chunks are sent as-is
+                        logger.debug(
+                            "Sending non-dict chunk",
+                            extra={
+                                "chunk_type": type(chunk).__name__,
+                                "chunk_preview": str(chunk)[:100] if isinstance(chunk, (str, bytes)) else None,
+                            }
+                        )
                         await websocket.send_json(chunk)
+                        logger.info(
+                            "✅ Non-dict chunk sent successfully",
+                            extra={"session_id": session_id}
+                        )
                     
                     # Small delay to prevent overwhelming the client
                     await asyncio.sleep(0.01)
