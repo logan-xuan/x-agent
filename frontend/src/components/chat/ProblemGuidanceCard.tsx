@@ -1,295 +1,232 @@
-/** Interactive Problem Guidance Component.
+/** Problem Guidance Card Component
  * 
- * Displays structured problem diagnosis with:
- * 1. Visual problem representation
- * 2. Step-by-step interactive guidance
- * 3. Auto-fix suggestions
- * 4. User information requests
+ * Displays interactive problem guidance with:
+ * 1. Visual problem presentation
+ * 2. Step-by-step actionable suggestions
+ * 3. Request for user input to resolve issues
  */
 
 import { useState } from 'react';
-import { Button } from '../ui/Button';
-import { Badge } from '../ui/Badge';
-import { Card } from '../ui/Card';
-
-export interface GuidanceStep {
-  step: number;
-  title: string;
-  description: string;
-  command?: string;
-  user_action_required?: boolean;
-}
 
 export interface ProblemGuidanceData {
-  type: string;
-  severity: 'critical' | 'high' | 'medium' | 'low';
   title: string;
   description: string;
-  context?: Record<string, any>;
-  steps: GuidanceStep[];
-  auto_fixes: string[];
-  user_info_needed: string[];
+  error_type?: string;
+  severity?: 'low' | 'medium' | 'high' | 'critical';
+  suggestions?: Array<{
+    step: number;
+    action: string;
+    command?: string;
+    completed?: boolean;
+  }>;
+  requests?: Array<{
+    id: string;
+    question: string;
+    placeholder?: string;
+    required?: boolean;
+  }>;
+  metadata?: Record<string, any>;
 }
 
 interface ProblemGuidanceCardProps {
   data: ProblemGuidanceData;
   onCopyCommand?: (command: string) => void;
-  onProvideInfo?: (request: string, value: string) => void;
+  onProvideInfo?: (requestId: string, value: string) => void;
 }
 
 export function ProblemGuidanceCard({ 
   data, 
   onCopyCommand,
-  onProvideInfo,
+  onProvideInfo 
 }: ProblemGuidanceCardProps) {
-  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set([1]));
-  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
+  const [copiedStep, setCopiedStep] = useState<number | null>(null);
+  const [userInputs, setUserInputs] = useState<Record<string, string>>({});
 
-  const severityConfig = {
-    critical: { color: 'red', icon: '🚨', label: '严重' },
-    high: { color: 'orange', icon: '⚠️', label: '高' },
-    medium: { color: 'yellow', icon: '⚡', label: '中' },
-    low: { color: 'blue', icon: 'ℹ️', label: '低' },
+  // Severity color mapping
+  const severityColors = {
+    low: 'from-blue-500 to-cyan-600',
+    medium: 'from-yellow-500 to-orange-600',
+    high: 'from-orange-500 to-red-600',
+    critical: 'from-red-500 to-purple-600',
   };
 
-  const config = severityConfig[data.severity];
+  const severityIcons = {
+    low: '💡',
+    medium: '⚠️',
+    high: '🚨',
+    critical: '❌',
+  };
 
-  const toggleStep = (stepNum: number) => {
-    const newExpanded = new Set(expandedSteps);
-    if (newExpanded.has(stepNum)) {
-      newExpanded.delete(stepNum);
-    } else {
-      newExpanded.add(stepNum);
+  const severity = data.severity || 'medium';
+  const gradientClass = severityColors[severity];
+  const icon = severityIcons[severity];
+
+  // Copy command to clipboard
+  const handleCopyCommand = async (command: string, stepIndex: number) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopiedStep(stepIndex);
+      onCopyCommand?.(command);
+      setTimeout(() => setCopiedStep(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
     }
-    setExpandedSteps(newExpanded);
   };
 
-  const markStepComplete = (stepNum: number) => {
-    const newCompleted = new Set(completedSteps);
-    newCompleted.add(stepNum);
-    setCompletedSteps(newCompleted);
-    // Auto-expand next step
-    if (stepNum < data.steps.length) {
-      setExpandedSteps(prev => new Set([...prev, stepNum + 1]));
+  // Handle user input submission
+  const handleInputChange = (requestId: string, value: string) => {
+    setUserInputs(prev => ({ ...prev, [requestId]: value }));
+  };
+
+  const handleSubmitInput = (requestId: string) => {
+    const value = userInputs[requestId];
+    if (value) {
+      onProvideInfo?.(requestId, value);
+      setUserInputs(prev => {
+        const newState = { ...prev };
+        delete newState[requestId];
+        return newState;
+      });
     }
-  };
-
-  const handleCopyCommand = (command: string) => {
-    navigator.clipboard.writeText(command);
-    onCopyCommand?.(command);
   };
 
   return (
-    <div className="my-4 space-y-4">
-      {/* Problem Header */}
-      <Card className="border-l-4 border-l-red-500 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20">
-        <div className="p-4">
-          <div className="flex items-start gap-3">
-            <span className="text-3xl">{config.icon}</span>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                  {data.title}
-                </h3>
-                <Badge variant="destructive">
-                  {config.label}
-                </Badge>
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-300">
-                {data.description}
-              </p>
-            </div>
-          </div>
+    <div className="w-full bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+      {/* Header with severity indicator */}
+      <div className={`bg-gradient-to-r ${gradientClass} px-4 py-3 text-white`}>
+        <div className="flex items-center gap-2">
+          <span className="text-xl">{icon}</span>
+          <h3 className="font-semibold text-lg">{data.title}</h3>
         </div>
-      </Card>
+        {data.description && (
+          <p className="mt-1 text-sm opacity-90">{data.description}</p>
+        )}
+        {data.error_type && (
+          <p className="mt-1 text-xs opacity-75 font-mono">Error: {data.error_type}</p>
+        )}
+      </div>
 
-      {/* Context Information */}
-      {data.context && Object.keys(data.context).length > 0 && (
-        <Card className="bg-gray-50 dark:bg-gray-800/50">
-          <div className="p-3">
-            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-              🔍 上下文信息
+      {/* Content */}
+      <div className="p-4 space-y-4">
+        {/* Suggestions Section */}
+        {data.suggestions && data.suggestions.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <span>📋</span>
+              建议操作步骤
             </h4>
-            <div className="space-y-1">
-              {Object.entries(data.context).map(([key, value]) => (
-                <div key={key} className="text-xs font-mono">
-                  <span className="text-gray-500 dark:text-gray-400">{key}:</span>
-                  <span className="ml-2 text-gray-900 dark:text-white bg-white dark:bg-gray-700 px-2 py-1 rounded">
-                    {String(value)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* Interactive Steps */}
-      {data.steps.length > 0 && (
-        <div className="space-y-2">
-          <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-            <span>🎯</span> 交互式引导步骤
-          </h4>
-          
-          {data.steps.map((step) => (
-            <Card 
-              key={step.step}
-              className={`transition-all ${
-                completedSteps.has(step.step)
-                  ? 'bg-green-50 dark:bg-green-900/20 border-green-300'
-                  : expandedSteps.has(step.step)
-                  ? 'bg-white dark:bg-gray-800 border-blue-300'
-                  : 'bg-gray-50 dark:bg-gray-800/50 opacity-70'
-              }`}
-            >
-              <div className="p-3">
-                <button
-                  onClick={() => toggleStep(step.step)}
-                  className="w-full flex items-center justify-between text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold ${
-                      completedSteps.has(step.step)
-                        ? 'bg-green-500 text-white'
-                        : expandedSteps.has(step.step)
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-gray-300 dark:bg-gray-600 text-gray-600 dark:text-gray-300'
-                    }`}>
-                      {completedSteps.has(step.step) ? '✓' : step.step}
-                    </div>
-                    <div>
-                      <h5 className="text-sm font-semibold text-gray-900 dark:text-white">
-                        {step.title}
-                      </h5>
-                      {step.user_action_required && (
-                        <Badge variant="warning" className="text-xs mt-1">
-                          需要操作
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  <svg 
-                    className={`w-5 h-5 text-gray-500 transition-transform ${
-                      expandedSteps.has(step.step) ? 'rotate-180' : ''
-                    }`}
-                    fill="none" 
-                    stroke="currentColor" 
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-
-                {expandedSteps.has(step.step) && (
-                  <div className="mt-3 pl-9 space-y-3">
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      {step.description}
-                    </p>
-                    
-                    {step.command && (
-                      <div className="bg-black/90 dark:bg-gray-900 rounded-lg p-3 font-mono text-xs text-green-400 overflow-x-auto">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-gray-500">$ Command</span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleCopyCommand(step.command!)}
-                            className="text-xs text-gray-400 hover:text-white"
-                          >
-                            📋 复制
-                          </Button>
-                        </div>
-                        <code>{step.command}</code>
-                      </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => markStepComplete(step.step)}
-                        className="bg-green-600 hover:bg-green-700 text-white"
-                      >
-                        ✓ 已完成
-                      </Button>
-                      {step.command && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => step.command && navigator.clipboard.writeText(step.command)}
-                          className="text-gray-700 dark:text-gray-300"
-                        >
-                          ▶️ 执行命令
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Auto-Fix Suggestions */}
-      {data.auto_fixes.length > 0 && (
-        <Card className="bg-blue-50 dark:bg-blue-900/20 border-blue-200">
-          <div className="p-3">
-            <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-100 flex items-center gap-2 mb-2">
-              <span>🔧</span> 自动修正建议
-            </h4>
-            <ul className="space-y-2">
-              {data.auto_fixes.map((fix, index) => (
-                <li key={index} className="text-sm text-blue-800 dark:text-blue-200 flex items-start gap-2">
-                  <span className="text-blue-500 mt-1">•</span>
-                  <span>{fix}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </Card>
-      )}
-
-      {/* User Info Requests */}
-      {data.user_info_needed.length > 0 && (
-        <Card className="bg-purple-50 dark:bg-purple-900/20 border-purple-200">
-          <div className="p-3">
-            <h4 className="text-sm font-semibold text-purple-900 dark:text-purple-100 flex items-center gap-2 mb-2">
-              <span>💬</span> 需要你补充的信息
-            </h4>
+            
             <div className="space-y-2">
-              {data.user_info_needed.map((request, index) => (
-                <div key={index} className="flex items-start gap-2">
-                  <span className="text-purple-500 mt-1">❓</span>
-                  <div className="flex-1">
-                    <p className="text-sm text-purple-800 dark:text-purple-200">
-                      {request}
-                    </p>
-                    {onProvideInfo && (
-                      <input
-                        type="text"
-                        placeholder="输入信息..."
-                        className="mt-1 w-full px-3 py-2 text-sm border border-purple-300 dark:border-purple-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        onBlur={(e) => {
-                          if (e.target.value) {
-                            onProvideInfo(request, e.target.value);
-                            e.target.value = '';
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && e.currentTarget.value) {
-                            onProvideInfo(request, e.currentTarget.value);
-                            e.currentTarget.value = '';
-                          }
-                        }}
-                      />
-                    )}
+              {data.suggestions.map((suggestion, index) => (
+                <div
+                  key={index}
+                  className={`p-3 rounded-lg border-l-4 ${
+                    suggestion.completed
+                      ? 'bg-green-50 dark:bg-green-900/20 border-green-500'
+                      : 'bg-gray-50 dark:bg-gray-700/50 border-gray-300 dark:border-gray-600'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-600 text-xs flex items-center justify-center font-medium">
+                      {suggestion.completed ? '✓' : suggestion.step}
+                    </span>
+                    <div className="flex-1">
+                      <p className="text-sm text-gray-900 dark:text-gray-100">
+                        {suggestion.action}
+                      </p>
+                      
+                      {/* Command display */}
+                      {suggestion.command && (
+                        <div className="mt-2">
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 bg-black/10 dark:bg-white/10 px-2 py-1 rounded text-xs font-mono text-gray-800 dark:text-gray-200">
+                              {suggestion.command}
+                            </code>
+                            <button
+                              onClick={() => handleCopyCommand(suggestion.command!, index)}
+                              className="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+                              title="复制命令"
+                            >
+                              {copiedStep === index ? '✓' : '📋'}
+                            </button>
+                          </div>
+                          {copiedStep === index && (
+                            <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                              已复制到剪贴板!
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           </div>
-        </Card>
-      )}
+        )}
+
+        {/* User Input Requests Section */}
+        {data.requests && data.requests.length > 0 && (
+          <div className="space-y-3">
+            <h4 className="font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <span>🤔</span>
+              需要您的帮助
+            </h4>
+            
+            <div className="space-y-3">
+              {data.requests.map((request) => (
+                <div
+                  key={request.id}
+                  className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800"
+                >
+                  <p className="text-sm text-gray-900 dark:text-gray-100 mb-2">
+                    {request.question}
+                    {request.required && (
+                      <span className="text-red-500 ml-1">*</span>
+                    )}
+                  </p>
+                  
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder={request.placeholder || '请输入...'}
+                      value={userInputs[request.id] || ''}
+                      onChange={(e) => handleInputChange(request.id, e.target.value)}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          handleSubmitInput(request.id);
+                        }
+                      }}
+                      className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
+                    />
+                    <button
+                      onClick={() => handleSubmitInput(request.id)}
+                      disabled={!userInputs[request.id]}
+                      className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white rounded text-sm font-medium transition-colors disabled:cursor-not-allowed"
+                    >
+                      提交
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Metadata Section (if available) */}
+        {data.metadata && Object.keys(data.metadata).length > 0 && (
+          <details className="mt-4">
+            <summary className="cursor-pointer text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
+              🔍 查看详细诊断信息
+            </summary>
+            <pre className="mt-2 p-3 bg-black/10 dark:bg-white/5 rounded text-xs font-mono whitespace-pre-wrap break-all text-gray-800 dark:text-gray-200">
+              {JSON.stringify(data.metadata, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
     </div>
   );
 }
+
+// Component and type are already exported above

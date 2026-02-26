@@ -201,42 +201,13 @@ class TaskAnalyzer:
                 }
             )
             
-            # 🔥 NEW: Use LLMSkillMatcher to match skills (if LLM judgment passes)
-            matched_skills = []
-            recommended_skill = None
-            
-            if self.llm_skill_matcher:
-                try:
-                    skill_matches = await self.llm_skill_matcher.match_skills(user_message, top_k=3)
-                    if skill_matches:
-                        # Convert to matched_skills format
-                        matched_skills = [
-                            {"name": skill_name, "confidence": confidence}
-                            for skill_name, confidence in skill_matches
-                            if confidence >= 0.5  # Only include medium+ confidence matches
-                        ]
-                        
-                        # If best match has high confidence, recommend it
-                        if matched_skills and matched_skills[0]["confidence"] >= 0.7:
-                            recommended_skill = matched_skills[0]
-                            
-                            logger.info(
-                                "LLM skill matching completed",
-                                extra={
-                                    "matched_skills": [s["name"] for s in matched_skills],
-                                    "recommended_skill": recommended_skill["name"],
-                                }
-                            )
-                except Exception as e:
-                    logger.warning(f"LLM skill matching failed: {e}")
-            
             return TaskAnalysis(
                 complexity=complexity,
                 confidence=confidence,
-                indicators=[f"llm_reason: {reason}"] + (["skill_matched"] if matched_skills else []),
+                indicators=[f"llm_reason: {reason}"],
                 needs_plan=needs_plan,
-                matched_skills=matched_skills,
-                recommended_skill=recommended_skill,
+                matched_skills=[],
+                recommended_skill=None,
                 analysis_method="llm_assisted",
             )
             

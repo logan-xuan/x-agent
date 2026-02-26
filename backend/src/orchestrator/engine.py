@@ -23,13 +23,19 @@ from .react_loop import (
     REACT_EVENT_THINKING,
     REACT_EVENT_TOOL_CALL,
     REACT_EVENT_TOOL_RESULT,
+    REACT_EVENT_CHUNK,
     REACT_EVENT_FINAL,
     REACT_EVENT_ERROR,
+    REACT_EVENT_REFLECTION,  # ✅ FIX: Add missing reflection event
+    REACT_EVENT_STRATEGY_ADJUSTMENT,  # ✅ FIX: Add strategy adjustment event too
 )
 from .guards import SessionGuard, ResponseGuard
 from .task_analyzer import TaskAnalyzer, get_task_analyzer
 from .structured_planner import StructuredPlanner, get_structured_planner
 from .plan_context import PlanContext, PlanState, get_plan_context
+from .plan_persistence import PlanPersistence  # 🔥 NEW: Import persistence
+from .plan_monitor import PlanModeMonitor, PlanModeStatus  # ✅ OPTIMIZE: Plan Mode monitor
+from .message_builder import MessageBuilder  # NEW: Message builder component
 # Use relative imports within the orchestrator package
 from .models.plan import StructuredPlan, ToolConstraints
 from .validators.tool_validator import ToolConstraintValidator
@@ -47,7 +53,7 @@ from ..services.smart_memory import get_smart_memory_service
 from ..services.skill_registry import SkillRegistry, get_skill_registry
 from ..tools.manager import ToolManager, get_tool_manager
 from ..tools.builtin import get_builtin_tools
-from src.utils.logger import get_logger
+from ..utils.logger import get_logger
 
 if TYPE_CHECKING:
     from ..core.session import SessionManager
@@ -87,7 +93,9 @@ class Orchestrator:
             llm_router: LLM router instance
             session_manager: Session manager for loading conversation history
         """
-        self.workspace_path = Path(workspace_path).resolve()
+        # ✅ FIX: Use fully qualified import to avoid UnboundLocalError in Python 3.13
+        import pathlib
+        self.workspace_path = pathlib.Path(workspace_path).resolve()
         
         # Initialize components
         self.policy_engine = PolicyEngine(str(self.workspace_path))
@@ -105,6 +113,8 @@ class Orchestrator:
         
         # LLM router
         if llm_router is None:
+            from ..config.manager import ConfigManager
+            
             config = ConfigManager().config
             self._llm_router = LLMRouter(config.models)
         else:
@@ -123,6 +133,20 @@ class Orchestrator:
             tool_manager=self._tool_manager,
         )
         
+        # 🔥 FIX: Plan state cache for tool confirmation inheritance
+        # Maps session_id -> PlanState to persist across tool confirmations
+        self._plan_state_cache: dict[str, PlanState] = {}
+        
+        # ✅ OPTIMIZE: Plan Mode monitor for emergency braking
+        self._plan_monitor: PlanModeMonitor | None = None
+        
+        # 🔥 NEW: Plan file persistence
+        self._plan_persistence = PlanPersistence(str(self.workspace_path))
+        logger.info(
+            "Plan persistence initialized",
+            extra={"workspace": str(self.workspace_path)}
+        )
+        
         # Skill registry for discovering and managing skills
         self._skill_registry = SkillRegistry(self.workspace_path)
         
@@ -130,17 +154,29 @@ class Orchestrator:
         self._current_skill_context: Any = None
         
         # Task planning components
-        from ..config.manager import ConfigManager
-        
         try:
             config_manager = ConfigManager()
-            # Initialize task analyzer with skills config for better skill matching
-            self._task_analyzer = TaskAnalyzer(skills_config=config_manager.config.skills)
-        except Exception:
+            # Initialize task analyzer with skills config, skill router and LLM skill matcher
+            from src.services.skill_router import get_skill_router
+            from .llm_skill_matcher import get_llm_skill_matcher
+            from pathlib import Path
+            
+            skill_registry = get_skill_registry(Path.cwd())
+            skill_router = get_skill_router(skill_registry)
+            llm_skill_matcher = get_llm_skill_matcher(skill_registry)
+            
+            self._task_analyzer = TaskAnalyzer(
+                skills_config=config_manager.config.skills,
+                skill_router=skill_router,
+                llm_skill_matcher=llm_skill_matcher
+            )
+            logger.info("Task analyzer initialized with LLM skill matcher")
+        except Exception as e:
+            logger.warning(f"Failed to initialize task analyzer with skill matcher: {e}")
             # Fallback to default without skills config
             self._task_analyzer = TaskAnalyzer()
         
-        # Structured Planner for v2.0 (optional, used when skill is specified)
+        # Structured Planner for v2.0 (统一使用 StructuredPlanner)
         self._structured_planner: StructuredPlanner | None = None
         
         # Plan context manager (uses config from x-agent.yaml)
@@ -164,6 +200,15 @@ class Orchestrator:
         # Skill registry (for discovering and managing skills)
         from ..services.skill_registry import get_skill_registry
         self._skill_registry = get_skill_registry(self.workspace_path)
+        
+        # Message builder (NEW: Extracted component for system prompt building)
+        self._message_builder = MessageBuilder(
+            workspace_path=self.workspace_path,
+            tool_manager=self._tool_manager,
+            skill_registry=self._skill_registry,
+            policy_engine=self.policy_engine,
+            llm_router=self._llm_router,
+        )
         
         logger.info(
             "Orchestrator initialized",
@@ -306,6 +351,20 @@ class Orchestrator:
         for tool in get_builtin_tools():
             self._tool_manager.register(tool)
     
+    def _is_tool_confirmation_message(self, message: str) -> bool:
+        """Detect if a message is a tool confirmation result.
+        
+        Tool confirmation messages have the format:
+        "[用户已确认执行高危命令]\n命令：{command}\n执行结果：成功/失败"
+        
+        Args:
+            message: The user message to check
+            
+        Returns:
+            True if this is a tool confirmation result message
+        """
+        return "[用户已确认执行高危命令]" in message or "[用户已确认" in message
+    
     def register_tool(self, tool: Any) -> None:
         """Register a custom tool."""
         self._tool_manager.register(tool)
@@ -336,9 +395,121 @@ class Orchestrator:
         # ===== CRITICAL DEBUG LOGS =====
         logger.info(f"[PROCESS_REQUEST_START] session={session_id}, message={user_message[:100]}")
         
-        # Step 0: Task Analysis (fast rule-based, no LLM call)
+        # 🔥 FIX: Detect if this is a tool confirmation result message
+        # If so, we should inherit the Plan from the parent trace/session context
+        is_tool_confirmation = self._is_tool_confirmation_message(user_message)
+        if is_tool_confirmation:
+            logger.info(
+                "Tool confirmation result detected, will attempt to inherit Plan state",
+                extra={"session_id": session_id}
+            )
+            
+            # 🔥 FIX: Try to restore PlanState from cache or file
+            cached_plan_state = None
+            
+            # First try memory cache
+            if session_id in self._plan_state_cache:
+                cached_plan_state = self._plan_state_cache[session_id]
+                logger.info(
+                    "Restored PlanState from memory cache",
+                    extra={
+                        "session_id": session_id,
+                        "current_step": cached_plan_state.current_step,
+                    }
+                )
+            # Then try file persistence
+            else:
+                cached_plan_state = self._plan_persistence.load_plan(session_id)
+                if cached_plan_state:
+                    # Also save to memory cache for faster access
+                    self._plan_state_cache[session_id] = cached_plan_state
+                    logger.info(
+                        "Restored PlanState from file",
+                        extra={
+                            "session_id": session_id,
+                            "current_step": cached_plan_state.current_step,
+                        }
+                    )
+            
+            # Use restored plan state if available
+            if cached_plan_state:
+                logger.info(
+                    "Plan state restored successfully",
+                    extra={
+                        "session_id": session_id,
+                        "steps_count": len(cached_plan_state.structured_plan.steps) if cached_plan_state.structured_plan else 0,
+                        "current_step": cached_plan_state.current_step,
+                    }
+                )
+                
+                # Restore the tool validator with the cached plan
+                if cached_plan_state.structured_plan:
+                    self._tool_validator = ToolConstraintValidator(cached_plan_state.structured_plan)
+                    
+                    # Also restore the current step index
+                    if hasattr(self._tool_validator, 'current_step_index'):
+                        # Find the next incomplete step
+                        for i, step in enumerate(cached_plan_state.structured_plan.steps):
+                            step_status = cached_plan_state.get_step_status(step.id)
+                            if step_status != 'completed':
+                                self._tool_validator.current_step_index = i
+                                logger.info(
+                                    "Restored current_step_index from cached plan state",
+                                    extra={
+                                        "current_step_index": i,
+                                        "step_id": step.id,
+                                        "step_name": step.name,
+                                    }
+                                )
+                                break
+        
+        # Step 0: Task Analysis (hybrid: LLM-assisted + rule-based fallback)
         logger.info(f"[TASK_ANALYSIS_START] Analyzing message: {user_message[:50]}...")
         analysis = await self._task_analyzer.analyze(user_message)
+        
+        # 🔥 FIX: Override needs_plan for tool confirmation messages
+        # Even if TaskAnalyzer thinks it's simple, we need to continue the existing Plan
+        if is_tool_confirmation:
+            original_needs_plan = analysis.needs_plan
+            
+            # 🔥 NEW: Check if there's an existing plan in cache
+            # If yes, keep using plan constraints (don't set needs_plan=False)
+            # If no, and has complex requirements (like PDF), generate new plan
+            has_existing_plan = session_id in self._plan_state_cache
+            has_pdf_need = any(kw in user_message.lower() for kw in ["pdf", "PDF", "生成 pdf", "创建 pdf"])
+            
+            if has_existing_plan:
+                # Keep original needs_plan value to continue using plan constraints
+                logger.info(
+                    "Tool confirmation with existing plan - will continue following plan steps",
+                    extra={
+                        "session_id": session_id,
+                        "has_existing_plan": True,
+                        "original_needs_plan": original_needs_plan,
+                    }
+                )
+            elif has_pdf_need:
+                # Need to generate new plan for PDF creation
+                analysis.needs_plan = True
+                logger.info(
+                    "Tool confirmation with PDF need - will generate new plan",
+                    extra={
+                        "session_id": session_id,
+                        "has_pdf_need": True,
+                        "overridden_needs_plan": True,
+                    }
+                )
+            else:
+                # Simple task confirmation, no plan needed
+                analysis.needs_plan = False
+                logger.info(
+                    "Simple tool confirmation - no plan needed",
+                    extra={
+                        "session_id": session_id,
+                        "overridden_needs_plan": False,
+                    }
+                )
+        
         logger.info(f"[TASK_ANALYSIS_DONE] complexity={analysis.complexity}, needs_plan={analysis.needs_plan}, matched_skills={analysis.matched_skills}")
         logger.info(
             "Task analysis completed",
@@ -480,25 +651,17 @@ class Orchestrator:
                     )
                     # Fall through to normal ReAct path
                 else:
-                    # Get skill metadata
-                    skill = self._skill_registry.get_skill_metadata(skill_name)
-                    
-                    # Check if this is a CLI-bound skill (has run_in_terminal in allowed_tools)
-                    # This includes skills without scripts but with CLI tool access
-                    if skill and ('run_in_terminal' in (skill.allowed_tools or [])):
-                        logger.info(
-                            "FAST PATH: Direct skill execution (bypassing ReAct loop)",
-                            extra={
-                                "skill_name": skill.name,
-                                "has_scripts": skill.has_scripts,
-                                "allowed_tools": skill.allowed_tools,
-                            }
-                        )
-                        
-                        # Execute skill's CLI command directly
-                        async for event in _execute_skill_directly(self._tool_manager, skill, arguments, session_id):
-                            yield event
-                        return
+                    # FAST PATH DISABLED: The hardcoded CLI command generation is unsafe
+                    # Let ReAct Loop handle skill execution based on SKILL.md instructions
+                    # Future: Implement proper CLI command parsing from SKILL.md metadata
+                    logger.info(
+                        "Skill command detected, using ReAct loop for safe execution",
+                        extra={
+                            "skill_name": skill_name if skill_name else "unknown",
+                            "arguments": arguments,
+                        }
+                    )
+                    # Fall through to ReAct Loop
             
             # Fall back to normal path for skills without scripts or complex tasks
             # Get skill metadata - CRITICAL DEBUG POINT
@@ -622,6 +785,17 @@ class Orchestrator:
         
         if analysis.needs_plan:
             try:
+                # 🔥 DEBUG: Log entry point
+                logger.info(
+                    "Attempting plan generation",
+                    extra={
+                        "session_id": session_id,
+                        "needs_plan": analysis.needs_plan,
+                        "skill_name": skill_name,
+                        "matched_skills_count": len(analysis.matched_skills) if hasattr(analysis, 'matched_skills') else 0,
+                    }
+                )
+                
                 # Check if skill is specified - use Structured Planner v2.0
                 if skill_name and analysis.matched_skills:
                     logger.info(
@@ -635,6 +809,7 @@ class Orchestrator:
                     structured_plan = await structured_planner.generate(
                         goal=user_message,
                         skill_name=skill_name,
+                        workspace_path=str(self.workspace_path),  # 🔥 NEW: Pass workspace path
                     )
                     
                     # Initialize validators
@@ -663,36 +838,79 @@ class Orchestrator:
                             "milestones_count": len(structured_plan.milestones),
                         }
                     )
-                else:
-                    # Use StructuredPlanner as fallback
-                    structured_planner = self._get_structured_planner()
-                    plan_result = await structured_planner.generate(
-                        goal=user_message,
-                    )
-                    plan_text = plan_result.to_prompt()
-                    plan_state = PlanState(
-                        original_plan=plan_text,
-                        current_step=1,
-                        total_steps=len(plan_result.steps),
-                        completed_steps=[],
-                        failed_count=0,
-                        last_adjustment=None,
-                    )
-                    logger.info(
-                        "LightPlan v1.0 generated",
-                        extra={
-                            "session_id": session_id,
-                            "plan_steps": plan_state.total_steps,
-                            "plan_preview": plan_text[:100],
-                        }
-                    )
+                
+                # ✅ 统一使用 StructuredPlanner，移除 LightPlanner fallback
+                structured_planner = self._get_structured_planner()
+                structured_plan = await structured_planner.generate(
+                    goal=user_message,
+                    skill_name=skill_name,
+                    workspace_path=str(self.workspace_path),  # 🔥 NEW: Pass workspace path
+                )
+                plan_text = structured_plan.to_prompt()
+                plan_state = PlanState(
+                    original_plan=plan_text,
+                    current_step=1,
+                    total_steps=len(structured_plan.steps),
+                    completed_steps=[],
+                    failed_count=0,
+                    last_adjustment=None,
+                    structured_plan=structured_plan,  # ✅ Store reference for tool constraints
+                )
+                logger.info(
+                    "StructuredPlan v2.0 generated",
+                    extra={
+                        "session_id": session_id,
+                        "skill_binding": structured_plan.skill_binding,
+                        "tool_constraints": structured_plan.tool_constraints,
+                        "steps_count": len(structured_plan.steps),
+                        "milestones_count": len(structured_plan.milestones),
+                    }
+                )
                 
                 yield {
                     "type": ORCH_EVENT_PLAN_GENERATED,
                     "plan": plan_text,
                     "is_structured": structured_plan is not None,
                 }
+                
+                # 🔥 FIX: Cache the PlanState for future tool confirmations
+                self._plan_state_cache[session_id] = plan_state
+                logger.info(
+                    "Cached PlanState for session",
+                    extra={
+                        "session_id": session_id,
+                        "steps_count": len(structured_plan.steps) if structured_plan else 0,
+                    }
+                )
+                
+                # 🔥 NEW: Save PlanState to file for persistence across restarts
+                try:
+                    saved = self._plan_persistence.save_plan(session_id, plan_state)
+                    if saved:
+                        logger.info(
+                            "Plan saved to file",
+                            extra={
+                                "session_id": session_id,
+                                "workspace": str(self.workspace_path),
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to save plan to file, continuing with memory cache only",
+                        extra={"session_id": session_id, "error": str(e)}
+                    )
             except Exception as e:
+                import traceback
+                tb_str = traceback.format_exc()
+                logger.error(
+                    "Plan generation failed with KeyError",
+                    extra={
+                        "session_id": session_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "traceback_lines": tb_str.split('\n'),
+                    }
+                )
                 logger.warning(
                     "Plan generation failed, continuing without plan",
                     extra={
@@ -727,8 +945,7 @@ class Orchestrator:
                 tools=self._tool_manager.get_all_tools(),
                 session_id=session_id,
                 skill_context=self._current_skill_context,  # Phase 2 - Pass skill context for tool restrictions
-                plan_state=plan_state,  # 🔥 NEW: Pass plan state for structured plan execution
-                original_goal=user_message,  # 🔥 NEW: Pass original goal for completion verification
+                plan_state=plan_state,  # NEW: Pass plan state for structured plan tool constraints
             ):
                 event_type = event.get("type")
                 
@@ -818,6 +1035,31 @@ class Orchestrator:
                             success=success,
                             output=output,
                         )
+                        
+                        # ✅ 新增：更新当前步骤索引（如果工具执行成功）
+                        if success and self._tool_validator and hasattr(self._tool_validator, 'update_current_step'):
+                            logger.debug(
+                                "Attempting to update step index",
+                                extra={
+                                    "tool_name": tool_name,
+                                    "has_plan": bool(plan_state.structured_plan),
+                                    "steps_count": len(plan_state.structured_plan.steps) if plan_state.structured_plan else 0,
+                                }
+                            )
+                            # 找到对应的步骤 ID 并更新
+                            if plan_state.structured_plan:
+                                for step in plan_state.structured_plan.steps:
+                                    if step.tool == tool_name:
+                                        logger.info(
+                                            "Found matching step, updating index",
+                                            extra={
+                                                "step_id": step.id,
+                                                "step_name": step.name,
+                                                "tool_name": tool_name,
+                                            }
+                                        )
+                                        self._tool_validator.update_current_step(step.id)
+                                        break
                         
                         # ===== StructuredPlan v2.0: Milestone Validation =====
                         if self._milestone_validator and hasattr(self._milestone_validator, 'plan'):
@@ -960,23 +1202,6 @@ class Orchestrator:
                         "confirmation_id": event.get("confirmation_id"),
                         "command": event.get("command"),
                     }
-                
-                # 🔥 NEW: Forward problem_guidance events to frontend (main loop)
-                elif event_type == "problem_guidance":
-                    logger.info(
-                        "🚀 Main loop: Forwarding problem_guidance to frontend",
-                        extra={
-                            "session_id": session_id,
-                            "guidance_type": event.get("data", {}).get("type"),
-                            "has_data": "data" in event,
-                        }
-                    )
-                    yield {
-                        "type": "problem_guidance",
-                        "data": event.get("data"),
-                        "session_id": session_id,
-                    }
-                    
                 elif event_type == REACT_EVENT_ERROR:
                     error_msg = event.get("error", "Unknown error")
                     
@@ -1007,23 +1232,24 @@ class Orchestrator:
                         }
                         # Generate plan and continue execution with plan injection
                         try:
-                            # Use StructuredPlanner instead of LightPlanner
                             structured_planner = self._get_structured_planner()
-                            plan_result = await structured_planner.generate(
+                            structured_plan = await structured_planner.generate(
                                 goal=user_message,
+                                skill_name=skill_name,
+                                workspace_path=str(self.workspace_path),  # 🔥 FIX: Pass workspace path
                             )
-                            plan_text = plan_result.to_prompt()
+                            plan_text = structured_plan.to_prompt()
                             
                             # Create or update plan state
                             if plan_state:
                                 self._plan_context.record_replan(plan_state, "max_iterations_reached")
                                 plan_state.original_plan = plan_text
-                                plan_state.total_steps = len(plan_result.steps)
+                                plan_state.total_steps = plan_text.count("\n") + 1
                             else:
                                 plan_state = PlanState(
                                     original_plan=plan_text,
                                     current_step=1,
-                                    total_steps=len(plan_result.steps),
+                                    total_steps=plan_text.count("\n") + 1,
                                     completed_steps=[],
                                     failed_count=0,
                                     last_adjustment=None,
@@ -1063,9 +1289,24 @@ class Orchestrator:
                                 skill_context_msg=skill_context_msg,
                             )
                             
-                            # Temporarily increase max_iterations for Plan Mode execution
+                            # ✅ OPTIMIZE: Temporarily increase max_iterations for Plan Mode execution (reduced from 10 to 7)
                             original_max_iterations = self._react_loop.max_iterations
-                            self._react_loop.max_iterations = 10  # More iterations for complex plan execution
+                            self._react_loop.max_iterations = 7  # Limited iterations for plan execution
+                            
+                            # ✅ OPTIMIZE: Initialize Plan Mode monitor for emergency braking
+                            self._plan_monitor = PlanModeMonitor(
+                                max_reflections=3,
+                                max_same_step_iterations=5,
+                                max_execution_time_seconds=60,
+                            )
+                            logger.info(
+                                "Plan Mode monitor initialized",
+                                extra={
+                                    "session_id": session_id,
+                                    "max_reflections": 3,
+                                    "max_same_step_iterations": 5,
+                                }
+                            )
                             
                             try:
                                 # Call LLM again with plan-injected system prompt and run ReAct loop
@@ -1074,7 +1315,7 @@ class Orchestrator:
                                     tools=self._tool_manager.get_all_tools(),
                                     session_id=session_id,
                                     skill_context=self._current_skill_context,  # Phase 2
-                                    original_goal=user_message,  # 🔥 NEW: Pass original goal for completion verification
+                                    plan_state=plan_state,  # NEW: Pass plan state for tool constraints
                                 ):
                                     event_type = event.get("type")
                                     
@@ -1085,10 +1326,30 @@ class Orchestrator:
                                         }
                                     elif event_type == "tool_call":
                                         tool_call_id = event.get("tool_call_id")
+                                        tool_name = event.get("name")
+                                        arguments = event.get("arguments", {})
+                                        
+                                        # ✅ FIX: Validate and correct tool parameters
+                                        if arguments and isinstance(arguments, dict):
+                                            # Fix known parameter mismatches
+                                            corrected_args = self._correct_tool_parameters(tool_name, arguments)
+                                            if corrected_args != arguments:
+                                                logger.info(
+                                                    "Tool parameters corrected",
+                                                    extra={
+                                                        "session_id": session_id,
+                                                        "tool_name": tool_name,
+                                                        "original_keys": list(arguments.keys()),
+                                                        "corrected_keys": list(corrected_args.keys()),
+                                                    }
+                                                )
+                                                # Update event with corrected arguments
+                                                event["arguments"] = corrected_args
+                                            
                                         yield {
                                             "type": ORCH_EVENT_TOOL_CALL,
                                             "tool_call_id": tool_call_id,
-                                            "name": event.get("name"),
+                                            "name": tool_name,
                                             "arguments": event.get("arguments"),
                                         }
                                     elif event_type == "tool_result":
@@ -1098,6 +1359,44 @@ class Orchestrator:
                                             "success": event.get("success"),
                                             "output": event.get("output", ""),
                                             "error": event.get("error"),
+                                        }
+                                        
+                                        # ✅ OPTIMIZE: Record tool call in monitor
+                                        if self._plan_monitor:
+                                            self._plan_monitor.record_tool_call(
+                                                event.get("name", "unknown"),
+                                                event.get("success", False)
+                                            )
+                                    
+                                    elif event_type == REACT_EVENT_REFLECTION:
+                                        # ✅ OPTIMIZE: Check if we should abort via monitor
+                                        if self._plan_monitor and plan_state:
+                                            status = self._plan_monitor.record_reflection(plan_state)
+                                            
+                                            if status in [PlanModeStatus.ABORT_NO_PROGRESS, PlanModeStatus.ABORT_TIME_LIMIT]:
+                                                # Emergency braking!
+                                                logger.warning(
+                                                    "Plan Mode emergency braking triggered",
+                                                    extra={
+                                                        "session_id": session_id,
+                                                        "status": status.value,
+                                                        "report": self._plan_monitor.get_status_report(),
+                                                    }
+                                                )
+                                                
+                                                # Yield error to user
+                                                yield {
+                                                    "type": ORCH_EVENT_ERROR,
+                                                    "error": self._plan_monitor.create_abort_message(status),
+                                                }
+                                                
+                                                # Break out of ReAct loop
+                                                break
+                                        
+                                        # Forward reflection event
+                                        yield {
+                                            "type": ORCH_EVENT_CHUNK,
+                                            "content": f"\n{event.get('content', '')}\n",
                                         }
                                 
                                 # Update final response (empty since we streamed events)
@@ -1113,6 +1412,36 @@ class Orchestrator:
                                         "max_iterations": self._react_loop.max_iterations,
                                     }
                                 )
+                                
+                                # ✅ OPTIMIZE: Extract and record lesson learned if error was corrected
+                                if hasattr(self, '_plan_monitor') and self._plan_monitor:
+                                    try:
+                                        from ..services.error_learning import get_error_learning_service
+                                        
+                                        error_learning_service = get_error_learning_service(self._llm_router)
+                                        
+                                        # Check if there were errors that got corrected
+                                        report = self._plan_monitor.get_status_report()
+                                        if report.get('failed_attempts', 0) > 0:
+                                            # Extract lesson from the experience
+                                            correction_summary = f"""在 Plan Mode 执行中遇到错误并尝试纠正：
+- 反思次数：{report.get('reflection_count', 0)}
+- 失败尝试：{report.get('failed_attempts', 0)}
+- 当前步骤：Step {report.get('current_step', 0)}
+- 状态：{report.get('status', 'unknown')}"""
+                                            
+                                            logger.info(
+                                                "Extracting lesson from Plan Mode error correction",
+                                                extra={
+                                                    "session_id": session_id,
+                                                    "correction_summary": correction_summary,
+                                                }
+                                            )
+                                    except Exception as e:
+                                        logger.debug(
+                                            "Failed to extract lesson from Plan Mode",
+                                            extra={"error": str(e)}
+                                        )
                         
                         except Exception as e:
                             logger.warning(
@@ -1139,6 +1468,14 @@ class Orchestrator:
         # Step 6: Memory Writing
         if final_response:
             await self._write_memory(user_message, final_response, session_id)
+        
+        # 🔥 NEW: Clean up plan file after successful completion (optional)
+        # Uncomment if you want to auto-delete plans after completion
+        # try:
+        #     self._plan_persistence.delete_plan(session_id)
+        #     logger.info("Plan file cleaned up after completion", extra={"session_id": session_id})
+        # except Exception as e:
+        #     logger.warning(f"Failed to clean up plan file: {e}")
         
         # ===== SCHEME 3: Post-execution validation =====
         # Check if user request required file operations but none were detected
@@ -1209,8 +1546,34 @@ class Orchestrator:
         relevant_memories: list[str] | None = None,
         session_id: str | None = None,
         plan_state: PlanState | None = None,
-        skill_context_msg: dict | None = None,  # Phase 2 - Skill invocation context
+        skill_context_msg: dict | None = None,
     ) -> tuple[list, dict]:
+        """Build message list for LLM with session history and compression.
+        
+        REFACTORED: Now delegates to MessageBuilder component.
+        
+        Args:
+            context: Loaded context bundle
+            user_message: User's message
+            policy: Policy bundle (not used anymore, kept for compatibility)
+            relevant_memories: Retrieved relevant memories
+            session_id: Session ID for loading conversation history
+            plan_state: Current plan state
+            skill_context_msg: Skill invocation context message
+            
+        Returns:
+            Tuple of (messages list for LLM, compression info dict)
+        """
+        return await self._message_builder.build_messages(
+            context=context,
+            user_message=user_message,
+            relevant_memories=relevant_memories,
+            session_id=session_id,
+            plan_state=plan_state,
+            skill_context_msg=skill_context_msg,
+            session_manager=self._get_session_manager(),
+        )
+    
         """Build message list for LLM with session history and compression.
 
         Args:
@@ -1664,6 +2027,34 @@ class Orchestrator:
             return steps[plan_state.current_step - 1]
         return None
     
+    def _correct_tool_parameters(self, tool_name: str, arguments: dict) -> dict:
+        """Correct known tool parameter mismatches to prevent execution failures.
+        
+        Args:
+            tool_name: Name of the tool
+            arguments: Original arguments from LLM
+            
+        Returns:
+            Corrected arguments dictionary
+        """
+        corrected = arguments.copy()
+        
+        # Fix search_files tool parameter mismatch
+        # LLM often uses 'search_dir' but the tool expects 'path'
+        if tool_name == "search_files" and "search_dir" in corrected:
+            corrected["path"] = corrected.pop("search_dir")
+            logger.debug(
+                "Fixed search_files parameter: search_dir -> path",
+                extra={"tool_name": tool_name}
+            )
+        
+        # Add more parameter corrections here as needed
+        # Example pattern:
+        # if tool_name == "some_tool" and "wrong_param" in corrected:
+        #     corrected["correct_param"] = corrected.pop("wrong_param")
+        
+        return corrected
+    
     def _build_validation_context(
         self,
         tool_name: str,
@@ -1749,93 +2140,8 @@ def reset_orchestrator() -> None:
     _orchestrator = None
 
 
-async def _execute_skill_directly(
-    tool_manager,
-    skill,
-    arguments: str,
-    session_id: str
-) -> AsyncGenerator[dict, None]:
-    """Execute skill's CLI command directly without ReAct loop.
-    
-    Args:
-        tool_manager: ToolManager instance
-        skill: SkillMetadata object
-        arguments: Skill arguments string (will be used as CLI command arguments)
-        session_id: Session ID for logging
-        
-    Yields:
-        Event dictionaries
-    """
-    from src.models.skill import SkillMetadata
-    
-    logger.info(
-        "Direct skill execution started",
-        extra={
-            "skill_name": skill.name,
-            "arguments": arguments,
-        }
-    )
-    
-    # Build CLI command from skill name and arguments
-    # The CLI command format depends on the specific skill
-    # Example: "input.pdf output.docx" → "pdftotext input.pdf output.docx"
-    cli_command = f"{skill.name}-cli {arguments}"  # Placeholder - actual command depends on skill
-    
-    logger.info(
-        "Executing CLI command",
-        extra={
-            "command": cli_command,
-            "skill_name": skill.name,
-        }
-    )
-    
-    try:
-        # Execute CLI command directly
-        result = await tool_manager.execute(
-            "run_in_terminal",
-            {"command": cli_command},
-            skill_context=skill,
-        )
-        
-        # Yield tool call event
-        yield {
-            "type": ORCH_EVENT_TOOL_CALL,
-            "tool_call_id": f"direct_{skill.name}",
-            "name": "run_in_terminal",
-            "arguments": {"command": cli_command},
-        }
-        
-        # Yield tool result event
-        yield {
-            "type": ORCH_EVENT_TOOL_RESULT,
-            "tool_call_id": f"direct_{skill.name}",
-            "tool_name": "run_in_terminal",
-            "success": result.success,
-            "output": result.output,
-            "error": result.error,
-        }
-        
-        # Yield final answer
-        if result.success:
-            yield {
-                "type": ORCH_EVENT_FINAL,
-                "content": f"✅ 技能 '{skill.name}' 执行成功:\n\n{result.output}",
-            }
-        else:
-            yield {
-                "type": ORCH_EVENT_FINAL,
-                "content": f"❌ 技能 '{skill.name}' 执行失败:\n\n{result.error or result.output}",
-            }
-            
-    except Exception as e:
-        logger.error(
-            "Direct skill execution failed",
-            extra={
-                "skill_name": skill.name,
-                "error": str(e),
-            }
-        )
-        yield {
-            "type": ORCH_EVENT_ERROR,
-            "error": f"技能执行失败：{str(e)}",
-        }
+# Note: _execute_skill_directly() has been removed.
+# Fast Path is disabled due to hardcoded CLI command generation being unsafe.
+# All skill execution now goes through ReAct Loop, which reads SKILL.md
+# for proper command interpretation.
+# Future: Implement proper CLI command metadata parsing from SKILL.md
