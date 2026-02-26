@@ -138,7 +138,22 @@ class TaskAnalyzer:
             TaskAnalysis: LLM 分析结果，如果 LLM 判断失败则返回 None
         """
         try:
-            from ...main import get_llm_router  # 🔥 FIX: Import from main.py
+            # 🔥 FIX 1: Handle simple greetings without LLM call
+            simple_greetings = ["你好", "您好", "hello", "hi", "早上好", "中午好", "晚上好", "再见", "bye"]
+            if any(greeting in user_message.lower() for greeting in simple_greetings):
+                logger.info("Simple greeting detected, no need for complex analysis")
+                return TaskAnalysis(
+                    complexity="simple",
+                    confidence=0.95,
+                    indicators=["simple_greeting"],
+                    needs_plan=False,
+                    matched_skills=[],
+                    recommended_skill=None,
+                    analysis_method="rule_based",
+                )
+            
+            # 🔥 FIX 2: Use absolute import instead of relative import
+            from src.services.llm.router import get_llm_router
             llm_router = get_llm_router()
             
             # 构建 prompt
