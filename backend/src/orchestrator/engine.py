@@ -1185,11 +1185,31 @@ class Orchestrator:
                         "result": result,
                     }
                 elif event_type == REACT_EVENT_FINAL:
+                    # 🔍 CRITICAL DEBUG: Log final_answer event details
+                    logger.info(
+                        "🔴 FINAL_ANSWER received from ReAct Loop",
+                        extra={
+                            "session_id": session_id,
+                            "content_length": len(event.get("content", "")),
+                            "content_preview": str(event.get("content", ""))[:200],
+                        }
+                    )
+                    
                     final_response = event.get("content", "")
                     final_response = self.response_guard.process(
                         final_response,
                         policy.soft_guidelines,
                     )
+                    
+                    # 🔍 CRITICAL DEBUG: Log after processing
+                    logger.info(
+                        "🟢 FINAL_ANSWER forwarded to WebSocket",
+                        extra={
+                            "session_id": session_id,
+                            "final_response_length": len(final_response),
+                        }
+                    )
+                    
                     yield {
                         "type": ORCH_EVENT_FINAL,
                         "content": final_response,
@@ -1318,6 +1338,17 @@ class Orchestrator:
                                     plan_state=plan_state,  # NEW: Pass plan state for tool constraints
                                 ):
                                     event_type = event.get("type")
+                                    
+                                    # 🔍 CRITICAL DEBUG: Log ALL events from Plan Mode ReAct Loop
+                                    logger.info(
+                                        "🔍 Plan Mode ReAct Loop event",
+                                        extra={
+                                            "session_id": session_id,
+                                            "event_type": event_type,
+                                            "event_keys": list(event.keys()),
+                                            "content_preview": str(event.get("content", ""))[:100] if event.get("content") else None,
+                                        }
+                                    )
                                     
                                     if event_type == REACT_EVENT_THINKING:
                                         yield {
