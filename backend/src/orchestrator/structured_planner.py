@@ -15,13 +15,6 @@ from ..services.llm.router import LLMRouter
 from ..services.skill_registry import SkillRegistry
 from ..utils.logger import get_logger
 
-# 🔥 NEW: Constants for progressive disclosure (replacing magic numbers)
-MAX_OVERVIEW_LENGTH = 300
-MAX_USAGE_LENGTH = 500
-MAX_EXAMPLE_LENGTH = 400
-MAX_WARNING_LENGTH = 300
-MAX_GOAL_PREVIEW_LENGTH = 50
-
 logger = get_logger(__name__)
 
 
@@ -435,68 +428,30 @@ class StructuredPlanner:
         
         return None
     
-    def _extract_section_by_patterns(
-        self,
-        skill_md_content: str,
-        patterns: list[tuple[str, str]],
-        max_length: int,
-        section_type: str
-    ) -> str:
-        """通用方法：根据模式提取章节（避免代码重复）
+    def _extract_planner_guidance(self, skill_md_content: str, skill_name: str, goal: str) -> str:
+        """Phase 1: Planner 阶段 - 提供 Skill 名称和描述
         
-        Args:
-            skill_md_content: SKILL.md 内容
-            patterns: 正则表达式模式列表 [(pattern, title), ...]
-            max_length: 最大长度限制
-            section_type: 章节类型（用于日志记录）
-            
-        Returns:
-            提取的章节内容
+        从 SKILL.md 中提取技能的基本信息和功能描述。
         """
         import re
         
-        for pattern, title in patterns:
+        # 尝试提取技能概述部分
+        overview_patterns = [
+            r'^#\s*(.+?)\n',  # 一级标题
+            r'^##\s*Overview[\s\S]*?(?=^##|\Z)',  # Overview 章节
+            r'^##\s*简介[\s\S]*?(?=^##|\Z)',  # 简介章节
+            r'^##\s*Description[\s\S]*?(?=^##|\Z)',  # 描述章节
+        ]
+        
+        for pattern in overview_patterns:
             match = re.search(pattern, skill_md_content, re.MULTILINE | re.IGNORECASE)
             if match:
                 content = match.group(0).strip()
-                # 限制长度
-                if len(content) > max_length:
-                    content = content[:max_length] + "..."
-                
-                logger.debug(
-                    f"Extracted {section_type} section",
-                    extra={
-                        "title": title,
-                        "length": len(content),
-                    }
-                )
-                return f"\n\n## {title}\n{content}"
+                # 限制长度在 300 字符以内
+                if len(content) > 300:
+                    content = content[:300] + "..."
+                return f"\n\n## 📋 技能概述\n{content}"
         
-        return ""
-    
-    def _extract_planner_guidance(self, skill_md_content: str, skill_name: str, goal: str) -> str:
-        """Phase 1: Planner 阶段 - 提供 Skill 名称和描述
-            
-        从 SKILL.md 中提取技能的基本信息和功能描述。
-        """
-        # 尝试提取技能概述部分
-        overview_patterns = [
-            (r'^#\s*(.+?)\n', "📋 技能概述"),
-            (r'^##\s*Overview[\s\S]*?(?=^##|\Z)', "📋 Overview"),
-            (r'^##\s*简介 [\s\S]*?(?=^##|\Z)', "📋 简介"),
-            (r'^##\s*Description[\s\S]*?(?=^##|\Z)', "📋 Description"),
-        ]
-            
-        result = self._extract_section_by_patterns(
-            skill_md_content,
-            overview_patterns,
-            MAX_OVERVIEW_LENGTH,
-            "planner"
-        )
-            
-        if result:
-            return result
-            
         # 如果没有找到概述，返回简单的技能名称
         return f"\n\n## 📋 技能：{skill_name}"
     
@@ -505,60 +460,97 @@ class StructuredPlanner:
         
         从 SKILL.md 中提取工具的输入输出格式、允许的工具列表等约束信息。
         """
+        import re
+        
+        guidance_parts = []
+        
         # 查找 Usage/Commands/CLI 相关章节
         usage_patterns = [
-            (r'^##\s*Usage[\s\S]*?(?=^##|\Z)', "🔧 Usage"),
-            (r'^##\s*Commands[\s\S]*?(?=^##|\Z)', "🔧 Commands"),
-            (r'^##\s*CLI[\s\S]*?(?=^##|\Z)', "🔧 CLI"),
-            (r'^##\s*How to use[\s\S]*?(?=^##|\Z)', "🔧 How to use"),
+            (r'^##\s*Usage[\s\S]*?(?=^##|\Z)', "使用方法"),
+            (r'^##\s*Commands[\s\S]*?(?=^##|\Z)', "命令"),
+            (r'^##\s*CLI[\s\S]*?(?=^##|\Z)', "命令行接口"),
+            (r'^##\s*How to use[\s\S]*?(?=^##|\Z)', "如何使用"),
         ]
         
-        return self._extract_section_by_patterns(
-            skill_md_content,
-            usage_patterns,
-            MAX_USAGE_LENGTH,
-            "router"
-        ) or ""
+        for pattern, title in usage_patterns:
+            match = re.search(pattern, skill_md_content, re.MULTILINE | re.IGNORECASE)
+            if match:
+                content = match.group(0).strip()
+                # 提取关键命令格式（前 500 字符）
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                guidance_parts.append(f"\n\n## 🔧 {title}\n{content}")
+                break
+        
+        # 如果有多个部分，只取第一个匹配的
+        if guidance_parts:
+            return "\n".join(guidance_parts)
+        
+        return ""
     
     def _extract_task_execution_guidance(self, skill_md_content: str, skill_name: str, goal: str) -> str:
         """Phase 3: Task 执行阶段 - 提供信例和调用细节
         
         从 SKILL.md 中提取具体的示例、最佳实践和调用细节。
         """
-        # 查找 Examples/Best Practices 相关章节
+        import re
+        
+        guidance_parts = []
+        
+        # 查找 Examples/Examples/Best Practices 相关章节
         example_patterns = [
-            (r'^##\s*Examples[\s\S]*?(?=^##|\Z)', "📖 Examples"),
-            (r'^###\s*Example[\s\S]*?(?=^###|\Z)', "📖 Example"),
-            (r'^##\s*Best Practices[\s\S]*?(?=^##|\Z)', "📖 Best Practices"),
+            (r'^##\s*Examples[\s\S]*?(?=^##|\Z)', "示例"),
+            (r'^###\s*Example[\s\S]*?(?=^###|\Z)', "示例"),
+            (r'^##\s*Best Practices[\s\S]*?(?=^##|\Z)', "最佳实践"),
         ]
         
-        return self._extract_section_by_patterns(
-            skill_md_content,
-            example_patterns,
-            MAX_EXAMPLE_LENGTH,
-            "task_execution"
-        ) or ""
+        for pattern, title in example_patterns:
+            match = re.search(pattern, skill_md_content, re.MULTILINE | re.IGNORECASE)
+            if match:
+                content = match.group(0).strip()
+                # 限制示例长度在 400 字符
+                if len(content) > 400:
+                    content = content[:400] + "..."
+                guidance_parts.append(f"\n\n## 📖 {title}\n{content}")
+                break
+        
+        if guidance_parts:
+            return "\n".join(guidance_parts)
+        
+        return ""
     
     def _extract_reflection_guidance(self, skill_md_content: str, skill_name: str, goal: str) -> str:
         """Phase 4: Reflection 阶段 - 补充限制和提示
         
         从 SKILL.md 中提取注意事项、限制条件、常见错误等反思信息。
         """
+        import re
+        
+        guidance_parts = []
+        
         # 查找 Warnings/Caveats/Limitations/Tips 相关章节
         warning_patterns = [
-            (r'^##\s*Warnings[\s\S]*?(?=^##|\Z)', "⚠️ Warnings"),
-            (r'^##\s*Caveats[\s\S]*?(?=^##|\Z)', "⚠️ Caveats"),
-            (r'^##\s*Limitations[\s\S]*?(?=^##|\Z)', "⚠️ Limitations"),
-            (r'^##\s*Troubleshooting[\s\S]*?(?=^##|\Z)', "⚠️ Troubleshooting"),
-            (r'^##\s*Tips[\s\S]*?(?=^##|\Z)', "💡 Tips"),
+            (r'^##\s*Warnings[\s\S]*?(?=^##|\Z)', "警告"),
+            (r'^##\s*Caveats[\s\S]*?(?=^##|\Z)', "注意事项"),
+            (r'^##\s*Limitations[\s\S]*?(?=^##|\Z)', "限制"),
+            (r'^##\s*Troubleshooting[\s\S]*?(?=^##|\Z)', "故障排除"),
+            (r'^##\s*Tips[\s\S]*?(?=^##|\Z)', "提示"),
         ]
         
-        return self._extract_section_by_patterns(
-            skill_md_content,
-            warning_patterns,
-            MAX_WARNING_LENGTH,
-            "reflection"
-        ) or ""
+        for pattern, title in warning_patterns:
+            match = re.search(pattern, skill_md_content, re.MULTILINE | re.IGNORECASE)
+            if match:
+                content = match.group(0).strip()
+                # 限制警告信息长度在 300 字符
+                if len(content) > 300:
+                    content = content[:300] + "..."
+                guidance_parts.append(f"\n\n## ⚠️ {title}\n{content}")
+                break
+        
+        if guidance_parts:
+            return "\n".join(guidance_parts)
+        
+        return ""
     
     def _detect_task_type(self, goal: str) -> tuple[str, dict]:
         """检测任务类型并返回对应的工具约束
@@ -700,12 +692,9 @@ class StructuredPlanner:
                     # 🔥 通用逻辑：直接使用技能的 allowed_tools，不再特殊处理某个技能
                     allowed_tools = list(skill.allowed_tools)
                     
-                    # ✅ FIX: 从技能元数据中动态获取 forbidden_tools，不再硬编码
-                    forbidden_tools = getattr(skill, 'forbidden_tools', [])
-                    
                     tool_constraints = ToolConstraints(
                         allowed=allowed_tools,
-                        forbidden=forbidden_tools,
+                        forbidden=[t for t in ["web_search", "pdf", "pptx"] if t not in allowed_tools],
                         source="skill",  # ✅ 标记为来自技能
                         priority=5,  # ✅ Skill 约束中等优先级
                     )
@@ -714,7 +703,7 @@ class StructuredPlanner:
                         extra={
                             "skill": skill.name,
                             "allowed": allowed_tools,
-                            "forbidden": forbidden_tools,
+                            "forbidden": tool_constraints.forbidden,
                         }
                     )
         else:
