@@ -1,0 +1,12 @@
+"""Agent Core API.
+
+对外接口，包括 WebSocket 端点和 REST API。
+"""
+
+from .websocket import router as agent_websocket_router
+from .converters import convert_event_to_websocket
+
+__all__ = [
+    "agent_websocket_router",
+    "convert_event_to_websocket",
+]

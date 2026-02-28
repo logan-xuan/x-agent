@@ -18,6 +18,10 @@ interface UseWebSocketReturn {
   send: (data: unknown) => void;
 }
 
+// 全局连接缓存，用于处理 React StrictMode 双重挂载
+const connectionCache = new Map<string, WebSocket>();
+const cleanupTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
 export function useWebSocket({
   url,
   onMessage,
@@ -92,6 +96,37 @@ export function useWebSocket({
 
     const connectionId = ++connectionIdRef.current;
 
+    // 取消任何待处理的 cleanup timeout（处理 StrictMode 重新挂载）
+    const existingTimeout = cleanupTimeouts.get(url);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      cleanupTimeouts.delete(url);
+    }
+
+    // 尝试复用缓存的连接
+    const cachedWs = connectionCache.get(url);
+    if (cachedWs && cachedWs.readyState === WebSocket.OPEN) {
+      console.log('[WS_REUSE] Reusing cached connection to:', url);
+      wsRef.current = cachedWs;
+      setStatus('connected');
+
+      // 重新绑定事件处理器
+      cachedWs.onmessage = (event) => {
+        missedHeartbeatsRef.current = 0;
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'pong') return;
+          onMessageRef.current?.(data);
+        } catch (e) {
+          console.error('Failed to parse WebSocket message:', event.data, e);
+        }
+      };
+
+      startHeartbeat();
+      onConnectRef.current?.();
+      return;
+    }
+
     // Check if we already have an open connection to the same URL
     if (wsRef.current?.url === url && wsRef.current?.readyState === WebSocket.OPEN) {
       console.log('[WS_SKIP] Already connected to:', url);
@@ -104,6 +139,7 @@ export function useWebSocket({
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
+    connectionCache.set(url, ws);
 
     ws.onopen = () => {
       console.log('[WS_OPEN] Connection opened');
@@ -157,10 +193,21 @@ export function useWebSocket({
       connectionIdRef.current++;
       clearHeartbeat();
 
-      // Close connection properly
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
+      // 延迟关闭连接，给 StrictMode 重新挂载的机会
+      const timeoutId = setTimeout(() => {
+        cleanupTimeouts.delete(url);
+        const cached = connectionCache.get(url);
+        if (cached === ws) {
+          connectionCache.delete(url);
+        }
+        // Close connection properly
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          console.log('[WS_CLOSE] Closing connection to:', url);
+          ws.close();
+        }
+      }, 100); // 100ms 延迟，足够 StrictMode 重新挂载
+
+      cleanupTimeouts.set(url, timeoutId);
       wsRef.current = null;
     };
   }, [url, heartbeatInterval]);
