@@ -406,8 +406,19 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
                         chunk_type = chunk.get("type")
                         
                         if chunk_type in ("chunk", "message") and "content" in chunk:
-                            # Standard text response
+                            # Standard text response - forward to frontend and accumulate
                             assistant_response += chunk.get("content", "")
+                            # Forward message chunk to frontend
+                            logger.info(
+                                "📤 Sending message chunk to frontend",
+                                extra={
+                                    "trace_id": message_context.trace_id,
+                                    "chunk_type": chunk_type,
+                                    "content_length": len(chunk.get("content", "")),
+                                    "is_finished": chunk.get("is_finished"),
+                                }
+                            )
+                            await websocket.send_json(chunk)
                         
                         elif chunk_type == "thinking":
                             # LLM reasoning - log and forward

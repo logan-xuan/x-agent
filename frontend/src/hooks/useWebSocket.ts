@@ -31,19 +31,19 @@ export function useWebSocket({
   const connectionIdRef = useRef(0);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const missedHeartbeatsRef = useRef(0);
-  
+
   // Store callbacks in refs
   const onMessageRef = useRef(onMessage);
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
   const onErrorRef = useRef(onError);
-  
+
   // Update refs when callbacks change
   onMessageRef.current = onMessage;
   onConnectRef.current = onConnect;
   onDisconnectRef.current = onDisconnect;
   onErrorRef.current = onError;
-  
+
   // Clear heartbeat timer
   const clearHeartbeat = () => {
     if (heartbeatTimerRef.current) {
@@ -51,27 +51,27 @@ export function useWebSocket({
       heartbeatTimerRef.current = null;
     }
   };
-  
+
   // Start heartbeat to detect dead connections
   const startHeartbeat = () => {
     clearHeartbeat();
     missedHeartbeatsRef.current = 0;
-    
+
     heartbeatTimerRef.current = setInterval(() => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         return;
       }
-      
+
       missedHeartbeatsRef.current++;
-      
+
       // If we've missed too many heartbeats, consider connection dead
       if (missedHeartbeatsRef.current > 3) {
         console.warn('WebSocket heartbeat failed, closing connection');
         ws.close();
         return;
       }
-      
+
       // Send ping - server should respond with pong or any message resets the counter
       try {
         ws.send(JSON.stringify({ type: 'ping' }));
@@ -81,7 +81,7 @@ export function useWebSocket({
       }
     }, heartbeatInterval);
   };
-  
+
   // Main connection effect
   useEffect(() => {
     // Don't connect if URL is empty
@@ -89,15 +89,24 @@ export function useWebSocket({
       setStatus('disconnected');
       return;
     }
-    
+
     const connectionId = ++connectionIdRef.current;
-    
+
+    // Check if we already have an open connection to the same URL
+    if (wsRef.current?.url === url && wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('[WS_SKIP] Already connected to:', url);
+      return;
+    }
+
     setStatus('connecting');
-    
+
+    console.log('[WS_CONNECT] Connecting to:', url);
+
     const ws = new WebSocket(url);
     wsRef.current = ws;
-    
+
     ws.onopen = () => {
+      console.log('[WS_OPEN] Connection opened');
       if (connectionId === connectionIdRef.current) {
         setStatus('connected');
         missedHeartbeatsRef.current = 0;
@@ -105,7 +114,7 @@ export function useWebSocket({
         onConnectRef.current?.();
       }
     };
-    
+
     ws.onclose = () => {
       // Always update status if this was our connection
       if (connectionId === connectionIdRef.current) {
@@ -115,35 +124,39 @@ export function useWebSocket({
         onDisconnectRef.current?.();
       }
     };
-    
+
     ws.onerror = (error) => {
       if (connectionId === connectionIdRef.current) {
         onErrorRef.current?.(error);
       }
     };
-    
+
     ws.onmessage = (event) => {
       // Reset heartbeat counter on any message
       missedHeartbeatsRef.current = 0;
-      
+
+      // Debug: log raw WebSocket message
+      console.log('[WS_RAW] Received message:', event.data);
+
       try {
         const data = JSON.parse(event.data);
+        console.log('[WS_PARSED] Parsed data:', data);
         // Ignore pong messages
         if (data.type === 'pong') {
           return;
         }
         onMessageRef.current?.(data);
-      } catch {
-        console.error('Failed to parse WebSocket message:', event.data);
+      } catch (e) {
+        console.error('Failed to parse WebSocket message:', event.data, e);
       }
     };
-    
+
     // Cleanup
     return () => {
       // Mark this connection as stale
       connectionIdRef.current++;
       clearHeartbeat();
-      
+
       // Close connection properly
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
@@ -151,7 +164,7 @@ export function useWebSocket({
       wsRef.current = null;
     };
   }, [url, heartbeatInterval]);
-  
+
   // Send message
   const send = (data: unknown) => {
     const ws = wsRef.current;
@@ -169,14 +182,14 @@ export function useWebSocket({
       console.warn('WebSocket is not connected, cannot send message');
     }
   };
-  
+
   // Monitor online/offline events
   useEffect(() => {
     const handleOnline = () => {
       console.log('Network back online');
       // Status will update when WebSocket reconnects
     };
-    
+
     const handleOffline = () => {
       console.log('Network offline');
       // Immediately mark as disconnected
@@ -185,16 +198,16 @@ export function useWebSocket({
       }
       setStatus('disconnected');
     };
-    
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-  
+
   return {
     status,
     send,

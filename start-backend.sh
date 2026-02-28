@@ -62,7 +62,7 @@ if [ -f ".venv/bin/python" ]; then
 elif [ -f "venv/bin/python" ]; then
     PYTHON_PATH="venv/bin/python"
 else
-    PYTHON_PATH="python"
+    PYTHON_PATH="python3"
 fi
 
 echo "🐍 使用 Python 解释器：$PYTHON_PATH"

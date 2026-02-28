@@ -20,18 +20,18 @@ if [ ! -d "$FRONTEND_DIR" ]; then
     exit 1
 fi
 
-# 读取Vite配置文件中的端口，默认5173
-VITE_CONFIG="$FRONTEND_DIR/vite.config.ts"
+# 读取X-Agent配置文件中的前端端口
+CONFIG_FILE="$SCRIPT_DIR/backend/x-agent.yaml"
 DEFAULT_PORT=5173
 
-# 如果配置文件存在，则尝试从中读取端口
-if [ -f "$VITE_CONFIG" ]; then
-    PORT=$(grep -E "port:" "$VITE_CONFIG" | grep -oE '[0-9]+' | head -1)
+# 从配置文件读取前端端口
+if [ -f "$CONFIG_FILE" ]; then
+    PORT=$(grep -E "^\s*frontend_port:" "$CONFIG_FILE" | awk '{print $2}' | tr -d ' ')
 fi
 
 if [ -z "$PORT" ]; then
     PORT=$DEFAULT_PORT
-    echo "⚠️  未在配置文件中找到端口设置，使用默认端口: $PORT"
+    echo "⚠️  未在配置文件中找到前端端口设置，使用默认端口: $PORT"
 else
     echo "📋 从配置文件读取前端端口: $PORT"
 fi
@@ -55,8 +55,8 @@ fi
 echo "🔧 使用 npm 启动前端开发服务器..."
 echo "🔌 前端服务将在 http://localhost:$PORT 启动"
 
-# 启动前端服务
-nohup npm run dev > frontend.log 2>&1 &
+# 启动前端服务 - 设置环境变量传递端口
+VITE_PORT=$PORT nohup npm run dev > frontend.log 2>&1 &
 
 # 获取后台进程PID
 FRONTEND_PID=$!

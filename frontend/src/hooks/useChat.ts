@@ -1,6 +1,6 @@
 /** Chat state management hook */
 
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useState, useRef, useEffect } from 'react';
 import { Message, Session, ToolCall, WebSocketMessage } from '../types';
 import { useWebSocket, ConnectionStatus } from './useWebSocket';
 
@@ -36,19 +36,19 @@ function formatSystemLogContent(
   switch (logType) {
     case 'cli_command':
       return `🔧 Executing: ${logData.command || 'Unknown command'} (${logData.status || 'running'})`;
-    
+
     case 'tool_execution':
       const status = logData.success ? '✅' : '❌';
       const output = logData.output ? `\n${logData.output}` : '';
       const error = logData.error ? `\nError: ${logData.error}` : '';
       return `${status} Completed${output}${error}`;
-    
+
     case 'error':
       return `⚠️ System Error: ${logData.error || 'Unknown error'}`;
-    
+
     case 'info':
       return `ℹ️ ${logData.message || 'System info'}`;
-    
+
     default:
       return `[System:${logType}] ${JSON.stringify(logData)}`;
   }
@@ -56,7 +56,7 @@ function formatSystemLogContent(
 
 export function useChat({
   sessionId,
-  wsBaseUrl = 'ws://localhost:8000/ws',
+  wsBaseUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8888/ws',
 }: UseChatOptions): UseChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -70,18 +70,23 @@ export function useChat({
   // WebSocket URL - connection is automatic when url changes
   const wsUrl = currentSessionId ? `${wsBaseUrl}/chat/${currentSessionId}` : '';
 
+  // Log URL only once on mount or when sessionId changes
+  useEffect(() => {
+    console.log('[WS_URL] WebSocket URL:', { wsUrl, currentSessionId, wsBaseUrl });
+  }, [currentSessionId]);
+
   // Handle incoming WebSocket messages
   const handleWebSocketMessage = useCallback((data: unknown) => {
     // Enhanced debug logging - log ALL messages with type info
     console.log('[WS_MESSAGE] Raw data type:', typeof data);
     console.log('[WS_MESSAGE] Raw data:', JSON.stringify(data, null, 2));
-    
+
     // Defensive check: ensure data is a valid object
     if (!data || typeof data !== 'object') {
       console.error('[WS_MESSAGE] Invalid message format:', data);
       return;
     }
-    
+
     const msg = data as Record<string, unknown> & {
       type: string;
       content?: string;
@@ -97,7 +102,7 @@ export function useChat({
       log_type?: 'cli_command' | 'tool_execution' | 'error' | 'info';
       log_data?: Record<string, unknown>;
     };
-    
+
     // Validate message type
     if (!msg.type || typeof msg.type !== 'string') {
       console.error('[WS_MESSAGE] Message missing type field:', msg);
@@ -111,7 +116,7 @@ export function useChat({
     if (msg.type === 'tool_call' || msg.type === 'tool_result' || msg.type === 'awaiting_confirmation') {
       console.log('[DEBUG] WebSocket message:', msg.type, msg);
     }
-    
+
     // Debug logging for compression status
     if (msg.type === 'compression_status') {
       console.log('[DEBUG] Compression status:', {
@@ -208,7 +213,7 @@ export function useChat({
           // Update the streaming message to show tool call
           setMessages(prev => {
             const lastMsg = prev[prev.length - 1];
-            
+
             // If last message is assistant, append tool call to it
             if (lastMsg && lastMsg.role === 'assistant') {
               const updatedMsg: Message = {
@@ -219,7 +224,7 @@ export function useChat({
               };
               return [...prev.slice(0, -1), updatedMsg];
             }
-            
+
             // Otherwise create a new assistant message with the tool call
             const newAssistantMsg: Message = {
               id: `assistant-${Date.now()}`,
@@ -241,14 +246,14 @@ export function useChat({
           success: msg.success,
           result: msg.result,
         });
-        
+
         if (msg.tool_call_id) {
           // Determine status based on result metadata
           const resultData = typeof msg.result === 'object' && msg.result !== null ? msg.result as Record<string, unknown> : null;
           let newStatus: ToolCall['status'] = msg.success ? 'completed' : 'error';
-          
+
           console.log('[DEBUG] resultData:', resultData);
-          
+
           if (resultData?.requires_confirmation) {
             newStatus = 'needs_confirmation';
             // Stop loading since we're waiting for user confirmation
@@ -258,18 +263,18 @@ export function useChat({
           } else if (resultData?.is_blocked) {
             newStatus = 'blocked';
           }
-          
+
           const existingCall = pendingToolCallsRef.current.get(msg.tool_call_id);
           const updatedCall: ToolCall = existingCall
             ? { ...existingCall, status: newStatus, result: msg.result as any }
             : {
-                id: msg.tool_call_id,
-                name: 'run_in_terminal' as const,
-                arguments: { command: ((resultData as any)?.command as string) || '' },
-                status: newStatus,
-                result: msg.result as any,
-              };
-          
+              id: msg.tool_call_id,
+              name: 'run_in_terminal' as const,
+              arguments: { command: ((resultData as any)?.command as string) || '' },
+              status: newStatus,
+              result: msg.result as any,
+            };
+
           pendingToolCallsRef.current.set(msg.tool_call_id, updatedCall);
 
           // Update the message with the tool result
@@ -312,7 +317,7 @@ export function useChat({
             ...msg.log_data,
           },
         };
-        
+
         setMessages(prev => [...prev, systemMessage]);
         break;
 
@@ -330,7 +335,7 @@ export function useChat({
         } catch (e) {
           errorDisplay = `Error processing error message: ${e}`;
         }
-        
+
         console.error('Chat error:', errorDisplay);
         setIsLoading(false);
         setStreamingContent('');
@@ -341,7 +346,7 @@ export function useChat({
         console.log('[DEBUG] reflection received:', msg);
         {
           const reflectionContent = `🤔 **反思**: ${(msg as any).content}\n\n💡 **建议**: ${(msg as any).suggestion}`;
-          
+
           const reflectionMessage: Message = {
             id: `reflection-${Date.now()}-${Math.random()}`,
             session_id: msg.session_id || currentSessionId || '',
@@ -355,14 +360,14 @@ export function useChat({
               failure_details: (msg as any).failure_details,
             } as any,
           };
-          
+
           setMessages(prev => [...prev, reflectionMessage]);
         }
         break;
         break;
-      
+
       case 'problem_guidance':
-      
+
       case 'problem_guidance':
         // Interactive problem guidance card
         console.log('🔍 [DEBUG] problem_guidance received:', msg);
@@ -373,7 +378,7 @@ export function useChat({
             console.warn('❌ problem_guidance message missing data field');
             break;
           }
-          
+
           console.log('✅ Guidance data structure:', {
             type: guidanceData.type,
             severity: guidanceData.severity,
@@ -382,7 +387,7 @@ export function useChat({
             auto_fixes: guidanceData.auto_fixes?.length || 0,
             user_info: guidanceData.user_info_needed?.length || 0,
           });
-          
+
           const guidanceMessage: Message = {
             id: `guidance-${Date.now()}-${Math.random()}`,
             session_id: msg.session_id || currentSessionId || '',
@@ -394,11 +399,13 @@ export function useChat({
               data: guidanceData,
             } as any,
           };
-          
-          setMessages(prev => [...prev, guidanceMessage]);
+
+          setMessages(prev => {
+            const newMessages = [...prev, guidanceMessage];
+            console.log('✅ Guidance message added to state, total messages:', newMessages.length);
+            return newMessages;
+          });
           setIsLoading(false);
-          
-          console.log('✅ Guidance message added to state, total messages:', prev.length + 1);
         }
         break;
     }
@@ -419,8 +426,17 @@ export function useChat({
 
   // Send message via WebSocket
   const sendMessage = useCallback((content: string) => {
+    console.log('[SEND_MESSAGE] Attempting to send:', {
+      content,
+      currentSessionId,
+      connectionStatus,
+    });
+
     if (!currentSessionId || connectionStatus !== 'connected') {
-      console.warn('Cannot send message: not connected');
+      console.warn('[SEND_MESSAGE] Cannot send message: not connected', {
+        hasSessionId: !!currentSessionId,
+        connectionStatus,
+      });
       return;
     }
 
@@ -437,6 +453,7 @@ export function useChat({
     setIsLoading(true);
 
     // Send via WebSocket
+    console.log('[SEND_MESSAGE] Sending via WebSocket:', { content });
     wsSend({ content });
   }, [currentSessionId, connectionStatus, wsSend]);
 

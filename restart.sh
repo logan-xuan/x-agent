@@ -13,9 +13,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "🔄 开始重启 X-Agent 服务..."
 
-# 获取端口配置
-BACKEND_PORT=$(grep -E "^  port:" backend/x-agent.yaml | head -1 | awk '{print $2}' 2>/dev/null || echo '8000')
-FRONTEND_PORT=5173  # 前端通常在5173端口
+# 从配置文件读取端口
+CONFIG_FILE="backend/x-agent.yaml"
+BACKEND_PORT=$(grep -E "^\s*port:" "$CONFIG_FILE" | head -1 | awk '{print $2}' | tr -d ' ' 2>/dev/null || echo '8000')
+FRONTEND_PORT=$(grep -E "^\s*frontend_port:" "$CONFIG_FILE" | awk '{print $2}' | tr -d ' ' 2>/dev/null || echo '5173')
 
 echo "📋 端口配置 - 后端: $BACKEND_PORT, 前端: $FRONTEND_PORT"
 
