@@ -1,115 +1,172 @@
-# Feature Specification: [FEATURE NAME]
+# Feature Specification: Skill 系统重构
 
-**Feature Branch**: `[###-feature-name]`  
-**Created**: [DATE]  
+**Feature Branch**: `001-skill-system-refactor`  
+**Created**: 2026-03-01  
 **Status**: Draft  
-**Input**: User description: "$ARGUMENTS"
+**Input**: 基于 Skill_系统重构设计_6014a8e7.md 设计方案
 
 ## User Scenarios & Testing *(mandatory)*
 
-<!--
-  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
-  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
-  you should still have a viable MVP (Minimum Viable Product) that delivers value.
-  
-  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
-  Think of each story as a standalone slice of functionality that can be:
-  - Developed independently
-  - Tested independently
-  - Deployed independently
-  - Demonstrated to users independently
--->
+### User Story 1 - 技能统一发现与执行 (Priority: P1)
 
-### User Story 1 - [Brief Title] (Priority: P1)
+作为 AI Agent 系统，我需要能够从多个来源（用户自定义、系统内置）发现和加载技能，以便为用户提供丰富的扩展能力。
 
-[Describe this user journey in plain language]
+**Why this priority**: 技能发现是整个技能系统的核心入口，没有统一的发现机制，后续的检索、执行都无法进行。
 
-**Why this priority**: [Explain the value and why it has this priority level]
-
-**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
+**Independent Test**: 可通过配置不同来源的技能目录，验证系统能正确扫描、注册并按优先级返回技能列表。
 
 **Acceptance Scenarios**:
 
-1. **Given** [initial state], **When** [action], **Then** [expected outcome]
-2. **Given** [initial state], **When** [action], **Then** [expected outcome]
+1. **Given** 用户在 `~/.x-agent/workspace/skills/` 目录下创建了自定义技能，**When** Agent 系统启动或刷新技能注册表，**Then** 该技能被成功注册并可被发现
+2. **Given** 系统内置技能目录和用户技能目录都存在同名技能 `pptx`，**When** Agent 检索技能时，**Then** 优先返回用户级技能（USER > SYSTEM）
+3. **Given** 技能定义文件格式错误，**When** 系统尝试加载该技能，**Then** 跳过该技能并记录警告日志，不影响其他技能加载
 
 ---
 
-### User Story 2 - [Brief Title] (Priority: P2)
+### User Story 2 - 智能技能匹配与推荐 (Priority: P1)
 
-[Describe this user journey in plain language]
+作为用户，我希望系统能根据我的输入智能推荐最相关的技能，而不是需要记住精确的技能名称或命令。
 
-**Why this priority**: [Explain the value and why it has this priority level]
+**Why this priority**: 语义检索能力直接影响用户体验，是区别于简单关键词匹配的核心竞争力。
 
-**Independent Test**: [Describe how this can be tested independently]
+**Independent Test**: 可通过输入自然语言描述，验证系统返回的技能列表与用户意图的相关性。
 
 **Acceptance Scenarios**:
 
-1. **Given** [initial state], **When** [action], **Then** [expected outcome]
+1. **Given** 系统注册了 `pptx`、`pdf`、`docx` 等文档类技能，**When** 用户输入"帮我做一个演示文稿"，**Then** 系统优先推荐 `pptx` 技能
+2. **Given** 用户输入包含特定关键词如"PPT"或"幻灯片"，**When** 系统进行技能检索，**Then** 精确匹配的关键词技能排名靠前
+3. **Given** 多个技能都与用户输入相关，**When** 系统返回检索结果，**Then** 结果按相关性得分排序，并包含每个技能的匹配原因说明
 
 ---
 
-### User Story 3 - [Brief Title] (Priority: P3)
+### User Story 3 - 技能风险控制与确认机制 (Priority: P2)
 
-[Describe this user journey in plain language]
+作为用户，我希望高风险操作（如删除文件、发送请求）在执行前能得到我的确认，避免意外损失。
 
-**Why this priority**: [Explain the value and why it has this priority level]
+**Why this priority**: 安全性是用户信任系统的基础，但不是第一阶段的核心功能。
 
-**Independent Test**: [Describe how this can be tested independently]
+**Independent Test**: 可通过触发不同风险等级的技能，验证系统是否正确应用确认流程。
 
 **Acceptance Scenarios**:
 
-1. **Given** [initial state], **When** [action], **Then** [expected outcome]
+1. **Given** 技能被标记为高风险级别，**When** 系统准备执行该技能，**Then** 先显示执行计划并等待用户确认
+2. **Given** 技能被标记为低风险且允许自动触发，**When** 系统检索到该技能匹配用户意图，**Then** 可直接执行无需用户额外确认
+3. **Given** 用户取消了高风险操作的确认，**When** 系统收到取消指令，**Then** 终止执行流程并告知用户操作已取消
 
 ---
 
-[Add more user stories as needed, each with an assigned priority]
+### User Story 4 - 渐进式技能执行 (Priority: P2)
+
+作为用户，我希望复杂操作能分阶段执行，支持预览和回滚，降低操作失误的风险。
+
+**Why this priority**: 渐进式执行是提升用户体验和安全性的重要特性，但需要基于基础执行能力。
+
+**Independent Test**: 可通过触发支持预演的技能，验证各执行阶段的正确流转。
+
+**Acceptance Scenarios**:
+
+1. **Given** 技能支持预演模式，**When** 用户请求预览操作结果，**Then** 系统展示模拟执行结果而不产生实际影响
+2. **Given** 技能执行过程中发生错误，**When** 该技能支持回滚，**Then** 系统自动或提示用户进行回滚操作
+3. **Given** 技能定义了多阶段执行流程，**When** 系统执行该技能，**Then** 按定义的阶段顺序依次执行，每阶段完成后更新状态
+
+---
+
+### User Story 5 - 技能参数智能补全 (Priority: P3)
+
+作为用户，我希望系统能识别缺失的必要参数并提示我补充，而不是直接报错失败。
+
+**Why this priority**: 参数补全提升用户体验，但基础功能可以先通过明确的错误提示实现。
+
+**Independent Test**: 可通过调用需要参数的技能但不提供全部参数，验证系统的提示行为。
+
+**Acceptance Scenarios**:
+
+1. **Given** 用户请求执行技能但缺少必需参数，**When** 系统检测到参数不完整，**Then** 明确告知缺失的参数名称和用途
+2. **Given** 上下文中已包含部分参数信息，**When** 系统准备执行技能，**Then** 自动从上下文提取可用参数，仅提示真正缺失的部分
+3. **Given** 技能定义了参数验证规则，**When** 用户提供的参数不符合规则，**Then** 系统拒绝执行并说明参数要求
+
+---
 
 ### Edge Cases
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right edge cases.
--->
-
-- What happens when [boundary condition]?
-- How does system handle [error scenario]?
+- 技能目录不存在或无读取权限时，系统如何处理？
+- 技能定义文件被修改或删除后，缓存如何更新？
+- 多个技能的匹配得分完全相同时，如何排序？
+- 技能执行超时时，如何处理和恢复？
+- 远程技能来源暂时不可用时，是否影响本地技能使用？
 
 ## Requirements *(mandatory)*
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right functional requirements.
--->
-
 ### Functional Requirements
 
-- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
-- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]  
-- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
-- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
-- **FR-005**: System MUST [behavior, e.g., "log all security events"]
+**技能注册与管理**
 
-*Example of marking unclear requirements:*
+- **FR-001**: 系统 MUST 支持从配置的目录路径自动扫描并注册技能
+- **FR-002**: 系统 MUST 支持两级技能来源：用户级（USER）和系统级（SYSTEM）
+- **FR-003**: 系统 MUST 按 USER > SYSTEM 的优先级处理同名技能覆盖
+- **FR-004**: 系统 MUST 支持技能注册表的缓存和刷新机制
+- **FR-005**: 系统 MUST 在技能加载失败时记录日志并继续加载其他技能
 
-- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
-- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
+**技能发现与检索**
 
-### Key Entities *(include if feature involves data)*
+- **FR-006**: 系统 MUST 支持基于语义相似度的技能检索
+- **FR-007**: 系统 MUST 支持基于关键词的精确匹配检索
+- **FR-008**: 系统 MUST 支持基于标签/领域的分类检索
+- **FR-009**: 系统 MUST 对检索结果进行综合评分和排序
+- **FR-010**: 系统 MUST 在检索结果中包含匹配原因说明
 
-- **[Entity 1]**: [What it represents, key attributes without implementation]
-- **[Entity 2]**: [What it represents, relationships to other entities]
+**技能执行**
+
+- **FR-011**: 系统 MUST 在执行前检查技能的前置条件是否满足
+- **FR-012**: 系统 MUST 在执行前验证必需参数是否完整
+- **FR-013**: 系统 MUST 根据风险等级决定是否需要用户确认
+- **FR-014**: 系统 MUST 支持技能的同步和异步执行模式
+- **FR-015**: 系统 MUST 记录技能执行的追踪信息用于调试
+
+**渐进式执行**
+
+- **FR-016**: 系统 MUST 支持预演（dry-run）模式，展示执行计划而不实际执行
+- **FR-017**: 系统 MUST 支持需要确认（confirm）的执行阶段
+- **FR-018**: 系统 MUST 支持回滚（rollback）机制用于失败恢复
+
+**技能元数据**
+
+- **FR-019**: 技能定义 MUST 包含唯一标识、名称、描述等基本信息
+- **FR-020**: 技能定义 MUST 包含风险等级和审批模式标记
+- **FR-021**: 技能定义 MUST 包含输入参数的约束说明
+- **FR-022**: 技能定义 SHOULD 包含使用示例和适用场景说明
+
+### Key Entities
+
+- **SkillManifest（技能清单）**: 技能的完整定义描述，包含身份标识、能力描述、输入输出契约、执行配置、约束条件、风险策略等
+- **SkillCard（技能卡片）**: 技能发现输出的精简信息，包含与用户查询的匹配度、缺失参数、是否需要审批等决策辅助信息
+- **SkillSource（技能来源）**: 技能的注册来源标识，决定优先级和覆盖关系
+- **ExecutionContext（执行上下文）**: 技能执行时的会话信息、参数、状态等运行时上下文
+- **ExecutionResult（执行结果）**: 技能执行的返回信息，包含成功状态、输出数据、错误信息、回滚数据等
 
 ## Success Criteria *(mandatory)*
 
-<!--
-  ACTION REQUIRED: Define measurable success criteria.
-  These must be technology-agnostic and measurable.
--->
-
 ### Measurable Outcomes
 
-- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
-- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
-- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
-- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+- **SC-001**: 技能发现响应在 200ms 内完成（不含网络延迟）
+- **SC-002**: 语义检索的相关性准确率达到 80% 以上（前 3 个结果中包含正确技能）
+- **SC-003**: 同名技能的优先级覆盖 100% 符合 USER > SYSTEM 规则
+- **SC-004**: 高风险操作 100% 触发用户确认流程，无一遗漏
+- **SC-005**: 技能加载失败不影响系统整体可用性，故障技能隔离率 100%
+- **SC-006**: 支持预演的技能在 dry-run 模式下 0 副作用
+
+## Assumptions
+
+- 技能目录结构遵循约定的格式（manifest.json + SKILL.md）
+- 语义检索依赖的向量模型已预先部署并可用
+- 用户级技能目录路径可通过配置文件指定
+- 系统内置技能目录位置固定不变
+- 技能执行超时时间可通过技能定义或系统默认值配置
+
+## Out of Scope
+
+- 远程技能仓库（REMOTE）的实现（本期仅支持 USER 和 SYSTEM 两级）
+- 技能的热更新和动态卸载
+- 技能市场和分发机制
+- 技能的版本管理和升级迁移
+- 多语言技能支持（本期仅支持 Python 脚本）
