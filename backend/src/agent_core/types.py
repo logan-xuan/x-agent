@@ -654,6 +654,7 @@ class ToolCallLog:
     call_id: str = ""
     trace_id: str = ""
     llm_call_id: str = ""
+    tool_call_id: str = ""  # LLM 返回的工具调用 ID，用于关联工具结果
     
     # 工具信息
     tool_name: str = ""

@@ -4,14 +4,15 @@
  * 基于 agent_core 的聊天界面，使用新的 WebSocket 端点 /ws/agent。
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { AgentMessage } from '../../hooks/useAgent';
 import { ConnectionStatus } from '../../hooks/useWebSocket';
 import { AgentMessageList } from './AgentMessageList';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Spinner } from '../ui/Spinner';
 import { DevModeWindow } from '../dev/DevModeWindow';
+import { SkillMenu } from '../skills/SkillMenu';
+import { Skill, listSkills } from '@/services/api';
 
 interface AgentChatWindowProps {
     sessionId: string | null;
@@ -45,6 +46,93 @@ export function AgentChatWindow({
     const [inputValue, setInputValue] = useState('');
     const [isDevModeOpen, setIsDevModeOpen] = useState(false);
 
+    // Skills state
+    const [skills, setSkills] = useState<Skill[]>([]);
+    const [isLoadingSkills, setIsLoadingSkills] = useState(true);
+    const [showSkillMenu, setShowSkillMenu] = useState(false);
+    const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | undefined>();
+    const [isComposing, setIsComposing] = useState(false); // Track IME composition state
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Load skills on mount
+    useEffect(() => {
+        async function loadSkills() {
+            try {
+                setIsLoadingSkills(true);
+                const loadedSkills = await listSkills();
+                setSkills(loadedSkills);
+            } catch (error) {
+                console.error('Failed to load skills:', error);
+            } finally {
+                setIsLoadingSkills(false);
+            }
+        }
+
+        loadSkills();
+    }, []);
+
+    // Handle skill selection
+    const handleSkillSelect = useCallback((skillName: string) => {
+        const currentText = inputValue;
+        const lastSlashIndex = currentText.lastIndexOf('/');
+
+        let newMessage: string;
+        if (lastSlashIndex !== -1) {
+            // Replace the text after last /
+            newMessage = currentText.substring(0, lastSlashIndex + 1) + skillName + ' ';
+        } else {
+            newMessage = `/${skillName} `;
+        }
+
+        setInputValue(newMessage);
+        setShowSkillMenu(false);
+        textareaRef.current?.focus();
+    }, [inputValue]);
+
+    // Check for / trigger
+    const checkForSkillTrigger = useCallback(() => {
+        const cursorPosition = textareaRef.current?.selectionStart || 0;
+        const textBeforeCursor = inputValue.substring(0, cursorPosition);
+
+        // Check if the last non-space character is /
+        const trimmed = textBeforeCursor.trimEnd();
+        if (trimmed.endsWith('/')) {
+            // Show menu when / is typed
+            const textarea = textareaRef.current;
+            if (textarea) {
+                const rect = textarea.getBoundingClientRect();
+                setMenuPosition({
+                    x: rect.left,
+                    y: rect.top - 300, // Show above input
+                });
+                setShowSkillMenu(true);
+            }
+            return;
+        }
+
+        // Check if typing a skill name after /
+        const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+        if (lastSlashIndex !== -1) {
+            const afterSlash = textBeforeCursor.substring(lastSlashIndex + 1);
+            // Show menu if typing skill name (letters, numbers, underscore, hyphen)
+            if (/^[a-zA-Z0-9_-]+$/.test(afterSlash)) {
+                const textarea = textareaRef.current;
+                if (textarea) {
+                    const rect = textarea.getBoundingClientRect();
+                    setMenuPosition({
+                        x: rect.left,
+                        y: rect.top - 300,
+                    });
+                    setShowSkillMenu(true);
+                }
+                return;
+            }
+        }
+
+        // Hide menu if no / or invalid pattern
+        setShowSkillMenu(false);
+    }, [inputValue]);
+
     // 发送消息
     const handleSend = useCallback(() => {
         if (inputValue.trim()) {
@@ -55,11 +143,26 @@ export function AgentChatWindow({
 
     // 键盘事件
     const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        // Close menu on Escape
+        if (e.key === 'Escape' && showSkillMenu) {
+            setShowSkillMenu(false);
+            return;
+        }
+
+        // Handle Enter key
+        if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+            // If skill menu is open, prevent send - user should select skill first
+            if (showSkillMenu) {
+                e.preventDefault();
+                // Don't close menu automatically - let user navigate with arrows or click
+                return;
+            }
+
+            // Normal send behavior when menu is closed
             e.preventDefault();
             handleSend();
         }
-    }, [handleSend]);
+    }, [handleSend, showSkillMenu, isComposing]);
 
     // 连接状态配置
     const getStatusConfig = () => {
@@ -197,23 +300,51 @@ export function AgentChatWindow({
             <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
                 <div className="max-w-3xl mx-auto">
                     <div className="flex gap-2">
-                        <textarea
-                            value={inputValue}
-                            onChange={(e) => setInputValue(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder={
-                                isConnecting
-                                    ? '正在初始化...'
-                                    : connectionStatus !== 'connected'
-                                        ? '等待连接...'
-                                        : isLoading
-                                            ? 'Agent 正在处理...'
-                                            : '输入消息... (Enter 发送, Shift+Enter 换行)'
-                            }
-                            disabled={isConnecting || connectionStatus !== 'connected' || isLoading}
-                            className="flex-1 resize-none rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-2 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-                            rows={2}
-                        />
+                        <div className="flex-1 relative">
+                            <textarea
+                                ref={textareaRef}
+                                value={inputValue}
+                                onChange={(e) => {
+                                    setInputValue(e.target.value);
+                                    checkForSkillTrigger();
+                                }}
+                                onKeyDown={handleKeyDown}
+                                onCompositionStart={() => setIsComposing(true)}
+                                onCompositionEnd={() => setIsComposing(false)}
+                                placeholder={
+                                    isConnecting
+                                        ? '正在初始化...'
+                                        : connectionStatus !== 'connected'
+                                            ? '等待连接...'
+                                            : isLoading
+                                                ? 'Agent 正在处理...'
+                                                : isLoadingSkills
+                                                    ? '加载技能...'
+                                                    : '输入消息... (输入 / 显示技能菜单, Enter 发送, Shift+Enter 换行)'
+                                }
+                                disabled={isConnecting || connectionStatus !== 'connected' || isLoading}
+                                className="w-full resize-none rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-2 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
+                                rows={2}
+                            />
+
+                            {/* Skill menu */}
+                            {showSkillMenu && skills.length > 0 && (
+                                <SkillMenu
+                                    skills={skills}
+                                    onSelect={handleSkillSelect}
+                                    onClose={() => setShowSkillMenu(false)}
+                                    anchorPosition={menuPosition}
+                                    searchQuery={(() => {
+                                        // Extract text after last /
+                                        const lastSlashIndex = inputValue.lastIndexOf('/');
+                                        if (lastSlashIndex !== -1) {
+                                            return inputValue.substring(lastSlashIndex + 1).trim();
+                                        }
+                                        return '';
+                                    })()}
+                                />
+                            )}
+                        </div>
                         {isLoading ? (
                             <Button
                                 onClick={onAbort}

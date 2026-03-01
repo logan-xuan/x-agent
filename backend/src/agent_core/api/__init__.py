@@ -4,9 +4,11 @@
 """
 
 from .websocket import router as agent_websocket_router
+from .dev_routes import router as agent_rest_router
 from .converters import convert_event_to_websocket
 
 __all__ = [
     "agent_websocket_router",
+    "agent_rest_router",
     "convert_event_to_websocket",
 ]

@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: parseInt(env.VITE_PORT || '5173'),
+      port: parseInt(env.VITE_PORT || '5177'),
       proxy: {
         '/api': {
           target: env.VITE_API_URL || 'http://localhost:8888',
@@ -27,6 +27,8 @@ export default defineConfig(({ mode }) => {
           ws: true,
         },
       },
+      // 支持客户端路由 - 所有路由都返回 index.html
+      historyApiFallback: true,
     },
   }
 })

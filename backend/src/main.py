@@ -81,6 +81,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     setup_logging(config.logging)
     logger.info("Logging configured")
     
+    # 2.1 Initialize AgentLogger file persistence
+    from .agent_core.logger import AgentLogger
+    agent_logger = AgentLogger()
+    agent_logger.initialize_file_persistence(
+        log_file=config.logging.agent_log_file,
+        max_size=config.logging.agent_log_max_size,
+        backup_count=config.logging.agent_log_backup_count,
+        when=config.logging.when,
+        interval=config.logging.interval,
+    )
+    logger.info(
+        "AgentLogger file persistence initialized",
+        extra={"log_file": config.logging.agent_log_file}
+    )
+    
     # 2.5 Validate configuration
     from .config.validator import validate_config
     validation_result = validate_config(config)
@@ -277,7 +292,7 @@ def create_app() -> FastAPI:
     from .api.v1.trace import router as trace_router
     from .api.v1.skills import router as skills_router
     from .api.websocket import router as websocket_router
-    from .agent_core.api import agent_websocket_router
+    from .agent_core.api import agent_websocket_router, agent_rest_router
     
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
     app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
@@ -291,6 +306,7 @@ def create_app() -> FastAPI:
     app.include_router(skills_router, prefix="/api/v1", tags=["Skills"])
     app.include_router(websocket_router, prefix="/ws", tags=["WebSocket"])
     app.include_router(agent_websocket_router, prefix="/ws", tags=["Agent WebSocket"])
+    app.include_router(agent_rest_router, prefix="/api/v1", tags=["Agent Logs"])
     
     return app
 

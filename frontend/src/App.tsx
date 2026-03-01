@@ -16,9 +16,9 @@ const AGENT_SESSION_STORAGE_KEY = 'x-agent-agent-session-id';
 /** 简单的 URL 路由检测 */
 function getInitialView(): View {
   const path = window.location.pathname;
-  if (path === '/agent') return 'agent';
+  if (path === '/agent') return 'chat';  // /agent 路径显示聊天界面
   if (path === '/settings') return 'settings';
-  return 'chat';
+  return 'agent';  // 根路径默认显示 Agent 界面
 }
 
 function App() {
@@ -145,7 +145,7 @@ function App() {
 
   // Update URL when view changes
   useEffect(() => {
-    const path = view === 'agent' ? '/agent' : view === 'settings' ? '/settings' : '/';
+    const path = view === 'chat' ? '/agent' : view === 'settings' ? '/settings' : '/';
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
     }

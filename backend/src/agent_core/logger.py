@@ -1,7 +1,8 @@
-"""AgentLogger - 内存缓存日志系统.
+"""AgentLogger - 内存缓存 + 文件持久化日志系统.
 
 实现 LoggerPort 接口，提供：
 - 内存缓存（deque 限制大小）
+- 文件持久化（JSON 格式，支持滚动）
 - 线程安全（Lock）
 - trace_id 索引
 - 实时订阅（asyncio.Queue）
@@ -10,16 +11,20 @@
 - 内存日志限制：1000 条通用日志，100 条 LLM 调用，500 条工具调用
 - 支持按 trace_id, category, level 查询
 - 支持实时订阅新日志
+- 文件持久化到 logs/agent-core.log
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import threading
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .types import (
@@ -31,14 +36,26 @@ from .types import (
 )
 
 
+# 延迟导入避免循环依赖
+def _get_rotating_handler():
+    """延迟导入 TimedSizeRotatingFileHandler."""
+    try:
+        from src.utils.logger import TimedSizeRotatingFileHandler
+        return TimedSizeRotatingFileHandler
+    except ImportError:
+        from backend.src.utils.logger import TimedSizeRotatingFileHandler
+        return TimedSizeRotatingFileHandler
+
+
 class AgentLogger:
-    """内存缓存日志系统.
+    """内存缓存 + 文件持久化日志系统.
     
-    实现 LoggerPort Protocol，所有日志数据保存在内存中，
+    实现 LoggerPort Protocol，日志数据同时保存在内存和文件中，
     支持按 trace_id/category/level 查询和实时订阅。
     
     Example:
         logger = AgentLogger()
+        logger.initialize_file_persistence(log_dir="logs")  # 启用文件持久化
         
         # 记录通用日志
         logger.log(LogEntry(
@@ -57,12 +74,26 @@ class AgentLogger:
     Thread Safety:
         所有写操作使用 threading.Lock 保护，
         适用于多线程环境。
+    
+    File Persistence:
+        使用 TimedSizeRotatingFileHandler，支持时间和大小双维度滚动。
+        日志格式为 JSON，每行一条记录。
     """
     
     # 默认大小限制
     DEFAULT_MAX_LOGS = 1000
     DEFAULT_MAX_LLM_CALLS = 100
     DEFAULT_MAX_TOOL_CALLS = 500
+    
+    # 单例支持
+    _instance: "AgentLogger | None" = None
+    
+    def __new__(cls, *args, **kwargs) -> "AgentLogger":
+        """单例模式，确保全局只有一个实例."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
     
     def __init__(
         self,
@@ -77,6 +108,10 @@ class AgentLogger:
             max_llm_calls: LLM 调用日志最大条数
             max_tool_calls: 工具调用日志最大条数
         """
+        # 避免重复初始化
+        if getattr(self, '_initialized', False):
+            return
+        
         # 内存缓存
         self._logs: deque[LogEntry] = deque(maxlen=max_logs)
         self._llm_calls: deque[LLMCallLog] = deque(maxlen=max_llm_calls)
@@ -100,6 +135,86 @@ class AgentLogger:
         # 实时订阅
         self._subscribers: list[asyncio.Queue[LogEntry]] = []
         self._subscriber_lock = threading.Lock()
+        
+        # 文件持久化（延迟初始化）
+        self._file_handler: Any = None
+        self._log_file: Path | None = None
+        self._file_persistence_enabled = False
+        
+        self._initialized = True
+    
+    def initialize_file_persistence(
+        self,
+        log_file: str = "logs/agent-core.log",
+        max_size: str = "20MB",
+        backup_count: int = 5,
+        when: str = "D",
+        interval: int = 1,
+    ) -> None:
+        """初始化文件持久化.
+        
+        Args:
+            log_file: 日志文件路径
+            max_size: 最大文件大小（如 "20MB", "100KB", "1GB"）
+            backup_count: 备份文件数量
+            when: 时间滚动间隔（D=天, H=小时, M=分钟, S=秒）
+            interval: 滚动间隔乘数
+        """
+        if self._file_persistence_enabled:
+            return
+        
+        self._log_file = Path(log_file)
+        self._log_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 解析 max_size
+        max_size_str = max_size.upper()
+        if max_size_str.endswith('MB'):
+            max_bytes = int(float(max_size_str[:-2]) * 1024 * 1024)
+        elif max_size_str.endswith('KB'):
+            max_bytes = int(float(max_size_str[:-2]) * 1024)
+        elif max_size_str.endswith('GB'):
+            max_bytes = int(float(max_size_str[:-2]) * 1024 * 1024 * 1024)
+        else:
+            try:
+                max_bytes = int(max_size_str)
+            except ValueError:
+                max_bytes = 20 * 1024 * 1024  # 默认 20MB
+        
+        # 创建滚动文件处理器
+        TimedSizeRotatingFileHandler = _get_rotating_handler()
+        self._file_handler = TimedSizeRotatingFileHandler(
+            filename=str(self._log_file),
+            when=when,
+            interval=interval,
+            max_bytes=max_bytes,
+            backup_count=backup_count,
+            encoding='utf-8'
+        )
+        
+        self._file_persistence_enabled = True
+    
+    def _write_to_file(self, entry: dict[str, Any]) -> None:
+        """写入日志到文件.
+        
+        Args:
+            entry: 日志条目字典
+        """
+        if not self._file_persistence_enabled or self._file_handler is None:
+            return
+        
+        try:
+            log_record = logging.LogRecord(
+                name='agent_logger',
+                level=logging.INFO,
+                pathname=str(self._log_file) if self._log_file else '',
+                lineno=0,
+                msg=json.dumps(entry, ensure_ascii=False, default=str),
+                args=(),
+                exc_info=None
+            )
+            self._file_handler.emit(log_record)
+        except Exception:
+            pass  # 静默处理文件写入错误，不影响内存日志
     
     # ================================================================
     # LoggerPort 接口实现
@@ -120,6 +235,21 @@ class AgentLogger:
             if entry.trace_id:
                 self._trace_log_index.setdefault(entry.trace_id, []).append(entry.id)
         
+        # 写入文件
+        self._write_to_file({
+            "type": "log_entry",
+            "timestamp": entry.timestamp.isoformat() if entry.timestamp else datetime.now().isoformat(),
+            "id": entry.id,
+            "trace_id": entry.trace_id,
+            "level": entry.level.value if entry.level else "INFO",
+            "category": entry.category.value if entry.category else None,
+            "event": entry.event,
+            "message": entry.message,
+            "data": entry.data,
+            "duration_ms": entry.duration_ms,
+            "error": entry.error,
+        })
+        
         self._broadcast(entry)
     
     def log_llm_call_start(self, log: LLMCallLog) -> None:
@@ -139,6 +269,20 @@ class AgentLogger:
             
             if log.trace_id:
                 self._trace_llm_index.setdefault(log.trace_id, []).append(log.call_id)
+        
+        # 写入 LLM 调用日志文件
+        self._write_to_file({
+            "type": "llm_call_start",
+            "timestamp": log.start_time.isoformat() if log.start_time else datetime.now().isoformat(),
+            "call_id": log.call_id,
+            "trace_id": log.trace_id,
+            "provider": log.provider,
+            "model": log.model,
+            "message_count": log.message_count,
+            "estimated_tokens": log.estimated_tokens,
+            "messages": log.messages,  # 完整的 prompt
+            "system_prompt": log.system_prompt,
+        })
         
         # 同时写入通用日志
         self.log(LogEntry(
@@ -190,6 +334,21 @@ class AgentLogger:
             else:
                 log.status = "completed"
         
+        # 写入 LLM 调用结束日志文件
+        self._write_to_file({
+            "type": "llm_call_end",
+            "timestamp": log.end_time.isoformat() if log.end_time else datetime.now().isoformat(),
+            "call_id": call_id,
+            "trace_id": log.trace_id,
+            "model": log.model,
+            "duration_ms": duration_ms,
+            "usage": usage,
+            "response_content": log.response_content,
+            "stop_reason": log.stop_reason,
+            "status": log.status,
+            "error": error,
+        })
+        
         level = LogLevel.ERROR if error else LogLevel.INFO
         event_name = "llm_call_error" if error else "llm_call_end"
         
@@ -230,6 +389,17 @@ class AgentLogger:
             
             if log.llm_call_id:
                 self._llm_tool_index.setdefault(log.llm_call_id, []).append(log.call_id)
+        
+        # 写入工具调用日志文件
+        self._write_to_file({
+            "type": "tool_call_start",
+            "timestamp": log.start_time.isoformat() if log.start_time else datetime.now().isoformat(),
+            "call_id": log.call_id,
+            "trace_id": log.trace_id,
+            "llm_call_id": log.llm_call_id,
+            "tool_name": log.tool_name,
+            "arguments": log.arguments,
+        })
         
         self.log(LogEntry(
             trace_id=log.trace_id,
@@ -277,6 +447,20 @@ class AgentLogger:
                 log.error = error
             else:
                 log.status = "completed"
+        
+        # 写入工具调用结束日志文件
+        self._write_to_file({
+            "type": "tool_call_end",
+            "timestamp": log.end_time.isoformat() if log.end_time else datetime.now().isoformat(),
+            "call_id": call_id,
+            "trace_id": log.trace_id,
+            "tool_name": log.tool_name,
+            "duration_ms": duration_ms,
+            "status": log.status,
+            "is_error": is_error,
+            "error": error,
+            "result": str(result)[:1000] if result else None,  # 限制结果长度
+        })
         
         level = LogLevel.ERROR if is_error else LogLevel.INFO
         event_name = "tool_call_error" if is_error else "tool_call_end"

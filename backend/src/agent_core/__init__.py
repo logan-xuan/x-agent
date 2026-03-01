@@ -73,6 +73,30 @@ from .event_stream import EventStream, EventCollector
 from .logger import AgentLogger
 from .memory_integration import ToolCallMemoryWriter, generate_tool_call_summary, is_important_tool_call
 from .experience_learning import ExperienceLearner, format_experience_for_prompt, detect_retry_patterns
+from .hooks import (
+    HookPoint,
+    HookContext,
+    HookRegistry,
+    get_hook_registry,
+    reset_hook_registry,
+)
+from .middleware import (
+    Middleware,
+    MiddlewareChain,
+    MessageMiddleware,
+    ToolMiddleware,
+    ToolCallContext,
+    ToolCallResult,
+    LoggingMessageMiddleware,
+    TimingToolMiddleware,
+    RetryToolMiddleware,
+)
+from .registry import (
+    ComponentRegistry,
+    ComponentStatus,
+    get_tool_registry,
+    reset_tool_registry,
+)
 
 __all__ = [
     # Content
@@ -133,6 +157,27 @@ __all__ = [
     "ExperienceLearner",
     "format_experience_for_prompt",
     "detect_retry_patterns",
+    # Hooks
+    "HookPoint",
+    "HookContext",
+    "HookRegistry",
+    "get_hook_registry",
+    "reset_hook_registry",
+    # Middleware
+    "Middleware",
+    "MiddlewareChain",
+    "MessageMiddleware",
+    "ToolMiddleware",
+    "ToolCallContext",
+    "ToolCallResult",
+    "LoggingMessageMiddleware",
+    "TimingToolMiddleware",
+    "RetryToolMiddleware",
+    # Registry
+    "ComponentRegistry",
+    "ComponentStatus",
+    "get_tool_registry",
+    "reset_tool_registry",
 ]
 
 __version__ = "0.1.0"

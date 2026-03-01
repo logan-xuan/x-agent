@@ -7,9 +7,10 @@ import { TraceViewer } from '../trace';
 import { MemorySearchDebugger } from './MemorySearchDebugger';
 import { CompressionRecordQuery } from './CompressionRecordQuery';
 import { WebSearchDebugger } from './WebSearchDebugger';
+import { AgentLogsPanel } from './AgentLogsPanel';
 import { Button } from '../ui/Button';
 
-type TabType = 'logs' | 'tester' | 'trace' | 'search' | 'compression_records' | 'web_search';
+type TabType = 'agent_logs' | 'logs' | 'tester' | 'trace' | 'search' | 'compression_records' | 'web_search';
 
 interface DevModeWindowProps {
   isOpen: boolean;
@@ -17,16 +18,16 @@ interface DevModeWindowProps {
 }
 
 export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
-  const [activeTab, setActiveTab] = useState<TabType>('logs');
+  const [activeTab, setActiveTab] = useState<TabType>('agent_logs');
   const [error, setError] = useState<string | null>(null);
   const [traceId, setTraceId] = useState<string>('');
-  
+
   // Handle viewing trace from log list
   const handleViewTrace = (id: string) => {
     setTraceId(id);
     setActiveTab('trace');
   };
-  
+
   // Calculate initial position (right side of screen with some margin)
   const getInitialPosition = () => {
     const margin = 20;
@@ -36,7 +37,7 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
       y: margin + 60, // Add some top margin for header
     };
   };
-  
+
   const [position, setPosition] = useState(getInitialPosition());
   const [isDragging, setIsDragging] = useState(false);
   const [size, setSize] = useState({ width: 1200, height: 800 }); // Increased from 900x700 to 1200x800
@@ -173,62 +174,65 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
             {/* Tab Buttons */}
             <div className="flex items-center bg-gray-200 dark:bg-gray-700 rounded-md p-0.5 mr-2">
               <button
-                onClick={() => handleTabChange('logs')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                  activeTab === 'logs'
+                onClick={() => handleTabChange('agent_logs')}
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${activeTab === 'agent_logs'
                     ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
+                  }`}
+              >
+                Agent日志
+              </button>
+              <button
+                onClick={() => handleTabChange('logs')}
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${activeTab === 'logs'
+                    ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                  }`}
               >
                 交互记录
               </button>
               <button
                 onClick={() => handleTabChange('tester')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                  activeTab === 'tester'
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${activeTab === 'tester'
                     ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
+                  }`}
               >
                 Prompt测试
               </button>
               <button
                 onClick={() => handleTabChange('trace')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                  activeTab === 'trace'
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${activeTab === 'trace'
                     ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
+                  }`}
               >
                 Trace
               </button>
               <button
                 onClick={() => handleTabChange('search')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                  activeTab === 'search'
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${activeTab === 'search'
                     ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
+                  }`}
               >
                 记忆搜索
               </button>
               <button
                 onClick={() => handleTabChange('compression_records')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                  activeTab === 'compression_records'
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${activeTab === 'compression_records'
                     ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
+                  }`}
               >
                 压缩记录
               </button>
               <button
                 onClick={() => handleTabChange('web_search')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
-                  activeTab === 'web_search'
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${activeTab === 'web_search'
                     ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
+                  }`}
               >
                 Web Search (Aliyun)
               </button>
@@ -270,7 +274,9 @@ export function DevModeWindow({ isOpen, onClose }: DevModeWindowProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {activeTab === 'logs' ? (
+          {activeTab === 'agent_logs' ? (
+            <AgentLogsPanel onError={setError} />
+          ) : activeTab === 'logs' ? (
             <PromptLogList onError={setError} onViewTrace={handleViewTrace} />
           ) : activeTab === 'tester' ? (
             <PromptTester onError={setError} />
