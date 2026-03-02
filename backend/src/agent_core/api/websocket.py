@@ -12,6 +12,10 @@
   - {"type": "tool_result", "tool_call_id": id, "result": result, "is_error": bool}
   - {"type": "error", "message": error_message}
   - {"type": "pong"} (心跳响应)
+
+技能调度模式 (OpenClaw 风格):
+- 显式命令 (/skill_name): 直接加载 SKILL.md 并注入
+- 意图匹配: 注入 XML 技能列表，让 LLM 自己选择
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -30,6 +34,13 @@ from ..config import AgentCoreConfig
 from ..adapters.llm_adapter import XAgentLLMAdapter
 from ..adapters.tool_adapter import XAgentToolAdapter
 from ..types import AgentEndEvent, UserMessage, AssistantMessage
+from ..skill_dispatcher import (
+    SkillCommandResolver,
+    SkillPromptRewriter,
+    SkillCommandSpec,
+    SkillInvocation,
+    build_skill_command_specs,
+)
 
 # 导入日志
 try:
@@ -41,6 +52,13 @@ except ImportError:
 
 
 router = APIRouter()
+
+# 全局技能适配器缓存
+_skill_adapter_cache = None
+# 全局命令解析器缓存
+_skill_command_resolver_cache: Optional[SkillCommandResolver] = None
+# 全局 Prompt 重写器
+_skill_prompt_rewriter = SkillPromptRewriter()
 
 
 def _get_llm_router():
@@ -68,6 +86,71 @@ def _get_session_manager():
     """获取 SessionManager 实例."""
     from ...core.session import SessionManager
     return SessionManager()
+
+
+def _get_skill_adapter():
+    """获取技能适配器实例（带缓存）."""
+    global _skill_adapter_cache
+    
+    if _skill_adapter_cache is not None:
+        return _skill_adapter_cache
+    
+    try:
+        from ..adapters.skill_adapter import create_skill_adapter
+        _skill_adapter_cache = create_skill_adapter()
+        if _skill_adapter_cache:
+            logger.info("Skill adapter initialized successfully")
+        return _skill_adapter_cache
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize skill adapter",
+            extra={"error": str(e)}
+        )
+        return None
+
+
+def _get_skill_command_resolver() -> Optional[SkillCommandResolver]:
+    """获取技能命令解析器实例（带缓存）.
+    
+    从技能注册表构建命令规格，创建解析器。
+    
+    Returns:
+        SkillCommandResolver 或 None
+    """
+    global _skill_command_resolver_cache
+    
+    if _skill_command_resolver_cache is not None:
+        return _skill_command_resolver_cache
+    
+    skill_adapter = _get_skill_adapter()
+    if not skill_adapter:
+        return None
+    
+    try:
+        # 获取所有技能清单
+        manifests = skill_adapter._registry.list_skills()
+        if not manifests:
+            return None
+        
+        # 构建命令规格
+        command_specs = build_skill_command_specs(manifests)
+        
+        # 创建解析器
+        _skill_command_resolver_cache = SkillCommandResolver(command_specs)
+        
+        logger.info(
+            "Skill command resolver initialized",
+            extra={"command_count": len(command_specs)}
+        )
+        
+        return _skill_command_resolver_cache
+    
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize skill command resolver",
+            extra={"error": str(e)}
+        )
+        return None
 
 
 def create_agent_config() -> AgentCoreConfig:
@@ -255,6 +338,98 @@ def _load_system_prompt() -> str:
 - 如果不确定，坦诚告知用户"""
 
 
+def _match_and_load_skill_prompt(user_input: str) -> tuple[str, Optional[SkillInvocation]]:
+    """根据用户输入匹配技能并生成技能指令 (OpenClaw 风格).
+    
+    三种模式:
+    1. 显式命令 (/skill_name args): 使用命令解析器，Prompt Rewrite 调度
+    2. 显式命令 (Tool Dispatch): 直接返回调用信息 (暂未实现)
+    3. 意图匹配: 注入 XML 技能列表，让 LLM 自己选择
+    
+    Args:
+        user_input: 用户输入内容
+    
+    Returns:
+        (技能指令 prompt, 技能调用信息 或 None)
+    """
+    skill_adapter = _get_skill_adapter()
+    if not skill_adapter:
+        return "", None
+    
+    try:
+        # 模式 1: 显式命令解析 (/skill_name args)
+        if user_input.startswith("/"):
+            resolver = _get_skill_command_resolver()
+            if resolver:
+                invocation = resolver.resolve(user_input)
+                if invocation:
+                    logger.info(
+                        "Skill command resolved",
+                        extra={
+                            "skill_name": invocation.skill_name,
+                            "command_name": invocation.command_name,
+                            "dispatch_mode": invocation.dispatch_mode,
+                        }
+                    )
+                    
+                    # Tool Dispatch 模式 (未来支持)
+                    if invocation.dispatch_mode == "tool_dispatch":
+                        # TODO: 直接调用工具
+                        pass
+                    
+                    # Prompt Rewrite 模式
+                    # 加载完整 SKILL.md 并添加强制性指令
+                    content = skill_adapter.load_skill_content(invocation.skill_name)
+                    if content:
+                        # 使用 Prompt Rewriter 生成重写后的用户输入
+                        rewritten = _skill_prompt_rewriter.rewrite(invocation)
+                        
+                        # 组合: SKILL.md 内容 + 重写后的用户指令
+                        skill_prompt = f"""
+# 技能指令 (/{invocation.skill_name})
+
+⚠️ **重要**: 请严格按照以下技能指令执行，不要使用其他方式。
+
+{content}
+
+---
+
+{rewritten}
+"""
+                        return skill_prompt, invocation
+            
+            # 回退: 直接用 skill_id 匹配
+            command = user_input.split()[0][1:]  # 提取命令名
+            content = skill_adapter.load_skill_content(command)
+            if content:
+                logger.info(
+                    "Skill matched by direct command",
+                    extra={"skill_id": command}
+                )
+                return f"\n\n# 技能指令 (/{command})\n\n⚠️ **重要**: 请严格按照以下技能指令执行，不要使用其他方式。\n\n{content}", None
+        
+        # 模式 3: 意图匹配 - 使用 XML 格式技能列表 + 强制性指令 (OpenClaw 风格)
+        skills_prompt = skill_adapter.build_skills_xml_prompt()
+        if skills_prompt:
+            logger.debug(
+                "Skills XML prompt generated",
+                extra={
+                    "user_input": user_input[:50],
+                    "prompt_length": len(skills_prompt),
+                }
+            )
+            return f"\n\n{skills_prompt}", None
+        
+        return "", None
+    
+    except Exception as e:
+        logger.warning(
+            "Failed to generate skill prompt",
+            extra={"error": str(e)}
+        )
+        return "", None
+
+
 async def _handle_message(
     websocket: WebSocket,
     agent: Agent,
@@ -270,7 +445,30 @@ async def _handle_message(
         session_id: 会话 ID
     """
     try:
-        async for event in agent.prompt(content):
+        # 动态匹配技能并注入 prompt
+        skill_prompt, invocation = _match_and_load_skill_prompt(content)
+        
+        if skill_prompt:
+            # 临时更新 agent 的 system prompt
+            base_prompt = agent._system_prompt
+            agent._system_prompt = base_prompt + skill_prompt
+            logger.debug(
+                "Skill prompt injected",
+                extra={
+                    "session_id": session_id,
+                    "skill_prompt_length": len(skill_prompt),
+                    "invocation": invocation.skill_name if invocation else None,
+                }
+            )
+        
+        # 如果有显式命令调用，可能需要重写用户输入
+        actual_content = content
+        if invocation and invocation.dispatch_mode == "prompt_rewrite":
+            # 用户输入已包含在 skill_prompt 中的 rewritten 部分
+            # 这里保持原始输入，让 LLM 看到完整上下文
+            pass
+        
+        async for event in agent.prompt(actual_content):
             ws_msg = convert_event_to_websocket(event)
             if ws_msg:
                 await websocket.send_json(ws_msg)
@@ -278,6 +476,10 @@ async def _handle_message(
             # 在 AgentEndEvent 时持久化消息
             if isinstance(event, AgentEndEvent):
                 await _persist_messages(session_id, content, event)
+        
+        # 恢复原始 system prompt（如果有注入）
+        if skill_prompt:
+            agent._system_prompt = base_prompt
     
     except Exception as e:
         logger.error(

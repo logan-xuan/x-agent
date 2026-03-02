@@ -100,6 +100,26 @@ await pptx.writeFile({ fileName: 'presentations/my-presentation.pptx' });
 
 **For simple presentations without complex layouts**, you can use PptxGenJS directly:
 
+⚠️ **CRITICAL: Element Rendering Order**
+In PptxGenJS, elements are rendered in the order they are added:
+- First added = bottom layer (background)
+- Last added = top layer (foreground)
+
+**ALWAYS add elements in this order:**
+1. Background shapes/colors FIRST
+2. Images SECOND
+3. Text LAST (so it appears on top)
+
+```javascript
+// ✅ CORRECT ORDER:
+slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: '100%', fill: '1E3C72' }); // 1. Background first
+slide.addText('Hello World', { x: 1, y: 2, fontSize: 36, color: 'FFFFFF' });               // 2. Text on top
+
+// ❌ WRONG ORDER (text will be hidden):
+slide.addText('Hello World', { x: 1, y: 2, fontSize: 36, color: 'FFFFFF' });               // Text added first
+slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: '100%', fill: '1E3C72' }); // Background covers text!
+```
+
 **TEMPLATE - COPY AND USE THIS:**
 ```javascript
 const PptxGenJS = require('pptxgenjs');

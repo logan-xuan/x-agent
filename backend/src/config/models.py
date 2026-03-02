@@ -290,6 +290,10 @@ class ToolsConfig(BaseModel):
         ],
         description="List of high-risk commands requiring user confirmation"
     )
+    terminal_default_workdir: str = Field(
+        default="",
+        description="Default working directory for terminal commands (empty = use workspace path from workspace.path config)"
+    )
 
 
 class AliyunOpensearchSearchParams(BaseModel):

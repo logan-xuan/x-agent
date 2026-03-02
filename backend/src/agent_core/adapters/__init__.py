@@ -7,10 +7,13 @@ from .llm_adapter import XAgentLLMAdapter
 from .tool_adapter import XAgentToolAdapter
 from .memory_adapter import XAgentMemoryAdapter
 from .logger_adapter import XAgentLoggerAdapter
+from .skill_adapter import XAgentSkillAdapter, create_skill_adapter
 
 __all__ = [
     "XAgentLLMAdapter",
     "XAgentToolAdapter",
     "XAgentMemoryAdapter",
     "XAgentLoggerAdapter",
+    "XAgentSkillAdapter",
+    "create_skill_adapter",
 ]
