@@ -39,6 +39,23 @@ def _get_tools_config():
         return None
 
 
+def _get_workspace_path() -> str:
+    """Get workspace path from config manager.
+    
+    Returns:
+        Workspace path string, defaults to ~/.x-agent/workspace
+    """
+    try:
+        from ...config.manager import ConfigManager
+        workspace_path = ConfigManager().config.workspace.path
+        # Expand ~ to user home directory
+        from pathlib import Path
+        return str(Path(workspace_path).expanduser().resolve())
+    except Exception:
+        from pathlib import Path
+        return str(Path("~/.x-agent/workspace").expanduser().resolve())
+
+
 # Commands that require special handling (always blocked)
 SENSITIVE_COMMANDS = {
     "sudo",
@@ -217,6 +234,13 @@ class RunInTerminalTool(BaseTool):
                 "apt", "apt-get", "yum", "dnf", "pacman", "brew",
             }
         
+        # Load default working directory
+        if config is not None and config.terminal_default_workdir:
+            self.default_workdir = config.terminal_default_workdir
+        else:
+            # Fall back to workspace path
+            self.default_workdir = _get_workspace_path()
+        
         logger.info(
             "Terminal tool configuration loaded",
             extra={
@@ -224,6 +248,7 @@ class RunInTerminalTool(BaseTool):
                 "high_risk_count": len(self.high_risk_commands),
                 "timeout": self.default_timeout,
                 "max_output": self.max_output_length,
+                "default_workdir": self.default_workdir,
             }
         )
     
@@ -525,17 +550,34 @@ class RunInTerminalTool(BaseTool):
             )
         
         # Validate working directory
-        is_valid, error = self._validate_working_dir(working_dir)
+        # Use configured default workdir if "." is passed
+        actual_working_dir = working_dir
+        if working_dir == "." and hasattr(self, 'default_workdir') and self.default_workdir:
+            actual_working_dir = self.default_workdir
+            logger.debug(
+                "Using configured default working directory",
+                extra={"default_workdir": actual_working_dir}
+            )
+        
+        is_valid, error = self._validate_working_dir(actual_working_dir)
         if not is_valid:
             return ToolResult.error_result(error or "Invalid working directory")
         
         # Resolve working directory
         try:
-            cwd = Path(working_dir).expanduser().resolve()
+            cwd = Path(actual_working_dir).expanduser().resolve()
             if not cwd.exists():
-                return ToolResult.error_result(f"Working directory not found: {working_dir}")
+                # Try to create workspace directory if it doesn't exist
+                if actual_working_dir == self.default_workdir:
+                    cwd.mkdir(parents=True, exist_ok=True)
+                    logger.info(
+                        "Created default workspace directory",
+                        extra={"path": str(cwd)}
+                    )
+                else:
+                    return ToolResult.error_result(f"Working directory not found: {actual_working_dir}")
             if not cwd.is_dir():
-                return ToolResult.error_result(f"Not a directory: {working_dir}")
+                return ToolResult.error_result(f"Not a directory: {actual_working_dir}")
         except Exception as e:
             return ToolResult.error_result(f"Invalid working directory: {str(e)}")
         

@@ -1,0 +1,295 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://x-agent.io/schemas/skill-manifest.json",
+    "title": "Skill Manifest",
+    "description": "X-Agent 技能清单 Schema 定义",
+    "type": "object",
+    "required": [
+        "skill_id",
+        "name",
+        "version",
+        "description"
+    ],
+    "properties": {
+        "skill_id": {
+            "type": "string",
+            "description": "技能唯一标识 (kebab-case)",
+            "pattern": "^[a-z0-9-]+$",
+            "minLength": 1,
+            "maxLength": 64
+        },
+        "name": {
+            "type": "string",
+            "description": "显示名称",
+            "minLength": 1,
+            "maxLength": 128
+        },
+        "version": {
+            "type": "string",
+            "description": "语义版本 (semver)",
+            "pattern": "^\\d+\\.\\d+\\.\\d+.*$"
+        },
+        "vendor": {
+            "type": "string",
+            "description": "供应商/作者"
+        },
+        "signature": {
+            "type": "string",
+            "description": "数字签名"
+        },
+        "description": {
+            "type": "string",
+            "description": "简短描述（一句话）",
+            "minLength": 1,
+            "maxLength": 1024
+        },
+        "description_detail": {
+            "type": "string",
+            "description": "详细描述"
+        },
+        "tags": {
+            "type": "array",
+            "description": "标签列表",
+            "items": {
+                "type": "string"
+            }
+        },
+        "domains": {
+            "type": "array",
+            "description": "领域",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "document",
+                    "web",
+                    "data",
+                    "code",
+                    "communication",
+                    "automation",
+                    "analysis",
+                    "creative",
+                    "utility"
+                ]
+            }
+        },
+        "examples": {
+            "type": "array",
+            "description": "使用示例",
+            "items": {
+                "type": "string"
+            }
+        },
+        "input_schema": {
+            "type": "object",
+            "description": "输入参数 JSON Schema"
+        },
+        "output_schema": {
+            "type": "object",
+            "description": "输出 JSON Schema"
+        },
+        "error_schema": {
+            "type": "object",
+            "description": "错误格式 Schema"
+        },
+        "endpoint": {
+            "type": "string",
+            "description": "调用端点/入口"
+        },
+        "callable": {
+            "type": "string",
+            "description": "可调用对象路径"
+        },
+        "timeout_ms": {
+            "type": "integer",
+            "description": "超时时间（毫秒）",
+            "default": 30000,
+            "minimum": 1000,
+            "maximum": 600000
+        },
+        "max_retries": {
+            "type": "integer",
+            "description": "最大重试次数",
+            "default": 3,
+            "minimum": 0,
+            "maximum": 10
+        },
+        "idempotency": {
+            "type": "boolean",
+            "description": "是否幂等",
+            "default": false
+        },
+        "preconditions": {
+            "type": "array",
+            "description": "前置条件",
+            "items": {
+                "type": "string"
+            }
+        },
+        "postconditions": {
+            "type": "array",
+            "description": "后置条件",
+            "items": {
+                "type": "string"
+            }
+        },
+        "invariants": {
+            "type": "array",
+            "description": "不变式",
+            "items": {
+                "type": "string"
+            }
+        },
+        "os": {
+            "type": "array",
+            "description": "OS 限制",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "darwin",
+                    "linux",
+                    "windows"
+                ]
+            }
+        },
+        "requires_bins": {
+            "type": "array",
+            "description": "必需的二进制",
+            "items": {
+                "type": "string"
+            }
+        },
+        "requires_env": {
+            "type": "array",
+            "description": "必需的环境变量",
+            "items": {
+                "type": "string"
+            }
+        },
+        "requires_config": {
+            "type": "array",
+            "description": "必需的配置",
+            "items": {
+                "type": "string"
+            }
+        },
+        "risk_level": {
+            "type": "string",
+            "description": "风险等级",
+            "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+            ],
+            "default": "low"
+        },
+        "data_access": {
+            "type": "string",
+            "description": "数据访问级别",
+            "enum": [
+                "read_only",
+                "read_write",
+                "create",
+                "delete",
+                "execute"
+            ],
+            "default": "read_only"
+        },
+        "side_effect": {
+            "type": "boolean",
+            "description": "是否有副作用",
+            "default": false
+        },
+        "required_auth": {
+            "type": "array",
+            "description": "所需权限",
+            "items": {
+                "type": "string"
+            }
+        },
+        "approval_mode": {
+            "type": "string",
+            "description": "审批模式",
+            "enum": [
+                "auto",
+                "confirm",
+                "approval",
+                "manual"
+            ],
+            "default": "auto"
+        },
+        "always": {
+            "type": "boolean",
+            "description": "始终加载",
+            "default": false
+        },
+        "auto_trigger": {
+            "type": "boolean",
+            "description": "允许自动触发",
+            "default": true
+        },
+        "user_invocable": {
+            "type": "boolean",
+            "description": "用户可调用",
+            "default": true
+        },
+        "disable_model_invocation": {
+            "type": "boolean",
+            "description": "禁用模型调用",
+            "default": false
+        },
+        "telemetry": {
+            "type": "boolean",
+            "description": "启用遥测",
+            "default": true
+        },
+        "trace_fields": {
+            "type": "array",
+            "description": "追踪字段",
+            "items": {
+                "type": "string"
+            }
+        },
+        "redaction_rules": {
+            "type": "array",
+            "description": "脱敏规则",
+            "items": {
+                "type": "string"
+            }
+        },
+        "stages": {
+            "type": "array",
+            "description": "执行阶段",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "dry-run",
+                    "plan",
+                    "confirm",
+                    "commit",
+                    "rollback"
+                ]
+            }
+        },
+        "supports_dry_run": {
+            "type": "boolean",
+            "description": "支持预演",
+            "default": false
+        },
+        "supports_rollback": {
+            "type": "boolean",
+            "description": "支持回滚",
+            "default": false
+        },
+        "emoji": {
+            "type": "string",
+            "description": "展示图标"
+        },
+        "homepage": {
+            "type": "string",
+            "description": "主页链接",
+            "format": "uri"
+        }
+    },
+    "additionalProperties": true
+}

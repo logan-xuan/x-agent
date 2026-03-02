@@ -24,6 +24,21 @@ interface UseChatReturn {
 
 const API_BASE_URL = '/api/v1';
 
+/**
+ * 构建 WebSocket 基础 URL
+ * 在开发环境下使用当前页面的 host/port，让 Vite 代理 WebSocket 请求
+ */
+function getDefaultWsBaseUrl(): string {
+  // 如果设置了环境变量，使用环境变量
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
+
+  // 否则使用当前页面的 host/port，让 Vite 代理处理
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+}
+
 /** Format system log content for display */
 function formatSystemLogContent(
   logType: string | undefined,
@@ -56,7 +71,7 @@ function formatSystemLogContent(
 
 export function useChat({
   sessionId,
-  wsBaseUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8888/ws',
+  wsBaseUrl = getDefaultWsBaseUrl(),
 }: UseChatOptions): UseChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);

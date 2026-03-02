@@ -66,6 +66,11 @@ class LoggingConfig(BaseModel):
     server_log_file: str = Field(default="logs/server.log", description="Server log file path")
     server_log_max_size: str = Field(default="10MB", description="Max server log file size")
     server_log_backup_count: int = Field(default=3, ge=0, description="Number of server log backups")
+    
+    # AgentLogger file persistence configuration
+    agent_log_file: str = Field(default="logs/agent-core.log", description="AgentLogger log file path")
+    agent_log_max_size: str = Field(default="20MB", description="Max AgentLogger log file size")
+    agent_log_backup_count: int = Field(default=5, ge=0, description="Number of AgentLogger log backups")
 
 
 class WorkspaceConfig(BaseModel):
@@ -284,6 +289,10 @@ class ToolsConfig(BaseModel):
             "brew",
         ],
         description="List of high-risk commands requiring user confirmation"
+    )
+    terminal_default_workdir: str = Field(
+        default="",
+        description="Default working directory for terminal commands (empty = use workspace path from workspace.path config)"
     )
 
 

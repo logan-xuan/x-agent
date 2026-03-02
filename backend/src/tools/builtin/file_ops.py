@@ -18,6 +18,54 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# Office Open XML file extensions and their corresponding skills
+OFFICE_EXTENSIONS = {
+    ".pptx": "pptx",
+    ".xlsx": "xlsx", 
+    ".docx": "docx",
+}
+
+# ZIP file magic bytes (Office Open XML files are ZIP archives)
+ZIP_MAGIC_BYTES = b"PK"
+
+
+def _get_workspace_path() -> Path:
+    """获取配置的 workspace 路径.
+    
+    Returns:
+        workspace 路径，如果配置加载失败则返回默认路径
+    """
+    try:
+        from ...config.manager import ConfigManager
+        workspace_path = ConfigManager().config.workspace.path
+        return Path(workspace_path).expanduser().resolve()
+    except Exception:
+        return Path("~/.x-agent/workspace").expanduser().resolve()
+
+
+def _resolve_file_path(file_path: str) -> Path:
+    """解析文件路径.
+    
+    如果是相对路径，则相对于 workspace 目录解析。
+    如果是绝对路径，则直接使用。
+    
+    Args:
+        file_path: 用户提供的文件路径
+    
+    Returns:
+        解析后的绝对路径
+    """
+    path = Path(file_path).expanduser()
+    
+    # 如果是绝对路径，直接返回
+    if path.is_absolute():
+        return path.resolve()
+    
+    # 相对路径：相对于 workspace 目录
+    workspace = _get_workspace_path()
+    return (workspace / path).resolve()
+
+
 class ReadFileTool(BaseTool):
     """Tool to read file contents.
     
@@ -54,7 +102,7 @@ class ReadFileTool(BaseTool):
             ToolResult with file contents or error
         """
         try:
-            path = Path(file_path).expanduser().resolve()
+            path = _resolve_file_path(file_path)
             
             if not path.exists():
                 return ToolResult.error_result(f"File not found: {file_path}")
@@ -145,7 +193,34 @@ class WriteFileTool(BaseTool):
             ToolResult with success or error
         """
         try:
-            path = Path(file_path).expanduser().resolve()
+            path = _resolve_file_path(file_path)
+            
+            # Validate Office file formats
+            # Office Open XML files (.pptx, .xlsx, .docx) must be ZIP archives, not plain text
+            file_ext = path.suffix.lower()
+            if file_ext in OFFICE_EXTENSIONS:
+                skill_name = OFFICE_EXTENSIONS[file_ext]
+                # Check if content looks like valid ZIP (Office files are ZIP archives)
+                content_bytes = content.encode('utf-8', errors='replace')
+                if not content_bytes.startswith(ZIP_MAGIC_BYTES):
+                    logger.warning(
+                        "Blocked invalid Office file creation",
+                        extra={
+                            "file_path": str(path),
+                            "extension": file_ext,
+                            "content_preview": content[:50],
+                            "suggested_skill": skill_name,
+                        }
+                    )
+                    return ToolResult.error_result(
+                        f"Cannot create {file_ext} file with plain text content. "
+                        f"Office files ({file_ext}) require proper binary format (Office Open XML/ZIP). "
+                        f"Please use the '{skill_name}' skill to create valid {file_ext} files: "
+                        f"invoke the /{skill_name} command or let the system auto-trigger the skill.",
+                        invalid_format=True,
+                        suggested_skill=skill_name,
+                        file_extension=file_ext,
+                    )
             
             # Create parent directories if needed
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,7 +289,7 @@ class ListDirTool(BaseTool):
             ToolResult with directory contents
         """
         try:
-            dir_path = Path(path).expanduser().resolve()
+            dir_path = _resolve_file_path(path)
             
             if not dir_path.exists():
                 return ToolResult.error_result(f"Directory not found: {path}")
