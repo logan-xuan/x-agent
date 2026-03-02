@@ -237,8 +237,19 @@ export function useAgent({
     const { status, send } = useWebSocket({
         url: wsUrl,
         onMessage: handleWebSocketMessage,
-        onConnect: () => {
+        onConnect: async () => {
             console.log('[Agent] WebSocket connected');
+
+            // 重连成功后，自动加载最新的历史消息
+            if (currentSessionId && messages.length > 0) {
+                try {
+                    console.log('[Agent] Reconnected, reloading history...');
+                    await loadHistory(currentSessionId);
+                    console.log('[Agent] History reloaded successfully');
+                } catch (error) {
+                    console.error('[Agent] Failed to reload history after reconnection:', error);
+                }
+            }
         },
         onDisconnect: () => {
             console.log('[Agent] WebSocket disconnected');
@@ -248,6 +259,9 @@ export function useAgent({
             console.error('[Agent] WebSocket error:', error);
             setIsLoading(false);
         },
+        reconnect: true, // 启用自动重连
+        maxReconnectAttempts: 10, // 增加重连次数，应对长时间任务
+        reconnectInterval: 3000, // 3秒重连间隔
     });
 
     // 发送消息

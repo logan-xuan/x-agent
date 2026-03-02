@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
+export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
 
 interface UseWebSocketOptions {
   url: string;
@@ -11,6 +11,9 @@ interface UseWebSocketOptions {
   onDisconnect?: () => void;
   onError?: (error: Event) => void;
   heartbeatInterval?: number;
+  reconnect?: boolean; // 是否启用自动重连
+  maxReconnectAttempts?: number; // 最大重连次数
+  reconnectInterval?: number; // 重连间隔（毫秒）
 }
 
 interface UseWebSocketReturn {
@@ -29,12 +32,18 @@ export function useWebSocket({
   onDisconnect,
   onError,
   heartbeatInterval = 30000, // 30 seconds default
+  reconnect = true, // 默认启用自动重连
+  maxReconnectAttempts = 5,
+  reconnectInterval = 3000, // 3 秒
 }: UseWebSocketOptions): UseWebSocketReturn {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const wsRef = useRef<WebSocket | null>(null);
   const connectionIdRef = useRef(0);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const missedHeartbeatsRef = useRef(0);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shouldReconnectRef = useRef(true); // 用于控制是否应该重连
 
   // Store callbacks in refs
   const onMessageRef = useRef(onMessage);
@@ -144,6 +153,12 @@ export function useWebSocket({
     ws.onopen = () => {
       console.log('[WS_OPEN] Connection opened');
       if (connectionId === connectionIdRef.current) {
+        // 重连成功，重置计数器
+        if (reconnectAttemptsRef.current > 0) {
+          console.log('[WS_RECONNECT] Reconnection successful!');
+          reconnectAttemptsRef.current = 0;
+        }
+
         setStatus('connected');
         missedHeartbeatsRef.current = 0;
         startHeartbeat();
@@ -151,12 +166,50 @@ export function useWebSocket({
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log('[WS_CLOSE] Connection closed:', { code: event.code, reason: event.reason, wasClean: event.wasClean });
+
       // Always update status if this was our connection
       if (connectionId === connectionIdRef.current) {
         wsRef.current = null;
         clearHeartbeat();
-        setStatus('disconnected');
+
+        // 从缓存中移除
+        if (connectionCache.get(url) === ws) {
+          connectionCache.delete(url);
+        }
+
+        // 判断是否需要自动重连
+        const shouldAttemptReconnect =
+          reconnect &&
+          shouldReconnectRef.current &&
+          reconnectAttemptsRef.current < maxReconnectAttempts &&
+          // 非正常关闭（1000 = 正常关闭）
+          event.code !== 1000;
+
+        if (shouldAttemptReconnect) {
+          reconnectAttemptsRef.current++;
+          setStatus('reconnecting');
+
+          console.log(
+            `[WS_RECONNECT] Attempting reconnection (${reconnectAttemptsRef.current}/${maxReconnectAttempts}) in ${reconnectInterval}ms`
+          );
+
+          // 延迟重连
+          reconnectTimerRef.current = setTimeout(() => {
+            if (shouldReconnectRef.current && connectionId === connectionIdRef.current) {
+              console.log('[WS_RECONNECT] Initiating reconnection...');
+              // 触发重新连接（通过增加 connectionId）
+              connectionIdRef.current++;
+            }
+          }, reconnectInterval);
+        } else {
+          setStatus('disconnected');
+          if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+            console.warn('[WS_RECONNECT] Max reconnection attempts reached');
+          }
+        }
+
         onDisconnectRef.current?.();
       }
     };
@@ -192,6 +245,13 @@ export function useWebSocket({
       // Mark this connection as stale
       connectionIdRef.current++;
       clearHeartbeat();
+
+      // 停止自动重连
+      shouldReconnectRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
 
       // 延迟关闭连接，给 StrictMode 重新挂载的机会
       const timeoutId = setTimeout(() => {

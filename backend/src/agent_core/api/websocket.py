@@ -33,7 +33,7 @@ from ..agent import Agent
 from ..config import AgentCoreConfig
 from ..adapters.llm_adapter import XAgentLLMAdapter
 from ..adapters.tool_adapter import XAgentToolAdapter
-from ..types import AgentEndEvent, UserMessage, AssistantMessage
+from ..types import AgentEndEvent, UserMessage, AssistantMessage, MessageUpdateEvent, MessageEndEvent
 from ..skill_dispatcher import (
     SkillCommandResolver,
     SkillPromptRewriter,
@@ -438,13 +438,46 @@ async def _handle_message(
 ) -> None:
     """处理用户消息.
     
+    改进: 用户消息在发送到 LLM 之前就持久化，避免因连接断开导致消息丢失。
+    
     Args:
         websocket: WebSocket 连接
         agent: Agent 实例
         content: 用户消息内容
         session_id: 会话 ID
     """
+    user_msg_id = None
+    assistant_msg_id = None
+    assistant_content = []  # 收集 assistant 响应内容
+    
     try:
+        # ===== 改进 1: 先持久化用户消息 =====
+        # 在发送到 LLM 之前就保存用户消息，避免因连接断开导致丢失
+        try:
+            session_manager = _get_session_manager()
+            user_msg = await session_manager.add_message(
+                session_id=session_id,
+                role="user",
+                content=content,
+            )
+            user_msg_id = user_msg.id
+            logger.info(
+                "User message persisted before LLM call",
+                extra={
+                    "session_id": session_id,
+                    "message_id": user_msg_id,
+                    "content_length": len(content),
+                }
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to persist user message before LLM call",
+                extra={
+                    "session_id": session_id,
+                    "error": str(e),
+                }
+            )
+        
         # 动态匹配技能并注入 prompt
         skill_prompt, invocation = _match_and_load_skill_prompt(content)
         
@@ -471,11 +504,31 @@ async def _handle_message(
         async for event in agent.prompt(actual_content):
             ws_msg = convert_event_to_websocket(event)
             if ws_msg:
-                await websocket.send_json(ws_msg)
+                try:
+                    await websocket.send_json(ws_msg)
+                except Exception as ws_error:
+                    # WebSocket 发送失败，但继续执行以便完成持久化
+                    logger.warning(
+                        "WebSocket send failed, continuing for persistence",
+                        extra={
+                            "session_id": session_id,
+                            "error": str(ws_error),
+                        }
+                    )
             
-            # 在 AgentEndEvent 时持久化消息
+            # ===== 改进 2: 收集 assistant 响应内容 =====
+            if isinstance(event, MessageUpdateEvent) and event.delta_type == "text":
+                # 收集流式响应的增量文本
+                assistant_content.append(event.delta)
+            elif isinstance(event, MessageEndEvent) and event.message:
+                # 消息结束时收集完整内容
+                get_text_fn = getattr(event.message, 'get_text', None)
+                if get_text_fn:
+                    assistant_content.append(get_text_fn())
+            
+            # 在 AgentEndEvent 时持久化 assistant 消息
             if isinstance(event, AgentEndEvent):
-                await _persist_messages(session_id, content, event)
+                await _persist_assistant_message(session_id, event, user_msg_id)
         
         # 恢复原始 system prompt（如果有注入）
         if skill_prompt:
@@ -489,35 +542,54 @@ async def _handle_message(
                 "error": str(e),
             }
         )
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e),
-        })
+        
+        # ===== 改进 3: 即使出错也尝试保存部分响应 =====
+        if assistant_content:
+            try:
+                session_manager = _get_session_manager()
+                await session_manager.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content="".join(assistant_content),
+                    metadata={
+                        "status": "error_interrupted",
+                        "error": str(e),
+                    },
+                )
+                logger.info(
+                    "Partial assistant message saved after error",
+                    extra={"session_id": session_id}
+                )
+            except Exception:
+                pass
+        
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e),
+            })
+        except Exception:
+            pass
 
 
-async def _persist_messages(
+async def _persist_assistant_message(
     session_id: str,
-    user_content: str,
     event: AgentEndEvent,
+    user_msg_id: str | None = None,
 ) -> None:
-    """持久化消息到会话.
+    """持久化 assistant 消息到会话.
+    
+    注意: 用户消息已在 _handle_message 中提前保存。
     
     Args:
         session_id: 会话 ID
-        user_content: 用户消息内容
         event: AgentEndEvent 包含新消息
+        user_msg_id: 关联的用户消息 ID (可选)
     """
     try:
         session_manager = _get_session_manager()
         
-        # 保存用户消息
-        await session_manager.add_message(
-            session_id=session_id,
-            role="user",
-            content=user_content,
-        )
-        
-        # 保存 assistant 消息
+        # 只保存 assistant 消息
         for msg in event.messages:
             if isinstance(msg, AssistantMessage):
                 await session_manager.add_message(
@@ -529,12 +601,21 @@ async def _persist_messages(
                         "provider": msg.provider,
                         "stop_reason": msg.stop_reason,
                         "usage": msg.usage,
+                        "user_msg_id": user_msg_id,  # 关联用户消息
                     },
                 )
+        
+        logger.info(
+            "Assistant message persisted",
+            extra={
+                "session_id": session_id,
+                "user_msg_id": user_msg_id,
+            }
+        )
     
     except Exception as e:
         logger.warning(
-            "Failed to persist messages",
+            "Failed to persist assistant message",
             extra={
                 "session_id": session_id,
                 "error": str(e),
@@ -625,6 +706,29 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
             "WebSocket disconnected",
             extra={"session_id": session_id}
         )
+        
+        # ===== 关键修复: 等待后台任务完成 =====
+        # 即使 WebSocket 断开，也要等待 message_task 执行完成
+        # 确保持久化和工具调用不被中断
+        if message_task and not message_task.done():
+            logger.info(
+                "Waiting for background task to complete after disconnect",
+                extra={"session_id": session_id}
+            )
+            try:
+                await message_task
+                logger.info(
+                    "Background task completed successfully after disconnect",
+                    extra={"session_id": session_id}
+                )
+            except Exception as task_error:
+                logger.error(
+                    "Background task failed after disconnect",
+                    extra={
+                        "session_id": session_id,
+                        "error": str(task_error),
+                    }
+                )
     
     except Exception as e:
         logger.error(
