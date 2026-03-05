@@ -29,6 +29,10 @@ from .context_port import (
     CompressionResult,
     CompressionStrategy,
 )
+from .system_prompt_port import (
+    SystemPromptPort,
+    IdentityInfo,
+)
 from .skill_port import (
     SkillPort,
     SkillMetadata,
@@ -57,6 +61,9 @@ __all__ = [
     "ContextConfig",
     "CompressionResult",
     "CompressionStrategy",
+    # SystemPrompt 相关类型
+    "SystemPromptPort",
+    "IdentityInfo",
     # Skill 相关类型
     "SkillMetadata",
     "SkillContext",

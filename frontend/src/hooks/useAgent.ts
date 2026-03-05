@@ -16,6 +16,8 @@
 
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useWebSocket, ConnectionStatus } from './useWebSocket';
+import { getSession, createSession as createSessionApi } from '../services/api';
+import type { Message } from '../types';
 
 /** Agent 工具调用状态 */
 export type AgentToolCallStatus = 'executing' | 'completed' | 'error';
@@ -71,8 +73,6 @@ interface UseAgentReturn {
     createSession: (title?: string) => Promise<{ id: string; title: string }>;
     loadHistory: (sessionId: string) => Promise<void>;
 }
-
-const API_BASE_URL = '/api/v1';
 
 /**
  * 构建 WebSocket 基础 URL
@@ -306,48 +306,39 @@ export function useAgent({
         pendingToolCallsRef.current.clear();
     }, []);
 
-    // 创建新会话
+    // 创建新会话，调用后端 API 持久化 session 记录
     const createSession = useCallback(async (title?: string): Promise<{ id: string; title: string }> => {
-        const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title }),
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to create session');
-        }
-
-        const session = await response.json();
+        const session = await createSessionApi(title || 'Agent 对话');
         setCurrentSessionId(session.id);
         setMessages([]);
-        return session;
+        return { id: session.id, title: session.title ?? 'Agent 对话' };
     }, []);
 
-    // 加载会话历史
+    // 加载会话历史，从后端 API 恢复持久化的消息
     const loadHistory = useCallback(async (sid: string) => {
+        setCurrentSessionId(sid);
         try {
-            const response = await fetch(`${API_BASE_URL}/chat/sessions/${sid}/history`);
-
-            if (!response.ok) {
-                throw new Error('Failed to load history');
-            }
-
-            const history = await response.json();
-            // 转换为 AgentMessage 格式
-            const agentMessages: AgentMessage[] = history.map((msg: any) => ({
-                id: msg.id || `msg-${Date.now()}-${Math.random()}`,
-                sessionId: sid,
-                role: msg.role as 'user' | 'assistant',
-                content: msg.content,
-                createdAt: msg.created_at || new Date().toISOString(),
-                model: msg.metadata?.model,
-                provider: msg.metadata?.provider,
-            }));
+            const { messages: historyMessages } = await getSession(sid);
+            const agentMessages: AgentMessage[] = historyMessages
+                .filter((msg: Message) => msg.role === 'user' || msg.role === 'assistant')
+                .map((msg: Message) => ({
+                    id: msg.id,
+                    sessionId: msg.session_id,
+                    role: msg.role as 'user' | 'assistant',
+                    content: msg.content,
+                    createdAt: msg.created_at,
+                    model: msg.metadata?.model,
+                    provider: undefined,
+                    stopReason: undefined,
+                    usage: undefined,
+                    toolCalls: undefined,
+                    thinking: undefined,
+                }));
             setMessages(agentMessages);
-            setCurrentSessionId(sid);
+            console.log('[Agent] History loaded:', agentMessages.length, 'messages');
         } catch (error) {
-            console.error('Failed to load history:', error);
+            console.warn('[Agent] Failed to load history for session:', sid, error);
+            // 重新抛出错误，让调用方（App.tsx）能够捕获并创建新 session
             throw error;
         }
     }, []);

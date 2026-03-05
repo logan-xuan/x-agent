@@ -25,7 +25,13 @@ class ToolSemanticMap:
         "write_file": {
             "type": "builtin_tool", 
             "module": "src.tools.builtin.file_ops",
-            "description": "写入文件到本地",
+            "description": "写入文件到本地（全量覆写）",
+            "can_call_directly": True
+        },
+        "edit_file": {
+            "type": "builtin_tool",
+            "module": "src.tools.builtin.file_ops",
+            "description": "局部编辑文件（搜索替换指定文本）",
             "can_call_directly": True
         },
         "run_in_terminal": {
@@ -50,12 +56,6 @@ class ToolSemanticMap:
             "type": "builtin_tool",
             "module": "src.services.smart_memory",
             "description": "记忆存储和检索",
-            "can_call_directly": True
-        },
-        "browser_use": {
-            "type": "builtin_tool",
-            "module": "src.tools.browser_use",
-            "description": "浏览器自动化",
             "can_call_directly": True
         },
         "list_dir": {

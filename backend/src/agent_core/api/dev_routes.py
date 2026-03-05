@@ -80,6 +80,7 @@ class LLMCallResponse(BaseModel):
     # 详细内容（可选）
     system_prompt: str | None = None
     messages: list[dict] | None = None
+    tools: list[dict] | None = None
     response_content: Any | None = None
 
 
@@ -174,6 +175,7 @@ def _llm_call_to_response(log, include_content: bool = False) -> LLMCallResponse
     if include_content:
         response.system_prompt = log.system_prompt if hasattr(log, 'system_prompt') else None
         response.messages = log.messages
+        response.tools = log.tools if hasattr(log, 'tools') else None
         response.response_content = log.response_content
     
     return response

@@ -1,6 +1,8 @@
 """X-Agent main application entry point."""
 
 import asyncio
+import sys
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -11,12 +13,70 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api.middleware import ErrorHandlerMiddleware, TracingMiddleware
 from .api.middleware.rate_limit import RateLimitMiddleware
 from .config.manager import ConfigManager
-from .core.context import context_manager, ContextSource
+from .conversation.context import context_manager, ContextSource
 from .services.storage import init_storage, close_storage
 from .services.llm.router import LLMRouter
 from .utils.logger import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+
+def _install_global_exception_hooks() -> None:
+    """Install global exception hooks to catch ALL unhandled exceptions.
+    
+    Covers two blind spots that ErrorHandlerMiddleware cannot reach:
+    1. sys.excepthook — uncaught synchronous exceptions (e.g. background threads)
+    2. asyncio exception handler — uncaught async exceptions (e.g. fire-and-forget tasks)
+    
+    These hooks ensure that no exception is silently swallowed anywhere in the system.
+    """
+    # 1. Synchronous uncaught exceptions
+    original_excepthook = sys.excepthook
+
+    def global_excepthook(exc_type, exc_value, exc_tb):
+        if exc_type is KeyboardInterrupt:
+            original_excepthook(exc_type, exc_value, exc_tb)
+            return
+        logger.critical(
+            "Uncaught exception (sys.excepthook)",
+            extra={
+                "error_type": exc_type.__name__,
+                "error": str(exc_value),
+                "traceback": "".join(traceback.format_exception(exc_type, exc_value, exc_tb)),
+            },
+        )
+        original_excepthook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = global_excepthook
+
+    # 2. Asyncio uncaught exceptions (fire-and-forget tasks, callbacks)
+    def asyncio_exception_handler(loop, context):
+        exception = context.get("exception")
+        message = context.get("message", "Unhandled async exception")
+        
+        if exception:
+            logger.critical(
+                f"Uncaught async exception: {message}",
+                extra={
+                    "error_type": type(exception).__name__,
+                    "error": str(exception),
+                    "traceback": "".join(traceback.format_exception(type(exception), exception, exception.__traceback__)),
+                    "async_context": {k: str(v) for k, v in context.items() if k != "exception"},
+                },
+            )
+        else:
+            logger.critical(
+                f"Uncaught async error: {message}",
+                extra={"async_context": {k: str(v) for k, v in context.items()}},
+            )
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(asyncio_exception_handler)
+    except RuntimeError:
+        pass
+
+    logger.info("Global exception hooks installed (sys.excepthook + asyncio handler)")
 
 # Global instances
 _config_manager: Optional[ConfigManager] = None
@@ -198,6 +258,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             extra={"error": str(e)}
         )
     
+    # 8. Install global exception hooks
+    _install_global_exception_hooks()
+    
     logger.info("X-Agent started successfully")
     
     yield
@@ -281,31 +344,27 @@ def create_app() -> FastAPI:
     app.add_middleware(TracingMiddleware)
     
     # === ROUTES ===
-    from .api.v1.chat import router as chat_router
     from .api.v1.config import router as config_router
     from .api.v1.context import router as context_router
     from .api.v1.dev import router as dev_router
     from .api.v1.health import router as health_router
-    from .api.v1.session import router as session_router
     from .api.v1.stats import router as stats_router
     from .api.v1.memory import router as memory_router
     from .api.v1.trace import router as trace_router
     from .api.v1.skills import router as skills_router
-    from .api.websocket import router as websocket_router
+    from .api.v1.sessions import router as sessions_router
     from .agent_core.api import agent_websocket_router, agent_rest_router
     
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
-    app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
     app.include_router(config_router, prefix="/api/v1", tags=["Config"])
     app.include_router(context_router, prefix="/api/v1", tags=["Context"])
-    app.include_router(session_router, prefix="/api/v1", tags=["Session"])
     app.include_router(stats_router, prefix="/api/v1", tags=["Stats"])
     app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
     app.include_router(dev_router, prefix="/api/v1", tags=["Developer"])
     app.include_router(trace_router, prefix="/api/v1", tags=["Trace"])
     app.include_router(skills_router, prefix="/api/v1", tags=["Skills"])
-    app.include_router(websocket_router, prefix="/ws", tags=["WebSocket"])
-    app.include_router(agent_websocket_router, prefix="/ws", tags=["Agent WebSocket"])
+    app.include_router(sessions_router, prefix="/api/v1", tags=["Sessions"])
+    app.include_router(agent_websocket_router, prefix="/ws", tags=["WebSocket"])
     app.include_router(agent_rest_router, prefix="/api/v1", tags=["Agent Logs"])
     
     return app

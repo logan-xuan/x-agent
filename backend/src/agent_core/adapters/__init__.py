@@ -8,6 +8,7 @@ from .tool_adapter import XAgentToolAdapter
 from .memory_adapter import XAgentMemoryAdapter
 from .logger_adapter import XAgentLoggerAdapter
 from .skill_adapter import XAgentSkillAdapter, create_skill_adapter
+from .system_prompt_adapter import XAgentSystemPromptAdapter, create_system_prompt_adapter
 
 __all__ = [
     "XAgentLLMAdapter",
@@ -16,4 +17,6 @@ __all__ = [
     "XAgentLoggerAdapter",
     "XAgentSkillAdapter",
     "create_skill_adapter",
+    "XAgentSystemPromptAdapter",
+    "create_system_prompt_adapter",
 ]

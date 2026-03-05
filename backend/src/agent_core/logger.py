@@ -150,6 +150,7 @@ class AgentLogger:
         backup_count: int = 5,
         when: str = "D",
         interval: int = 1,
+        load_history: bool = True,
     ) -> None:
         """初始化文件持久化.
         
@@ -159,6 +160,7 @@ class AgentLogger:
             backup_count: 备份文件数量
             when: 时间滚动间隔（D=天, H=小时, M=分钟, S=秒）
             interval: 滚动间隔乘数
+            load_history: 是否加载历史日志到内存
         """
         if self._file_persistence_enabled:
             return
@@ -192,6 +194,10 @@ class AgentLogger:
         )
         
         self._file_persistence_enabled = True
+        
+        # 加载历史日志
+        if load_history:
+            self._load_history_from_file()
     
     def _write_to_file(self, entry: dict[str, Any]) -> None:
         """写入日志到文件.
@@ -215,6 +221,166 @@ class AgentLogger:
             self._file_handler.emit(log_record)
         except Exception:
             pass  # 静默处理文件写入错误，不影响内存日志
+    
+    def _load_history_from_file(self) -> None:
+        """从日志文件加载历史数据到内存.
+        
+        只加载最近的日志（受内存限制大小约束），用于启动时恢复历史记录。
+        """
+        if not self._log_file or not self._log_file.exists():
+            return
+        
+        try:
+            # 读取日志文件（包括当前文件和最近的备份文件）
+            files_to_load = [self._log_file]
+            
+            # 查找备份文件（按时间倒序）
+            backup_files = sorted(
+                self._log_file.parent.glob(f"{self._log_file.name}*"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            
+            # 限制只加载最近的几个文件
+            for backup_file in backup_files[:3]:  # 最多加载3个文件
+                if backup_file != self._log_file:
+                    files_to_load.append(backup_file)
+            
+            # 按时间倒序加载日志
+            log_entries = []
+            llm_calls = {}
+            tool_calls = {}
+            
+            for log_file in files_to_load:
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            
+                            try:
+                                entry = json.loads(line)
+                                log_type = entry.get('type')
+                                
+                                if log_type == 'log_entry':
+                                    log_entries.append(entry)
+                                elif log_type == 'llm_call_start':
+                                    call_id = entry.get('call_id')
+                                    if call_id:
+                                        llm_calls[call_id] = entry
+                                elif log_type == 'llm_call_end':
+                                    call_id = entry.get('call_id')
+                                    if call_id and call_id in llm_calls:
+                                        llm_calls[call_id].update(entry)
+                                elif log_type == 'tool_call_start':
+                                    call_id = entry.get('call_id')
+                                    if call_id:
+                                        tool_calls[call_id] = entry
+                                elif log_type == 'tool_call_end':
+                                    call_id = entry.get('call_id')
+                                    if call_id and call_id in tool_calls:
+                                        tool_calls[call_id].update(entry)
+                            except json.JSONDecodeError:
+                                continue
+                except Exception:
+                    continue
+            
+            # 按时间排序，只保留最近的记录（受内存限制）
+            log_entries.sort(key=lambda e: e.get('timestamp', ''), reverse=True)
+            
+            # 转换并添加到内存（使用 log() 方法会触发重复写文件，这里直接操作内存）
+            with self._lock:
+                # 加载通用日志
+                for entry_dict in log_entries[:self.DEFAULT_MAX_LOGS]:
+                    try:
+                        # 跳过没有必需字段的记录
+                        if not entry_dict.get('timestamp'):
+                            continue
+                        
+                        log_entry = LogEntry(
+                            id=entry_dict.get('id', ''),
+                            trace_id=entry_dict.get('trace_id', ''),
+                            timestamp=datetime.fromisoformat(entry_dict['timestamp']),
+                            level=LogLevel(entry_dict['level']) if entry_dict.get('level') else LogLevel.INFO,
+                            category=LogCategory(entry_dict['category']) if entry_dict.get('category') else LogCategory.AGENT_LOOP,
+                            event=entry_dict.get('event', ''),
+                            message=entry_dict.get('message', ''),
+                            data=entry_dict.get('data', {}),
+                            duration_ms=entry_dict.get('duration_ms'),
+                            error=entry_dict.get('error'),
+                        )
+                        self._logs.append(log_entry)
+                        
+                        if log_entry.trace_id:
+                            self._trace_log_index.setdefault(log_entry.trace_id, []).append(log_entry.id)
+                    except Exception:
+                        continue
+                
+                # 加载 LLM 调用
+                for call_id, llm_dict in list(llm_calls.items())[:self.DEFAULT_MAX_LLM_CALLS]:
+                    try:
+                        # 跳过没有必需字段的记录
+                        if not llm_dict.get('timestamp'):
+                            continue
+                        
+                        llm_log = LLMCallLog(
+                            call_id=call_id,
+                            trace_id=llm_dict.get('trace_id', ''),
+                            start_time=datetime.fromisoformat(llm_dict['timestamp']),
+                            end_time=datetime.fromisoformat(llm_dict['end_time']) if llm_dict.get('end_time') else None,
+                            duration_ms=llm_dict.get('duration_ms'),
+                            model=llm_dict.get('model', ''),
+                            messages=llm_dict.get('messages', []),
+                            system_prompt=llm_dict.get('system_prompt', ''),
+                            response_content=llm_dict.get('response_content'),
+                            usage=llm_dict.get('usage'),
+                            status=llm_dict.get('status', 'pending'),
+                            error=llm_dict.get('error'),
+                        )
+                        self._llm_calls.append(llm_log)
+                        self._llm_call_map[call_id] = llm_log
+                        
+                        if llm_log.trace_id:
+                            self._trace_llm_index.setdefault(llm_log.trace_id, []).append(call_id)
+                    except Exception:
+                        continue
+                
+                # 加载工具调用
+                for call_id, tool_dict in list(tool_calls.items())[:self.DEFAULT_MAX_TOOL_CALLS]:
+                    try:
+                        # 跳过没有必需字段的记录
+                        if not tool_dict.get('timestamp'):
+                            continue
+                        
+                        tool_log = ToolCallLog(
+                            call_id=call_id,
+                            trace_id=tool_dict.get('trace_id', ''),
+                            llm_call_id=tool_dict.get('llm_call_id', ''),
+                            tool_name=tool_dict.get('tool_name', ''),
+                            tool_call_id=tool_dict.get('tool_call_id', ''),
+                            start_time=datetime.fromisoformat(tool_dict['timestamp']),
+                            end_time=datetime.fromisoformat(tool_dict['end_time']) if tool_dict.get('end_time') else None,
+                            duration_ms=tool_dict.get('duration_ms'),
+                            status=tool_dict.get('status', 'running'),
+                            arguments=tool_dict.get('arguments', {}),
+                            result=tool_dict.get('result'),
+                            is_error=tool_dict.get('is_error', False),
+                            error=tool_dict.get('error'),
+                        )
+                        self._tool_calls.append(tool_log)
+                        self._tool_call_map[call_id] = tool_log
+                        
+                        if tool_log.trace_id:
+                            self._trace_tool_index.setdefault(tool_log.trace_id, []).append(call_id)
+                        
+                        if tool_log.llm_call_id:
+                            self._llm_tool_index.setdefault(tool_log.llm_call_id, []).append(call_id)
+                    except Exception:
+                        continue
+        
+        except Exception:
+            pass  # 静默处理加载错误，不影响服务启动
     
     # ================================================================
     # LoggerPort 接口实现
@@ -270,7 +436,7 @@ class AgentLogger:
             if log.trace_id:
                 self._trace_llm_index.setdefault(log.trace_id, []).append(log.call_id)
         
-        # 写入 LLM 调用日志文件
+        # 写入 LLM 调用日志文件（传给 LLM 什么就记录什么，不能有遗漏）
         self._write_to_file({
             "type": "llm_call_start",
             "timestamp": log.start_time.isoformat() if log.start_time else datetime.now().isoformat(),
@@ -280,8 +446,12 @@ class AgentLogger:
             "model": log.model,
             "message_count": log.message_count,
             "estimated_tokens": log.estimated_tokens,
-            "messages": log.messages,  # 完整的 prompt
             "system_prompt": log.system_prompt,
+            "messages": log.messages,
+            "tools": log.tools,
+            "temperature": log.temperature,
+            "max_tokens": log.max_tokens,
+            "thinking_level": log.thinking_level,
         })
         
         # 同时写入通用日志

@@ -118,8 +118,17 @@ class _AgentLoopRunner:
         self.abort_event = abort_event
         self.prompts = prompts
 
-        # 追踪
-        self.trace_id = str(uuid.uuid4())[:12]
+        # 追踪 - 复用或生成 trace_id
+        # 优先从请求上下文获取 trace_id，确保整个请求链路一致
+        try:
+            from src.conversation.context import get_current_context
+        except ImportError:  # 兼容不同运行入口
+            from backend.src.conversation.context import get_current_context  # type: ignore
+        req_ctx = get_current_context()
+        if req_ctx and req_ctx.trace_id:
+            self.trace_id = req_ctx.trace_id
+        else:
+            self.trace_id = str(uuid.uuid4())[:12]
         self.start_time = time.time()
 
         # 日志器（可选）
@@ -164,6 +173,22 @@ class _AgentLoopRunner:
 
     async def run(self) -> AsyncGenerator[AgentEvent, None]:
         """主循环: 协调双层循环."""
+        try:
+            from src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext, ContextSource
+        except ImportError:
+            from backend.src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext, ContextSource  # type: ignore
+        req_ctx = get_current_context()
+        if not req_ctx:
+            # 如果没有上下文，创建一个新的
+            req_ctx = ReqContext(
+                trace_id=self.trace_id,
+                source=ContextSource.INTERNAL
+            )
+            set_current_context(req_ctx)
+        elif not req_ctx.trace_id:
+            # 如果上下文没有 trace_id，设置它
+            req_ctx.trace_id = self.trace_id
+
         async for ev in self._emit_start_events():
             yield ev
 

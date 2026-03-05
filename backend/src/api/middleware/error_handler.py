@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from ...core.context import get_current_context
+from ...conversation.context import get_current_context
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)

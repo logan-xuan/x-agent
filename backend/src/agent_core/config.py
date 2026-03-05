@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .ports.logger_port import LoggerPort
     from .ports.plan_port import PlanPort
     from .ports.context_port import ContextPort, ContextConfig
+    from .ports.system_prompt_port import SystemPromptPort
     from .ports.skill_port import SkillPort
     from .hooks import HookRegistry
     from .middleware import MiddlewareChain, MessageMiddleware, ToolMiddleware
@@ -84,6 +85,7 @@ class AgentCoreConfig:
     plan: "PlanPort | None" = None
     context: "ContextPort | None" = None
     skill: "SkillPort | None" = None
+    system_prompt_port: "SystemPromptPort | None" = None
     
     # === 模型配置 ===
     model: str = ""
@@ -205,6 +207,20 @@ class AgentCoreConfig:
             AgentCoreConfig: 返回自身以支持链式调用
         """
         self.context = context
+        return self
+    
+    def with_system_prompt_port(
+        self, system_prompt_port: "SystemPromptPort"
+    ) -> "AgentCoreConfig":
+        """设置系统提示词端口.
+        
+        Args:
+            system_prompt_port: 系统提示词构建端口
+        
+        Returns:
+            AgentCoreConfig: 返回自身以支持链式调用
+        """
+        self.system_prompt_port = system_prompt_port
         return self
     
     def with_skill(self, skill: "SkillPort") -> "AgentCoreConfig":

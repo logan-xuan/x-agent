@@ -56,7 +56,7 @@ export interface Session {
 }
 
 /** WebSocket message types */
-export type WebSocketMessageType = 
+export type WebSocketMessageType =
   | 'user_message'
   | 'assistant_start'
   | 'assistant_chunk'
@@ -163,6 +163,14 @@ export interface PromptLogEntry {
     messages: Array<{
       role: string;
       content: string;
+    }>;
+    tools?: Array<{
+      type: string;
+      function: {
+        name: string;
+        description: string;
+        parameters?: unknown;
+      };
     }>;
   };
   response: string;
@@ -322,6 +330,14 @@ export interface PromptLLMLogEntry {
     messages: Array<{
       role: string;
       content: string;
+    }>;
+    tools?: Array<{
+      type: string;
+      function: {
+        name: string;
+        description: string;
+        parameters?: unknown;
+      };
     }>;
   };
   response: string;

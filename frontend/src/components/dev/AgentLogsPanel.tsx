@@ -42,6 +42,7 @@ interface LLMCall {
     error: string | null;
     system_prompt?: string;
     messages?: Array<{ role: string; content: unknown }>;
+    tools?: Array<{ type: string; function: { name: string; description: string; parameters?: unknown } }>;
     response_content?: unknown;
 }
 
@@ -234,6 +235,58 @@ function PromptPreview({ systemPrompt, messages }: { systemPrompt?: string; mess
             {showFullPrompt && (
                 <div className="p-3 text-xs overflow-auto max-h-96 bg-gray-900 text-green-400 whitespace-pre-wrap font-mono">
                     {previewText || '(空)'}
+                </div>
+            )}
+        </div>
+    );
+}
+
+/** Tools 预览组件 - 展示传给 LLM 的可用工具列表 */
+function ToolsPreview({ tools }: { tools: Array<{ type: string; function: { name: string; description: string; parameters?: unknown } }> }) {
+    const [expanded, setExpanded] = useState(false);
+    const [expandedTool, setExpandedTool] = useState<string | null>(null);
+
+    return (
+        <div className="border border-gray-200 dark:border-gray-700 rounded overflow-hidden">
+            <div
+                className="px-3 py-2 bg-gray-50 dark:bg-gray-800 flex items-center justify-between cursor-pointer"
+                onClick={() => setExpanded(!expanded)}
+            >
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    🔧 可用工具
+                </span>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">{tools.length} 个工具</span>
+                    <span className="text-gray-400">{expanded ? '▼' : '▶'}</span>
+                </div>
+            </div>
+            {expanded && (
+                <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                    {tools.map((tool) => {
+                        const funcName = tool.function?.name || 'unknown';
+                        const funcDesc = tool.function?.description || '';
+                        const isToolExpanded = expandedTool === funcName;
+
+                        return (
+                            <div key={funcName} className="px-3 py-2">
+                                <div
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => setExpandedTool(isToolExpanded ? null : funcName)}
+                                >
+                                    <span className="text-xs text-gray-400">{isToolExpanded ? '▼' : '▶'}</span>
+                                    <code className="text-sm font-mono text-blue-600 dark:text-blue-400">{funcName}</code>
+                                    <span className="text-xs text-gray-400 truncate flex-1">
+                                        {funcDesc.slice(0, 80)}{funcDesc.length > 80 ? '...' : ''}
+                                    </span>
+                                </div>
+                                {isToolExpanded && (
+                                    <div className="mt-2 ml-5 p-2 bg-gray-900 rounded text-xs text-green-400 font-mono whitespace-pre-wrap overflow-auto max-h-48">
+                                        {JSON.stringify(tool, null, 2)}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -467,6 +520,11 @@ function DetailPanel({
                             </div>
                         </div>
                     </div>
+                )}
+
+                {/* Tools 列表 - 传给 LLM 的可用工具 */}
+                {llm.tools && llm.tools.length > 0 && (
+                    <ToolsPreview tools={llm.tools} />
                 )}
 
                 {llm.error && (

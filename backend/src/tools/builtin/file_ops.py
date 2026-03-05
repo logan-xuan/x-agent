@@ -66,6 +66,129 @@ def _resolve_file_path(file_path: str) -> Path:
     return (workspace / path).resolve()
 
 
+class EditFileTool(BaseTool):
+    """Tool to edit a file by replacing specific text.
+    
+    Performs a targeted search-and-replace within a file, modifying only the
+    matched portion while preserving the rest of the content. Much more efficient
+    and safer than rewriting the entire file with write_file.
+    """
+    
+    @property
+    def name(self) -> str:
+        return "edit_file"
+    
+    @property
+    def description(self) -> str:
+        return (
+            "Edit a file by replacing a specific piece of text with new text. "
+            "Only the matched section is changed; the rest of the file is preserved. "
+            "Use this instead of write_file when you need to modify part of an existing file. "
+            "The old_text must match exactly (including whitespace and indentation)."
+        )
+    
+    @property
+    def parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="file_path",
+                type=ToolParameterType.STRING,
+                description="The path to the file to edit. Can be absolute or relative.",
+                required=True,
+            ),
+            ToolParameter(
+                name="old_text",
+                type=ToolParameterType.STRING,
+                description="The exact text to find and replace. Must match the file content exactly, including whitespace and indentation.",
+                required=True,
+            ),
+            ToolParameter(
+                name="new_text",
+                type=ToolParameterType.STRING,
+                description="The new text to replace old_text with. Can be empty string to delete the matched text.",
+                required=True,
+            ),
+        ]
+    
+    async def execute(self, file_path: str, old_text: str, new_text: str) -> ToolResult:
+        """Execute the file edit operation.
+        
+        Args:
+            file_path: Path to the file to edit
+            old_text: Text to find
+            new_text: Replacement text
+            
+        Returns:
+            ToolResult with success or error
+        """
+        try:
+            path = _resolve_file_path(file_path)
+            
+            if not path.exists():
+                return ToolResult.error_result(f"File not found: {file_path}")
+            
+            if not path.is_file():
+                return ToolResult.error_result(f"Not a file: {file_path}")
+            
+            # Read current content
+            content = path.read_text(encoding="utf-8", errors="replace")
+            
+            # Check that old_text exists in the file
+            occurrence_count = content.count(old_text)
+            if occurrence_count == 0:
+                # Provide helpful context for debugging
+                preview_length = 200
+                content_preview = content[:preview_length]
+                if len(content) > preview_length:
+                    content_preview += "..."
+                return ToolResult.error_result(
+                    f"old_text not found in {file_path}. "
+                    f"Make sure the text matches exactly, including whitespace and indentation. "
+                    f"File starts with:\n{content_preview}"
+                )
+            
+            if occurrence_count > 1:
+                return ToolResult.error_result(
+                    f"old_text found {occurrence_count} times in {file_path}. "
+                    f"Please provide a more specific/unique text snippet to avoid ambiguous edits."
+                )
+            
+            # Perform the replacement (exactly one occurrence)
+            new_content = content.replace(old_text, new_text, 1)
+            
+            # Write back
+            path.write_text(new_content, encoding="utf-8")
+            
+            # Calculate change stats
+            old_lines = old_text.count("\n") + 1
+            new_lines = new_text.count("\n") + 1
+            
+            logger.info(
+                "File edited successfully",
+                extra={
+                    "file_path": str(path),
+                    "old_lines": old_lines,
+                    "new_lines": new_lines,
+                }
+            )
+            
+            return ToolResult.ok(
+                f"Successfully edited {path}: replaced {old_lines} line(s) with {new_lines} line(s).",
+                file_path=str(path),
+                old_lines=old_lines,
+                new_lines=new_lines,
+            )
+            
+        except PermissionError:
+            return ToolResult.error_result(f"Permission denied: {file_path}")
+        except Exception as e:
+            logger.error(
+                "Failed to edit file",
+                extra={"file_path": file_path, "error": str(e)}
+            )
+            return ToolResult.error_result(f"Failed to edit file: {str(e)}")
+
+
 class ReadFileTool(BaseTool):
     """Tool to read file contents.
     

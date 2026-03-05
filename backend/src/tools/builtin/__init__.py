@@ -12,7 +12,7 @@ This module provides the built-in tools that are always available:
 - fetch_web_content: Fetch web page content (NEW)
 """
 
-from .file_ops import ReadFileTool, WriteFileTool, ListDirTool, SearchFilesTool
+from .file_ops import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool, SearchFilesTool
 from .aliyun_web_search import AliyunWebSearchTool
 from .get_current_time import GetCurrentTimeTool
 from .fetch_web_content import FetchWebContentTool
@@ -21,6 +21,7 @@ from .terminal import RunInTerminalTool, GetTerminalOutputTool, KillProcessTool
 __all__ = [
     "ReadFileTool",
     "WriteFileTool",
+    "EditFileTool",
     "ListDirTool",
     "SearchFilesTool",
     "AliyunWebSearchTool",
@@ -45,6 +46,7 @@ def get_builtin_tools() -> list:
     return [
         ReadFileTool(),
         WriteFileTool(),
+        EditFileTool(),
         ListDirTool(),
         SearchFilesTool(),
         AliyunWebSearchTool(),

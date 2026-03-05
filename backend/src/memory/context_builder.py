@@ -21,7 +21,7 @@ from .models import (
     ToolDefinition,
 )
 from .spirit_loader import SpiritLoader
-from ..core.context_loader import ContextLoader, get_context_loader
+from ..conversation.context_loader import ContextLoader, get_context_loader
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -76,14 +76,19 @@ class ContextBuilder:
         logger.info("Building context")
         
         # ===== Bootstrap Detection (First-time startup) =====
-        # Check if BOOTSTRAP.md exists and get its content
+        # Only inject BOOTSTRAP.md if agent has NOT been initialized yet.
+        # Agent is considered "born" when IDENTITY.md exists with actual content.
+        identity_path = Path(self.workspace_path) / "IDENTITY.md"
+        agent_born = identity_path.exists() and identity_path.read_text(encoding="utf-8").strip()
+        
         bootstrap_status = self._context_loader.check_bootstrap()
-        if bootstrap_status.exists:
+        if bootstrap_status.exists and not agent_born:
             logger.info(
                 "BOOTSTRAP.md detected, content will be injected for Agent to process",
                 extra={"has_content": bool(bootstrap_status.content)}
             )
-            # DO NOT auto-delete - let Agent process it and decide when to delete
+        elif bootstrap_status.exists and agent_born:
+            logger.debug("Skipping BOOTSTRAP.md injection — agent already initialized")
         
         # ===== AGENTS.md Hot-Reload =====
         # Always check for AGENTS.md changes (hot-reload on every user query)
@@ -389,26 +394,12 @@ class ContextBuilder:
             parts.append("**重要**: 请按照上述指引与用户对话，完成身份设定后，用户会删除此文件。\n")
         
         # ===== AGENTS.md (Main Guidance - Level 0) =====
-        # Load AGENTS.md soft guidelines via PolicyEngine (hot-reload support)
-        # Only include soft guidelines relevant for LLM prompts, not hard constraints
-        from ..orchestrator.policy_engine import get_policy_engine
-        try:
-            policy_engine = get_policy_engine(self.workspace_path)
-            guidelines = policy_engine.build_system_prompt_guidelines()
-            if guidelines:
-                parts.append(guidelines)
-                parts.append("")  # Add spacing
-        except Exception as e:
-            logger.warning(
-                "Failed to load guidelines from PolicyEngine, falling back to direct content",
-                extra={"error": str(e)}
-            )
-            # Fallback to direct content loading if PolicyEngine fails
-            agents_content, _ = self._context_loader.load_agents_content()
-            if agents_content:
-                parts.append("# 行为规范指导")
-                parts.append(agents_content)
-                parts.append("")  # Add spacing
+        # Load AGENTS.md content directly
+        agents_content, _ = self._context_loader.load_agents_content()
+        if agents_content:
+            parts.append("# 行为规范指导")
+            parts.append(agents_content)
+            parts.append("")  # Add spacing
         
         # ===== AI Identity (SPIRIT.md + IDENTITY.md) =====
         # First, add AI name from IDENTITY.md

@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ...config.manager import ConfigManager
-from ...core.context import get_current_context, set_current_context as set_context, AgentContext
+from ...conversation.context import get_current_context, set_current_context as set_context, AgentContext
 from ...services.llm.router import LLMRouter
 from ...tools.builtin import AliyunWebSearchTool
 from ...utils.logger import get_logger

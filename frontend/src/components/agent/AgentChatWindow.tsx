@@ -188,7 +188,7 @@ export function AgentChatWindow({
                 <div className="flex items-center justify-between max-w-3xl mx-auto">
                     <div className="flex items-center gap-3">
                         <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-                            Agent Core
+                            X-AGENT
                         </h1>
                         {sessionId && (
                             <span className="text-xs text-gray-400 font-mono">

@@ -1,124 +1,37 @@
-# X-Agent Backend
+# AI学习指南PPT制作说明
 
-Personal AI Agent with modular architecture - Backend Service
+## 文件说明
+- `simple_ai_learning_ppt.txt` - 简洁版PPT内容大纲，共8页
+- `ai_learning_ppt_content.txt` - 详细版PPT内容，共10页
+- `ai_learning_ppt_outline.md` - Markdown格式大纲
 
-## Features
+## 制作PPT步骤
 
-- **High-Cohesion Configuration**: Unified YAML configuration with hot-reload support
-- **Vendor-Agnostic LLM**: Support multiple providers (OpenAI, Bailian, etc.) with primary/backup failover
-- **Modular Architecture**: Clean separation of concerns (API → Core → Services → Models)
-- **Structured Logging**: JSON format with request tracing
-- **Async Database**: SQLAlchemy 2.0 with aiosqlite for SQLite
+### 方法1：使用PowerPoint
+1. 打开Microsoft PowerPoint
+2. 根据`simple_ai_learning_ppt.txt`中的8页内容创建幻灯片
+3. 每页内容可以直接复制粘贴到幻灯片中
+4. 应用简洁的设计风格，使用统一的字体和颜色
 
-## Quick Start
+### 方法2：使用在线工具
+- 可以使用WPS Office、Google Slides等工具
+- 同样按照内容大纲制作
 
-1. Install dependencies:
-```bash
-pip install -e ".[dev]"
-```
+### 设计建议
+- 使用简洁的布局
+- 每页不超过7行文字
+- 适当添加图标或图片
+- 保持一致的配色方案
 
-2. Configure:
-```bash
-cp x-agent.yaml.example x-agent.yaml
-# Edit x-agent.yaml with your API keys
-```
+## 内容特色
+- 专注于快速入门
+- 包含2026年最新AI趋势
+- 强调实用性而非理论
+- 提供具体的学习路径
 
-3. Run:
-```bash
-python -m src.main
-```
+## 注意事项
+- 可根据实际需要调整内容
+- 建议在演示时添加实例说明
+- 鼓励听众动手实践
 
-The backend server will start on **http://localhost:8000** (as configured in `x-agent.yaml`).
-
-## Server Configuration
-
-The server configuration is defined in `x-agent.yaml`:
-
-- **Backend Port**: 8000 (configured in `server.port`)
-- **Frontend Port**: 5173 (for CORS configuration)
-- **Host**: 0.0.0.0 (accessible from all network interfaces)
-
-API endpoints are available at:
-- Health Check: http://localhost:8000/api/v1/health
-- Chat API: http://localhost:8000/api/v1/chat
-- WebSocket: http://localhost:8000/ws/chat
-- Developer Mode: http://localhost:8000/api/v1/dev/prompt-logs
-
-## Project Structure
-
-```
-backend/
-├── src/               # Source code
-│   ├── config/        # Configuration management
-│   ├── models/        # SQLAlchemy data models
-│   ├── services/      # Business services
-│   ├── utils/         # Utilities
-│   └── main.py        # Application entry
-├── tests/             # Test suites
-│   ├── unit/          # Unit tests
-│   └── integration/   # Integration tests
-├── scripts/           # Utility scripts
-│   ├── testing/       # Test scripts (temporary)
-│   ├── temp/          # Temporary scripts
-│   └── archive/       # Archived scripts
-├── docs/              # Documentation
-│   ├── integration/   # Integration guides
-│   ├── guides/        # How-to guides
-│   ├── references/    # Reference docs
-│   └── reports/       # Test reports
-├── logs/              # Log files
-├── skills/            # Skill definitions
-├── devtools/          # Development tools
-├── x-agent.yaml       # Configuration file
-└── README.md          # This file
-```
-
-## Testing
-
-Run tests:
-```bash
-# Run all tests
-pytest tests/
-
-# Run unit tests
-pytest tests/unit/
-
-# Run integration tests
-pytest tests/integration/
-```
-
-## Scripts
-
-Utility scripts are organized as follows:
-- `scripts/testing/` - Temporary test scripts for debugging
-- `scripts/temp/` - Temporary utility scripts
-- `scripts/archive/` - Archived scripts for reference
-
-## Documentation
-
-Documentation has been moved to the `docs/` directory:
-- `docs/integration/` - Integration guides (Aliyun OpenSearch, etc.)
-- `docs/guides/` - How-to guides (Log rotation, etc.)
-- `docs/references/` - Reference documentation
-- `docs/reports/` - Test reports and summaries
-
-## Configuration
-
-See `x-agent.yaml.example` for configuration options.
-
-## Logs
-
-Application logs are stored in `logs/`:
-- `x-agent.log` - Main application log
-- `prompt-llm.log` - LLM interaction logs
-
-## Cleanup
-
-To clean up temporary files:
-```bash
-# Remove old log files
-rm logs/*.log.*
-
-# Remove temporary test scripts
-rm scripts/testing/*.py
-```
+祝您制作顺利！

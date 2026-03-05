@@ -22,8 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -33,11 +32,11 @@ from ..agent import Agent
 from ..config import AgentCoreConfig
 from ..adapters.llm_adapter import XAgentLLMAdapter
 from ..adapters.tool_adapter import XAgentToolAdapter
-from ..types import AgentEndEvent, UserMessage, AssistantMessage, MessageUpdateEvent, MessageEndEvent
+from ..adapters.system_prompt_adapter import create_system_prompt_adapter
+from ..types import AgentEndEvent, AssistantMessage, MessageUpdateEvent, MessageEndEvent
 from ..skill_dispatcher import (
     SkillCommandResolver,
     SkillPromptRewriter,
-    SkillCommandSpec,
     SkillInvocation,
     build_skill_command_specs,
 )
@@ -84,7 +83,7 @@ def _get_tool_manager():
 
 def _get_session_manager():
     """获取 SessionManager 实例."""
-    from ...core.session import SessionManager
+    from ...conversation.session import SessionManager
     return SessionManager()
 
 
@@ -156,8 +155,9 @@ def _get_skill_command_resolver() -> Optional[SkillCommandResolver]:
 def create_agent_config() -> AgentCoreConfig:
     """创建 Agent 配置.
     
-    注入 LLM 和 Tool 适配器，并加载系统提示词。
-    使用共享的 AgentLogger 以便 REST API 可以查询日志。
+    注入 LLM、Tool、SystemPrompt 适配器。
+    系统提示词通过 SystemPromptPort 从 conversation 模块加载，
+    保持 agent_core 的独立性。
     
     Returns:
         AgentCoreConfig 实例
@@ -171,171 +171,19 @@ def create_agent_config() -> AgentCoreConfig:
     # 获取共享的 AgentLogger（与 REST API 共享）
     agent_logger = get_agent_logger()
     
-    # 加载系统提示词
-    system_prompt = _load_system_prompt()
+    # 通过 SystemPromptPort adapter 加载系统提示词
+    system_prompt_adapter = create_system_prompt_adapter()
+    system_prompt = system_prompt_adapter.build_system_prompt()
     
     return AgentCoreConfig(
         llm=llm_adapter,
         tools=tool_adapter,
         logger=agent_logger,
         system_prompt=system_prompt,
+        system_prompt_port=system_prompt_adapter,
     )
 
 
-def _load_identity(workspace_path: str):
-    """加载 IDENTITY.md.
-    
-    Args:
-        workspace_path: workspace 路径
-    
-    Returns:
-        IdentityConfig 或 None
-    """
-    from ...memory.models import IdentityConfig
-    from pathlib import Path
-    import re
-    
-    identity_path = Path(workspace_path) / "IDENTITY.md"
-    
-    if not identity_path.exists():
-        logger.debug("IDENTITY.md not found")
-        return None
-    
-    try:
-        content = identity_path.read_text(encoding="utf-8")
-        
-        config = IdentityConfig()
-        
-        # Parse name
-        name_match = re.search(r"\*\*Name:\*\*\s*(.+)", content)
-        if name_match:
-            config.name = name_match.group(1).strip()
-        
-        # Parse form/creature
-        form_match = re.search(r"\*\*Creature:\*\*\s*(.+)", content)
-        if form_match:
-            config.form = form_match.group(1).strip()
-        
-        # Parse style/vibe
-        style_match = re.search(r"\*\*Vibe:\*\*\s*(.+)", content)
-        if style_match:
-            config.style = style_match.group(1).strip()
-        
-        # Parse emoji
-        emoji_match = re.search(r"\*\*Emoji:\*\*\s*(.+)", content)
-        if emoji_match:
-            config.emoji = emoji_match.group(1).strip()
-        
-        config.file_path = str(identity_path)
-        
-        logger.debug(
-            "IDENTITY.md loaded",
-            extra={"name": config.name, "form": config.form}
-        )
-        
-        return config
-        
-    except Exception as e:
-        logger.warning(
-            "Failed to load IDENTITY.md",
-            extra={"error": str(e)}
-        )
-        return None
-
-
-def _load_system_prompt() -> str:
-    """加载系统提示词.
-    
-    从 workspace 的 SPIRIT.md、OWNER.md 和 IDENTITY.md 构建系统提示词。
-    如果文件不存在，使用默认的中文提示词。
-    
-    Returns:
-        系统提示词
-    """
-    try:
-        from ...memory.spirit_loader import SpiritLoader
-        from ...memory.models import IdentityConfig
-        from ...config.manager import ConfigManager
-        from pathlib import Path
-        import re
-        
-        # 获取 workspace 路径并展开 ~
-        config = ConfigManager().config
-        workspace_path = config.workspace.path if config.workspace else "workspace"
-        workspace_path = str(Path(workspace_path).expanduser())
-        
-        # 直接创建新实例以避免缓存问题
-        spirit_loader = SpiritLoader(workspace_path)
-        
-        # 加载 SPIRIT.md
-        spirit = spirit_loader.load_spirit()
-        # 加载 OWNER.md
-        owner = spirit_loader.load_owner()
-        # 加载 IDENTITY.md
-        identity = _load_identity(workspace_path)
-        
-        prompt_parts = []
-        
-        # 添加 IDENTITY 内容（AI 身份）
-        if identity and (identity.name or identity.form or identity.style):
-            prompt_parts.append("# 你的身份")
-            if identity.name:
-                prompt_parts.append(f"- 名字: {identity.name}")
-            if identity.form:
-                prompt_parts.append(f"- 形态: {identity.form}")
-            if identity.style:
-                prompt_parts.append(f"- 风格: {identity.style}")
-            if identity.emoji:
-                prompt_parts.append(f"- 标志: {identity.emoji}")
-        
-        # 添加 SPIRIT 内容
-        if spirit:
-            prompt_parts.append(f"# 你的角色\n{spirit.role}")
-            if spirit.personality:
-                prompt_parts.append(f"\n# 你的性格\n{spirit.personality}")
-            if spirit.values:
-                prompt_parts.append(f"\n# 你的价值观\n" + "\n".join(f"- {v}" for v in spirit.values))
-            if spirit.behavior_rules:
-                prompt_parts.append(f"\n# 行为规则\n" + "\n".join(f"- {r}" for r in spirit.behavior_rules))
-        
-        # 添加 OWNER 内容
-        if owner:
-            prompt_parts.append(f"\n# 用户信息\n- 名字: {owner.name}")
-            if owner.occupation:
-                prompt_parts.append(f"- 职业: {owner.occupation}")
-            if owner.interests:
-                prompt_parts.append(f"- 兴趣: {', '.join(owner.interests)}")
-        
-        # 添加当前时间
-        from datetime import datetime
-        now = datetime.now()
-        time_str = now.strftime("%Y年%m月%d日 %A %H:%M")
-        # 将英文星期转换为中文
-        weekdays = {"Monday": "星期一", "Tuesday": "星期二", "Wednesday": "星期三", 
-                    "Thursday": "星期四", "Friday": "星期五", "Saturday": "星期六", "Sunday": "星期日"}
-        for en, zh in weekdays.items():
-            time_str = time_str.replace(en, zh)
-        prompt_parts.append(f"\n# 当前时间\n{time_str}")
-        
-        # 如果有内容，添加语言要求
-        if prompt_parts:
-            prompt_parts.append("\n# 重要\n- 请使用中文回复用户")
-            return "\n".join(prompt_parts)
-    
-    except Exception as e:
-        logger.warning(
-            "Failed to load system prompt from workspace",
-            extra={"error": str(e)}
-        )
-    
-    # 默认系统提示词
-    return """你是一个专注、高效的 AI 助手。
-
-# 行为规则
-- 使用中文回复用户
-- 简洁明了地回答问题
-- 需要时可以使用工具获取信息
-- 如果不确定，坦诚告知用户"""
 
 
 def _match_and_load_skill_prompt(user_input: str) -> tuple[str, Optional[SkillInvocation]]:
@@ -371,11 +219,6 @@ def _match_and_load_skill_prompt(user_input: str) -> tuple[str, Optional[SkillIn
                             "dispatch_mode": invocation.dispatch_mode,
                         }
                     )
-                    
-                    # Tool Dispatch 模式 (未来支持)
-                    if invocation.dispatch_mode == "tool_dispatch":
-                        # TODO: 直接调用工具
-                        pass
                     
                     # Prompt Rewrite 模式
                     # 加载完整 SKILL.md 并添加强制性指令
@@ -429,7 +272,6 @@ def _match_and_load_skill_prompt(user_input: str) -> tuple[str, Optional[SkillIn
         )
         return "", None
 
-
 async def _handle_message(
     websocket: WebSocket,
     agent: Agent,
@@ -447,7 +289,6 @@ async def _handle_message(
         session_id: 会话 ID
     """
     user_msg_id = None
-    assistant_msg_id = None
     assistant_content = []  # 收集 assistant 响应内容
     
     try:
@@ -470,7 +311,7 @@ async def _handle_message(
                 }
             )
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "Failed to persist user message before LLM call",
                 extra={
                     "session_id": session_id,
@@ -481,10 +322,17 @@ async def _handle_message(
         # 动态匹配技能并注入 prompt
         skill_prompt, invocation = _match_and_load_skill_prompt(content)
         
+        # 清理或替换 Skills 占位标记
+        from ...conversation.system_prompt_builder import SKILLS_INJECTION_MARKER
+        base_prompt = agent._system_prompt
+        
         if skill_prompt:
-            # 临时更新 agent 的 system prompt
-            base_prompt = agent._system_prompt
-            agent._system_prompt = base_prompt + skill_prompt
+            if SKILLS_INJECTION_MARKER in base_prompt:
+                agent._system_prompt = base_prompt.replace(
+                    SKILLS_INJECTION_MARKER, skill_prompt.strip()
+                )
+            else:
+                agent._system_prompt = base_prompt + skill_prompt
             logger.debug(
                 "Skill prompt injected",
                 extra={
@@ -493,15 +341,13 @@ async def _handle_message(
                     "invocation": invocation.skill_name if invocation else None,
                 }
             )
+        elif SKILLS_INJECTION_MARKER in base_prompt:
+            # 无 skill_prompt 时清除占位标记，避免残留
+            agent._system_prompt = base_prompt.replace(
+                SKILLS_INJECTION_MARKER, ""
+            )
         
-        # 如果有显式命令调用，可能需要重写用户输入
-        actual_content = content
-        if invocation and invocation.dispatch_mode == "prompt_rewrite":
-            # 用户输入已包含在 skill_prompt 中的 rewritten 部分
-            # 这里保持原始输入，让 LLM 看到完整上下文
-            pass
-        
-        async for event in agent.prompt(actual_content):
+        async for event in agent.prompt(content):
             ws_msg = convert_event_to_websocket(event)
             if ws_msg:
                 try:
@@ -535,7 +381,7 @@ async def _handle_message(
             agent._system_prompt = base_prompt
     
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Error processing message",
             extra={
                 "session_id": session_id,
@@ -614,7 +460,7 @@ async def _persist_assistant_message(
         )
     
     except Exception as e:
-        logger.warning(
+        logger.exception(
             "Failed to persist assistant message",
             extra={
                 "session_id": session_id,

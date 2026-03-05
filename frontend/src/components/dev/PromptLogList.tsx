@@ -11,6 +11,69 @@ interface PromptLogListProps {
   onViewTrace?: (traceId: string) => void;
 }
 
+/** Tools 列表子组件 - 展示传给 LLM 的可用工具 */
+function ToolsList({
+  tools,
+  onCopy,
+}: {
+  tools: Array<{ type: string; function: { name: string; description: string; parameters?: unknown } }>;
+  onCopy: (text: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [expandedTool, setExpandedTool] = useState<string | null>(null);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs font-medium text-gray-600 dark:text-gray-400 flex items-center gap-1 hover:text-gray-800 dark:hover:text-gray-200"
+        >
+          <span>{expanded ? '▼' : '▶'}</span>
+          🔧 可用工具 ({tools.length})
+        </button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs"
+          onClick={() => onCopy(JSON.stringify(tools, null, 2))}
+        >
+          复制
+        </Button>
+      </div>
+      {expanded && (
+        <div className="bg-gray-100 dark:bg-gray-900 rounded overflow-hidden">
+          {tools.map((tool) => {
+            const funcName = tool.function?.name || 'unknown';
+            const funcDesc = tool.function?.description || '';
+            const isToolExpanded = expandedTool === funcName;
+
+            return (
+              <div key={funcName} className="border-b border-gray-200 dark:border-gray-800 last:border-b-0">
+                <button
+                  onClick={() => setExpandedTool(isToolExpanded ? null : funcName)}
+                  className="w-full px-3 py-1.5 flex items-center gap-2 text-left hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
+                >
+                  <span className="text-xs text-gray-400">{isToolExpanded ? '▼' : '▶'}</span>
+                  <code className="text-xs font-mono text-blue-600 dark:text-blue-400">{funcName}</code>
+                  <span className="text-xs text-gray-400 truncate flex-1">
+                    {funcDesc.slice(0, 60)}{funcDesc.length > 60 ? '...' : ''}
+                  </span>
+                </button>
+                {isToolExpanded && (
+                  <pre className="px-3 py-2 text-xs text-gray-700 dark:text-gray-300 overflow-auto max-h-32 whitespace-pre-wrap bg-gray-50 dark:bg-gray-950">
+                    {JSON.stringify(tool, null, 2)}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PromptLogList({ onError, onViewTrace }: PromptLogListProps) {
   const [logs, setLogs] = useState<PromptLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -91,11 +154,10 @@ export function PromptLogList({ onError, onViewTrace }: PromptLogListProps) {
             return (
               <div
                 key={`${log.timestamp}-${index}`}
-                className={`border rounded-lg overflow-hidden transition-all ${
-                  hasError
-                    ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10'
-                    : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
-                }`}
+                className={`border rounded-lg overflow-hidden transition-all ${hasError
+                  ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10'
+                  : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
+                  }`}
               >
                 {/* Summary Row */}
                 <button
@@ -105,9 +167,8 @@ export function PromptLogList({ onError, onViewTrace }: PromptLogListProps) {
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     {/* Status Icon */}
                     <div
-                      className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                        log.success ? 'bg-green-500' : 'bg-red-500'
-                      }`}
+                      className={`w-2 h-2 rounded-full flex-shrink-0 ${log.success ? 'bg-green-500' : 'bg-red-500'
+                        }`}
                     />
 
                     {/* Time */}
@@ -144,9 +205,8 @@ export function PromptLogList({ onError, onViewTrace }: PromptLogListProps) {
 
                   {/* Expand Icon */}
                   <svg
-                    className={`w-4 h-4 text-gray-400 transition-transform ${
-                      isExpanded ? 'rotate-180' : ''
-                    }`}
+                    className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''
+                      }`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -215,6 +275,11 @@ export function PromptLogList({ onError, onViewTrace }: PromptLogListProps) {
                         {JSON.stringify(log.request.messages, null, 2)}
                       </pre>
                     </div>
+
+                    {/* Tools - 传给 LLM 的可用工具 */}
+                    {log.request.tools && log.request.tools.length > 0 && (
+                      <ToolsList tools={log.request.tools} onCopy={copyToClipboard} />
+                    )}
 
                     {/* Response */}
                     <div>

@@ -260,7 +260,7 @@ class TraceIDFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         # Import here to avoid circular dependency
         try:
-            from ..core.context import get_current_context
+            from ..conversation.context import get_current_context
             ctx = get_current_context()
             record.trace_id = ctx.trace_id if ctx else None
             record.request_id = ctx.request_id if ctx else None
@@ -271,7 +271,7 @@ class TraceIDFilter(logging.Filter):
             record.session_id = None
         
         # Extract module and class info from logger name
-        # name format: src.api.websocket or src.core.agent.Agent
+        # name format: src.api.websocket or src.conversation.context.AgentContext
         parts = record.name.split('.')
         record.module_path = record.name
         
@@ -287,7 +287,7 @@ class ModuleInfoProcessor:
     def __call__(self, logger: Any, method_name: str, event_dict: dict) -> dict:
         # Add trace info from context
         try:
-            from ..core.context import get_current_context
+            from ..conversation.context import get_current_context
             ctx = get_current_context()
             if ctx:
                 event_dict['trace_id'] = ctx.trace_id
@@ -536,6 +536,7 @@ class LLMPromptLogger:
         token_usage: dict[str, int] | None = None,
         success: bool = True,
         error: str | None = None,
+        tools: list[dict] | None = None,
     ) -> None:
         """Log an LLM interaction to the dedicated log file.
         
@@ -550,9 +551,20 @@ class LLMPromptLogger:
             token_usage: Token statistics (prompt_tokens, completion_tokens, total_tokens)
             success: Whether the request was successful
             error: Error message if request failed
+            tools: Tool definitions sent to LLM (OpenAI function calling format)
         """
         if not self._initialized:
             self.initialize()
+        
+        # 如果 trace_id 为 None，尝试从 context 获取
+        if trace_id is None:
+            try:
+                from ..conversation.context import get_current_context
+                ctx = get_current_context()
+                if ctx and ctx.trace_id:
+                    trace_id = ctx.trace_id
+            except Exception:
+                pass
         
         entry = {
             "timestamp": datetime.now().isoformat(),
@@ -565,6 +577,7 @@ class LLMPromptLogger:
             "request": {
                 "message_count": len(messages),
                 "messages": messages,
+                "tools": tools,
             },
             "response": response,
         }

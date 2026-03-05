@@ -11,7 +11,7 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from ...core.context import ContextSource, AgentContext, set_current_context, clear_current_context
+from ...conversation.context import ContextSource, AgentContext, set_current_context, clear_current_context
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)

@@ -96,7 +96,7 @@ async def load_context(request: ContextLoadRequest) -> ContextLoadResponse:
     - MEMORY.md (only in main sessions)
     - Daily memory files (today + yesterday)
     """
-    from ...core.context_loader import get_context_loader
+    from ...conversation.context_loader import get_context_loader
     
     logger.info(
         "Loading context",
@@ -167,7 +167,7 @@ async def reload_context(request: ContextReloadRequest) -> ContextReloadResponse
     Called on each user query to ensure fresh guidance.
     Performance target: <1000ms (SC-004)
     """
-    from ...core.context_loader import get_context_loader
+    from ...conversation.context_loader import get_context_loader
     
     logger.info(
         "Reloading AGENTS.md",
@@ -217,7 +217,7 @@ async def list_context_files(session_id: str) -> ContextFilesResponse:
     Returns information about which files have been loaded
     and whether they came from cache or were created with defaults.
     """
-    from ...core.context_loader import get_context_loader
+    from ...conversation.context_loader import get_context_loader
     
     logger.info(
         "Listing context files",

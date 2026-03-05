@@ -264,7 +264,7 @@ class LLMRouter:
                 
                 # Log LLM interaction to dedicated prompt log
                 try:
-                    from ...core.context import get_current_context
+                    from ...conversation.context import get_current_context
                     from ...utils.logger import get_llm_prompt_logger
                     
                     ctx = get_current_context()
@@ -275,6 +275,7 @@ class LLMRouter:
                         return self._wrap_streaming_with_prompt_log(
                             result, provider, session_id, messages, latency_ms,
                             ctx.trace_id if ctx else None, prompt_logger,
+                            tools=kwargs.get("tools"),
                         )
                     else:
                         # For non-streaming, log immediately
@@ -288,6 +289,7 @@ class LLMRouter:
                             latency_ms=latency_ms,
                             token_usage=result.usage,
                             success=True,
+                            tools=kwargs.get("tools"),
                         )
                 except Exception as prompt_log_error:
                     logger.warning(
@@ -345,7 +347,7 @@ class LLMRouter:
                 
                 # Log failed prompt interaction
                 try:
-                    from ...core.context import get_current_context
+                    from ...conversation.context import get_current_context
                     from ...utils.logger import get_llm_prompt_logger
                     
                     ctx = get_current_context()
@@ -360,6 +362,7 @@ class LLMRouter:
                         latency_ms=0,
                         success=False,
                         error=str(e),
+                        tools=kwargs.get("tools"),
                     )
                 except Exception as prompt_log_error:
                     logger.warning(
@@ -503,6 +506,7 @@ class LLMRouter:
         initial_latency_ms: int,
         trace_id: str | None,
         prompt_logger: Any,
+        tools: list[dict] | None = None,
     ) -> AsyncGenerator[StreamingLLMResponse, None]:
         """Wrap streaming response to log prompt interaction.
         
@@ -514,6 +518,7 @@ class LLMRouter:
             initial_latency_ms: Initial latency before streaming started
             trace_id: Request trace ID
             prompt_logger: LLMPromptLogger instance
+            tools: Tool definitions sent to LLM
             
         Yields:
             Streaming response chunks
@@ -559,6 +564,7 @@ class LLMRouter:
                     },
                     success=not has_error,
                     error=error_message,
+                    tools=tools,
                 )
             except Exception as log_error:
                 logger.warning(

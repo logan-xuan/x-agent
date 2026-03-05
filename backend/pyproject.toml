@@ -58,6 +58,9 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "lxml>=6.0.2",
     "html2text>=2025.4.15",
+    # Skill System
+    "jsonschema>=4.20.0",
+    "sentence-transformers>=2.2.0",  # For M3E-small embeddings
 ]
 
 [project.optional-dependencies]

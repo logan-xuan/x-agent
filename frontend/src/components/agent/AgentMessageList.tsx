@@ -59,6 +59,11 @@ export function AgentMessageList({
                             <circle cx="12" cy="19" r="1.5" />
                             <circle cx="5" cy="12" r="1.5" />
                             <circle cx="19" cy="12" r="1.5" />
+                            <circle cx="7" cy="7" r="1.5" />
+                            <circle cx="17" cy="7" r="1.5" />
+                            <circle cx="7" cy="17" r="1.5" />
+                            <circle cx="17" cy="17" r="1.5" />
+                            <path d="M12 5v4M12 15v4M5 12h4M15 12h4M7 7l3 3M14 14l3 3M7 17l3-3M14 10l3-3" opacity="0.6" />
                         </svg>
                     </div>
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
