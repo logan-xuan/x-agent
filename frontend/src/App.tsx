@@ -1,12 +1,13 @@
 /** X-Agent main application */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './index.css';
 import { AgentChatWindow } from './components/agent';
 import { SettingsWindow } from './components/settings/SettingsWindow';
+import { AdminPanel } from './components/admin/AdminPanel';
 import { useAgent } from './hooks/useAgent';
 
-type View = 'agent' | 'settings';
+type View = 'agent' | 'settings' | 'admin';
 
 const AGENT_SESSION_STORAGE_KEY = 'x-agent-agent-session-id';
 
@@ -14,6 +15,7 @@ const AGENT_SESSION_STORAGE_KEY = 'x-agent-agent-session-id';
 function getInitialView(): View {
   const path = window.location.pathname;
   if (path === '/settings') return 'settings';
+  if (path === '/admin') return 'admin';
   return 'agent';
 }
 
@@ -23,6 +25,7 @@ function App() {
     return localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
   });
   const [isAgentInitialized, setIsAgentInitialized] = useState(false);
+  const initializingRef = useRef(false);
 
   // Agent hook
   const {
@@ -67,7 +70,8 @@ function App() {
       }
     };
 
-    if (!isAgentInitialized) {
+    if (!isAgentInitialized && !initializingRef.current) {
+      initializingRef.current = true;
       initAgentSession();
     }
   }, [isAgentInitialized, agentCreateSession, agentLoadHistory]);
@@ -81,7 +85,8 @@ function App() {
 
   // Update URL when view changes
   useEffect(() => {
-    const path = view === 'settings' ? '/settings' : '/';
+    const pathMap: Record<View, string> = { agent: '/', settings: '/settings', admin: '/admin' };
+    const path = pathMap[view];
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
     }
@@ -95,6 +100,11 @@ function App() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // Render admin view
+  if (view === 'admin') {
+    return <AdminPanel onClose={() => setView('agent')} />;
+  }
 
   // Render settings view
   if (view === 'settings') {
