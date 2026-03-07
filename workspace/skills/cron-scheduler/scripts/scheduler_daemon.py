@@ -160,6 +160,7 @@ class CronScheduler:
         
         try:
             # Execute the command using bash explicitly to ensure proper variable expansion
+            # Using shell=True with executable='/bin/bash' ensures proper command substitution
             result = subprocess.run(
                 command,
                 shell=True,
@@ -167,7 +168,7 @@ class CronScheduler:
                 text=True,
                 executable='/bin/bash',  # Use bash explicitly for better command substitution support
                 timeout=300,  # 5 minute timeout
-                env=os.environ  # Pass current environment to subprocess
+                env={**os.environ, 'LC_ALL': 'C.UTF-8', 'LANG': 'C.UTF-8'}  # Ensure proper locale settings
             )
             
             end_time = datetime.now().isoformat()
@@ -175,6 +176,12 @@ class CronScheduler:
             
             # Log the result
             self.logger.info(f"Task {task_id} completed with status: {status}, return code: {result.returncode}")
+            
+            # Capture and log stdout/stderr
+            if result.stdout:
+                self.logger.debug(f"Task {task_id} stdout: {result.stdout.strip()}")
+            if result.stderr:
+                self.logger.error(f"Task {task_id} stderr: {result.stderr.strip()}")
             
             # Save execution history
             self.save_execution_result(
@@ -343,9 +350,10 @@ def main():
     
     if args.action == 'start':
         scheduler.start()
-        print("Scheduler started. Press Ctrl+C to stop.")
+        print("Scheduler started in background mode.")
+        # Run in background without blocking
         try:
-            while True:
+            while scheduler.running:
                 time.sleep(1)
         except KeyboardInterrupt:
             scheduler.stop()
