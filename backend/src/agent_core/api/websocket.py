@@ -328,6 +328,20 @@ async def _handle_message(
     assistant_content = []  # 收集 assistant 响应内容
     
     try:
+        # ===== 每次消息创建新的 trace context =====
+        # WebSocket 连接级别的 context 只创建一次，但每条用户消息应有独立的 trace_id，
+        # 以便通过 trace_id 精确关联同一次请求链路的所有日志
+        from ...conversation.context import AgentContext as ReqContext, set_current_context
+        msg_context = ReqContext.for_websocket(session_id=session_id)
+        set_current_context(msg_context)
+        logger.info(
+            "New trace context created for message",
+            extra={
+                "session_id": session_id,
+                "trace_id": msg_context.trace_id,
+            }
+        )
+        
         # ===== 改进 1: 先持久化用户消息 =====
         # 在发送到 LLM 之前就保存用户消息，避免因连接断开导致丢失
         try:
@@ -359,8 +373,9 @@ async def _handle_message(
         skill_prompt, invocation = _match_and_load_skill_prompt(content)
         
         # 清理或替换 Skills 占位标记
+        # 重要: 使用原始 prompt（含 MARKER）作为基准，避免多轮对话中重复追加 skills 段落
         from ...conversation.system_prompt_builder import SKILLS_INJECTION_MARKER
-        base_prompt = agent._system_prompt
+        base_prompt = agent._original_system_prompt
         
         if skill_prompt:
             if SKILLS_INJECTION_MARKER in base_prompt:

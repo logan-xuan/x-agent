@@ -65,6 +65,9 @@ class Agent:
         """
         self._config = config
         self._system_prompt = system_prompt or config.system_prompt
+        # 保存原始 system prompt（含 SKILLS_INJECTION_MARKER），
+        # 用于多轮对话中每次从原始模板重新注入 skills，避免重复追加
+        self._original_system_prompt = self._system_prompt
         
         # 状态
         self._state = AgentState(
