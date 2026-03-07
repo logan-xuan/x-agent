@@ -1,9 +1,13 @@
 """Compression event model for storing compression history."""
 
+from datetime import datetime, timezone, timedelta
+
 from sqlalchemy import Column, Integer, String, DateTime, Text, Float
-from sqlalchemy.sql import func
 
 from .base import Base
+
+# 北京时间 UTC+8
+_BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 class CompressionEvent(Base):
@@ -18,7 +22,7 @@ class CompressionEvent(Base):
     original_token_count = Column(Integer)  # Token count before compression
     compressed_token_count = Column(Integer)  # Token count after compression
     compression_ratio = Column(Float)  # Compression ratio
-    compression_time = Column(DateTime(timezone=True), server_default=func.now())  # Time of compression
+    compression_time = Column(DateTime(timezone=True), default=lambda: datetime.now(_BEIJING_TZ))  # Time of compression (Beijing time)
     original_messages = Column(Text)  # JSON string of original messages (before compression)
     compressed_messages = Column(Text)  # JSON string of compressed messages (after compression)
     archived_message_count = Column(Integer)  # Number of archived messages

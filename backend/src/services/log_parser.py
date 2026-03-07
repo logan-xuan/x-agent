@@ -130,8 +130,15 @@ class LogParser:
                         if 'message' in data and isinstance(data['message'], str):
                             try:
                                 message_data = json.loads(data['message'])
-                                # Merge message data into main data
-                                data.update(message_data)
+                                # Back-fill null fields from nested JSON before merging
+                                for field in ('timestamp', 'level', 'trace_id', 'request_id', 'session_id'):
+                                    if data.get(field) is None and field in message_data:
+                                        data[field] = message_data[field]
+                                # Merge extra data from nested message
+                                if 'extra' in message_data and isinstance(message_data['extra'], dict):
+                                    data.setdefault('extra', {}).update(message_data['extra'])
+                                if 'event' in message_data:
+                                    data['event'] = message_data['event']
                             except (json.JSONDecodeError, TypeError):
                                 pass
                         
@@ -251,12 +258,13 @@ class LogParser:
         # Build execution path from timeline
         execution_path = self._build_execution_path(timeline)
         
-        # Calculate total duration
-        start_time = None
-        end_time = None
-        if timeline:
-            start_time = timeline[0].get('timestamp')
-            end_time = timeline[-1].get('timestamp')
+        # Calculate total duration (skip entries with null timestamps)
+        valid_timestamps = [
+            e['timestamp'] for e in timeline
+            if e.get('timestamp')
+        ]
+        start_time = valid_timestamps[0] if valid_timestamps else None
+        end_time = valid_timestamps[-1] if valid_timestamps else None
         
         total_duration_ms = 0
         if start_time and end_time:

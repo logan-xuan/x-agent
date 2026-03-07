@@ -101,7 +101,7 @@ def _convert_assistant_message(message: "AssistantMessage") -> dict[str, Any]:
     
     result: dict[str, Any] = {
         "role": "assistant",
-        "content": "".join(text_parts) if text_parts else None,
+        "content": "".join(text_parts) if text_parts else "",
     }
     
     if tool_calls:

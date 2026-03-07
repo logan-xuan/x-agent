@@ -67,6 +67,7 @@ Common required packages:
 - `sqlalchemy`, `aiosqlite` - Database
 - `structlog` - Structured logging
 - `numpy` - Required by transformers
+- `onnxruntime` - ONNX model inference (memory system embeddings)
 - `httpx` - HTTP client
 - `pydantic`, `pyyaml` - Data handling
 

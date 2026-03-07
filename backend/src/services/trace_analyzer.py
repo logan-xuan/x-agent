@@ -59,21 +59,6 @@ class TraceAnalyzer:
 - suggestions数组最多5条
 """
 
-    def __init__(self, llm_router: LLMRouter, log_dir: str = "logs"):
-        """Initialize trace analyzer.
-        
-        Args:
-            llm_router: LLM router instance for making LLM calls
-            log_dir: Directory containing log files
-        """
-        self.llm_router = llm_router
-        self.log_parser = get_log_parser(log_dir)
-        
-        logger.info(
-            "TraceAnalyzer initialized",
-            extra={'log_dir': log_dir}
-        )
-    
     def _build_call_chain_diagram(
         self,
         timeline_data: dict[str, Any],

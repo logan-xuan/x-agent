@@ -4,7 +4,6 @@ This module provides:
 - Multi-level context loading (identity, tools, memory)
 - Context formatting for AI prompts
 - Caching for performance
-- Integration with ContextLoader for AGENTS.md and Bootstrap
 """
 
 from datetime import datetime, timedelta
@@ -21,7 +20,6 @@ from .models import (
     ToolDefinition,
 )
 from .spirit_loader import SpiritLoader
-from ..conversation.context_loader import ContextLoader, get_context_loader
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -48,9 +46,6 @@ class ContextBuilder:
         self._spirit_loader = SpiritLoader(self.workspace_path)
         self._md_sync = MarkdownSync(self.workspace_path)
         
-        # Use the new ContextLoader for AGENTS.md and Bootstrap
-        self._context_loader = get_context_loader(self.workspace_path)
-        
         # Cache
         self._tools: list[ToolDefinition] | None = None
         self._last_load_time: datetime | None = None
@@ -66,35 +61,13 @@ class ContextBuilder:
         """Build context bundle for AI response.
         
         Loads all context levels and bundles them together.
-        Now includes:
-        - Bootstrap content injection (NOT auto-deletion)
-        - AGENTS.md hot-reload
+        Note: Bootstrap detection and AGENTS.md loading are handled
+        by SystemPromptBuilder, not here.
         
         Returns:
             ContextBundle with all loaded context
         """
         logger.info("Building context")
-        
-        # ===== Bootstrap Detection (First-time startup) =====
-        # Only inject BOOTSTRAP.md if agent has NOT been initialized yet.
-        # Agent is considered "born" when IDENTITY.md exists with actual content.
-        identity_path = Path(self.workspace_path) / "IDENTITY.md"
-        agent_born = identity_path.exists() and identity_path.read_text(encoding="utf-8").strip()
-        
-        bootstrap_status = self._context_loader.check_bootstrap()
-        if bootstrap_status.exists and not agent_born:
-            logger.info(
-                "BOOTSTRAP.md detected, content will be injected for Agent to process",
-                extra={"has_content": bool(bootstrap_status.content)}
-            )
-        elif bootstrap_status.exists and agent_born:
-            logger.debug("Skipping BOOTSTRAP.md injection — agent already initialized")
-        
-        # ===== AGENTS.md Hot-Reload =====
-        # Always check for AGENTS.md changes (hot-reload on every user query)
-        agents_content, agents_reloaded = self._context_loader.load_agents_content()
-        if agents_reloaded:
-            logger.info("AGENTS.md reloaded with fresh content")
         
         # Check cache validity
         if self._is_cache_valid() and self._cached_context is not None:
@@ -132,8 +105,6 @@ class ContextBuilder:
                 "has_owner": owner is not None,
                 "tools_count": len(tools),
                 "logs_count": len(recent_logs),
-                "agents_reloaded": agents_reloaded,
-                "has_bootstrap": bootstrap_status.exists,
             }
         )
         
@@ -332,12 +303,13 @@ class ContextBuilder:
             for tool in context.tools[:10]:  # Limit to 10 tools
                 parts.append(f"- {tool.name}: {tool.description}")
         
-        # Add long-term memory
+        # Add long-term memory (keep most recent entries at the end)
         if context.long_term_memory:
             parts.append("\n## 长期记忆")
-            # Truncate to avoid token limit
-            memory_preview = context.long_term_memory[:1000]
-            parts.append(memory_preview)
+            memory_content = context.long_term_memory.strip()
+            if len(memory_content) > 1000:
+                memory_content = "...\n" + memory_content[-1000:]
+            parts.append(memory_content)
         
         prompt = "\n".join(parts)
         
@@ -351,154 +323,38 @@ class ContextBuilder:
     def get_system_prompt(self, context: ContextBundle) -> str:
         """Generate system prompt from context.
         
-        This method generates a complete system prompt that includes:
-        - BOOTSTRAP.md: First-time initialization guide (if exists)
-        - AGENTS.md: Main guidance and behavior rules (from ContextLoader)
-        - AI identity (SPIRIT.md): role, personality, values, behavior rules
-        - User profile (OWNER.md): name, occupation, interests, goals
-        - Available tools (TOOLS.md)
-        - Recent memory logs (memory/*.md)
-        - Long-term memory (MEMORY.md)
-        - Current time information
+        Note: This is a legacy method. The primary system prompt is now
+        built by SystemPromptBuilder. This method is kept for backward
+        compatibility with ContextLoader consumers.
         
         Args:
             context: Context bundle
             
         Returns:
-            System prompt string with full context
+            System prompt string with context summary
         """
         parts: list[str] = []
         
-        # ===== CURRENT TIME (Critical for time-sensitive queries) =====
-        # Always include current time at the beginning for temporal context
-        now = datetime.now()
-        current_time_info = (
-            f"# 当前时间\n"
-            f"- **日期**: {now.strftime('%Y年%m月%d日 %A')}\n"
-            f"- **ISO**: {now.isoformat(timespec='seconds')}\n"
-            f"- **时间戳**: {int(now.timestamp())}\n"
-            f"**重要**: 对于包含'今天'、'明天'、'昨天'、'本周'等时间敏感词的问题，\n"
-            f"请使用上述日期作为参考，不要依赖训练数据中的时间信息。\n"
-        )
-        parts.append(current_time_info)
-        parts.append("")
-        
-        # ===== BOOTSTRAP.md (First-time initialization) =====
-        # Only load BOOTSTRAP.md if it exists AND identity is not yet set up
-        # Once identity is set up, the main guidance comes from AGENTS.md
-        bootstrap_status = self._context_loader.check_bootstrap()
-        if bootstrap_status.exists and bootstrap_status.content and not bootstrap_status.completed:
-            parts.append("# 🌟 首次启动初始化")
-            parts.append(bootstrap_status.content)
-            parts.append("\n---\n")  # Separator
-            parts.append("**重要**: 请按照上述指引与用户对话，完成身份设定后，用户会删除此文件。\n")
-        
-        # ===== AGENTS.md (Main Guidance - Level 0) =====
-        # Load AGENTS.md content directly
-        agents_content, _ = self._context_loader.load_agents_content()
-        if agents_content:
-            parts.append("# 行为规范指导")
-            parts.append(agents_content)
-            parts.append("")  # Add spacing
-        
-        # ===== AI Identity (SPIRIT.md + IDENTITY.md) =====
-        # First, add AI name from IDENTITY.md
+        # AI Identity
         if context.identity and context.identity.name:
-            parts.append("# AI 身份设定")
-            parts.append(f"你的名字是「{context.identity.name}」。")
-            
-            if context.identity.form:
-                parts.append(f"存在形式: {context.identity.form}")
-            
-            if context.identity.style:
-                parts.append(f"气质风格: {context.identity.style}")
-            
-            if context.identity.emoji:
-                parts.append(f"标志性表情: {context.identity.emoji}")
-            
-            parts.append("")  # Spacing
+            parts.append(f"# AI 身份: {context.identity.name}")
         
-        # Then add role/personality from SPIRIT.md
         if context.spirit:
-            if not (context.identity and context.identity.name):
-                parts.append("# AI 身份设定")
-            
-            parts.append(f"你是{context.spirit.role}。")
-            
-            if context.spirit.personality:
-                parts.append(f"\n## 性格特点\n{context.spirit.personality}")
-            
-            if context.spirit.values:
-                parts.append("\n## 价值观")
-                for value in context.spirit.values:
-                    parts.append(f"- {value}")
-            
-            if context.spirit.behavior_rules:
-                parts.append("\n## 行为准则")
-                for rule in context.spirit.behavior_rules:
-                    parts.append(f"- {rule}")
+            parts.append(f"角色: {context.spirit.role}")
         
-        # ===== User Profile (OWNER.md) =====
+        # User Profile
         if context.owner:
-            parts.append("\n# 用户画像")
-            parts.append(f"姓名: {context.owner.name}")
-            
-            if context.owner.occupation:
-                parts.append(f"职业: {context.owner.occupation}")
-            
-            if context.owner.interests:
-                parts.append(f"兴趣: {', '.join(context.owner.interests)}")
-            
-            if context.owner.goals:
-                parts.append(f"目标: {', '.join(context.owner.goals)}")
-            
-            if context.owner.preferences:
-                parts.append("偏好:")
-                for key, value in context.owner.preferences.items():
-                    parts.append(f"  - {key}: {value}")
+            parts.append(f"\n# 用户: {context.owner.name}")
         
-        # ===== Available Tools (TOOLS.md) =====
-        if context.tools:
-            parts.append("\n# 可用工具")
-            for tool in context.tools[:15]:  # Limit to 15 tools to avoid token limit
-                tool_desc = f"- {tool.name}"
-                if tool.description:
-                    tool_desc += f": {tool.description}"
-                parts.append(tool_desc)
-        
-        # ===== Long-term Memory (MEMORY.md) =====
+        # Long-term Memory (keep most recent entries)
         if context.long_term_memory:
             parts.append("\n# 长期记忆")
-            # Truncate to avoid token limit (about 800 chars)
             memory_content = context.long_term_memory.strip()
             if len(memory_content) > 800:
-                memory_content = memory_content[:800] + "..."
+                memory_content = "...\n" + memory_content[-800:]
             parts.append(memory_content)
         
-        # ===== Recent Daily Logs (memory/*.md) =====
-        if context.recent_logs:
-            parts.append("\n# 近期记录")
-            for log in context.recent_logs[:7]:  # Limit to 7 days
-                # DailyLog has 'summary' and 'entries', not 'content'
-                log_text = log.summary if log.summary else f"({len(log.entries)} 条记录)"
-                if log_text and log_text.strip():
-                    parts.append(f"\n## {log.date}\n{log_text.strip()[:200]}")
-        
-        prompt = "\n".join(parts)
-        
-        logger.debug(
-            "System prompt generated",
-            extra={
-                "prompt_length": len(prompt),
-                "has_spirit": context.spirit is not None,
-                "has_owner": context.owner is not None,
-                "tools_count": len(context.tools) if context.tools else 0,
-                "has_memory": bool(context.long_term_memory),
-                "logs_count": len(context.recent_logs) if context.recent_logs else 0,
-            }
-        )
-        
-        return prompt
+        return "\n".join(parts)
     
     def clear_cache(self) -> None:
         """Clear all cached data.
@@ -509,9 +365,6 @@ class ContextBuilder:
         self._tools = None
         self._cached_context = None
         self._last_load_time = None
-        
-        # Also clear ContextLoader cache
-        self._context_loader.clear_all_cache()
         
         logger.info("Context cache cleared")
     

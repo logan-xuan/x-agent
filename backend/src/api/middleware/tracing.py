@@ -11,7 +11,8 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from ...conversation.context import ContextSource, AgentContext, set_current_context, clear_current_context
+from ...conversation.context import AgentContext, set_current_context, clear_current_context
+from ...conversation.identity import ChannelProtocol, Identity, get_identity_manager
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -54,12 +55,16 @@ class TracingMiddleware(BaseHTTPMiddleware):
         elif "session_id" in request.query_params:
             session_id = request.query_params["session_id"]
         
-        # Create context
-        context = AgentContext(
+        # Create context with Identity
+        identity_mgr = get_identity_manager()
+        identity = identity_mgr.create(
             trace_id=trace_id,
-            request_id=request_id,
             session_id=session_id,
-            source=ContextSource.REST_API,
+            channel_protocol=ChannelProtocol.REST_API,
+        )
+        context = AgentContext(
+            identity=identity,
+            request_id=request_id,
             metadata={
                 "method": request.method,
                 "path": request.url.path,

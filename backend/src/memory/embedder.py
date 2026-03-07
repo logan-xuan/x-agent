@@ -80,6 +80,7 @@ class ONNXEmbedder:
         self.model_path = model_path
         self._session: Any = None
         self._initialized = False
+        self._load_failed = False
         
         logger.info(
             "ONNXEmbedder created",
@@ -90,6 +91,9 @@ class ONNXEmbedder:
         """Load the ONNX model."""
         if self._session is not None:
             return self._session
+        
+        if self._load_failed:
+            return None
         
         try:
             import onnxruntime as ort
@@ -105,14 +109,18 @@ class ONNXEmbedder:
             if self._session:
                 self._initialized = True
                 logger.info("ONNX model loaded successfully")
+            else:
+                self._load_failed = True
             
             return self._session
             
         except ImportError:
             logger.warning("onnxruntime not installed, cannot use ONNX embedder")
+            self._load_failed = True
             return None
         except Exception as e:
             logger.error("Failed to load ONNX model", extra={"error": str(e)})
+            self._load_failed = True
             return None
     
     def _download_and_load_default_model(self, ort: Any, providers: list[str]) -> Any:
@@ -150,7 +158,13 @@ class ONNXEmbedder:
         # Download model only if not cached or cache invalid
         logger.info("Downloading ONNX model...", extra={"url": self.DEFAULT_MODEL_URL})
         try:
-            urllib.request.urlretrieve(self.DEFAULT_MODEL_URL, model_file)
+            import socket
+            original_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(15)
+            try:
+                urllib.request.urlretrieve(self.DEFAULT_MODEL_URL, model_file)
+            finally:
+                socket.setdefaulttimeout(original_timeout)
             model_size = model_file.stat().st_size
             logger.info("ONNX model downloaded", extra={"path": str(model_file), "size": model_size})
             
@@ -168,36 +182,58 @@ class ONNXEmbedder:
             logger.error("Failed to download model", extra={"error": str(e)})
             return None
     
+    _tokenizer_instance: Any = None
+    _tokenizer_load_failed: bool = False
+
     def _tokenize(self, text: str) -> dict[str, np.ndarray]:
         """Tokenize text for ONNX model.
         
-        Uses bert-base-uncased tokenizer which is compatible with all-MiniLM-L6-v2.
+        Uses all-MiniLM-L6-v2 tokenizer in local-only mode.
+        Falls back to character-level tokenization if tokenizer is unavailable.
         """
+        if ONNXEmbedder._tokenizer_load_failed:
+            return self._fallback_tokenize(text)
+
+        if ONNXEmbedder._tokenizer_instance is None:
+            try:
+                from transformers import AutoTokenizer
+
+                # Force offline mode to avoid network timeouts blocking startup
+                ONNXEmbedder._tokenizer_instance = AutoTokenizer.from_pretrained(
+                    "sentence-transformers/all-MiniLM-L6-v2",
+                    local_files_only=True,
+                )
+                logger.info("Tokenizer loaded from local cache")
+            except ImportError:
+                logger.warning("transformers not installed, using fallback tokenization")
+                ONNXEmbedder._tokenizer_load_failed = True
+                return self._fallback_tokenize(text)
+            except Exception as exc:
+                logger.warning(
+                    "Tokenizer not in local cache, using fallback tokenization. "
+                    "Run: huggingface-cli download sentence-transformers/all-MiniLM-L6-v2 --local-dir ~/.cache/huggingface/hub",
+                    extra={"error": str(exc)},
+                )
+                ONNXEmbedder._tokenizer_load_failed = True
+                return self._fallback_tokenize(text)
+
         try:
-            from transformers import AutoTokenizer
-            
-            # Load tokenizer (cached after first download)
-            tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-            
-            # Tokenize with padding and truncation
-            encoded = tokenizer(
+            encoded = ONNXEmbedder._tokenizer_instance(
                 text,
                 padding=True,
                 truncation=True,
                 max_length=256,
-                return_tensors="np"
+                return_tensors="np",
             )
-            
             return {
                 "input_ids": encoded["input_ids"].astype(np.int64),
                 "attention_mask": encoded["attention_mask"].astype(np.int64),
-                "token_type_ids": encoded.get("token_type_ids", np.zeros_like(encoded["input_ids"])).astype(np.int64),
+                "token_type_ids": encoded.get(
+                    "token_type_ids", np.zeros_like(encoded["input_ids"])
+                ).astype(np.int64),
             }
-        except ImportError:
-            logger.warning("transformers not installed, using fallback tokenization")
-            return self._fallback_tokenize(text)
-        except Exception as e:
-            logger.error(f"Tokenization failed: {e}, using fallback")
+        except Exception as exc:
+            logger.error(f"Tokenization failed: {exc}, using fallback")
             return self._fallback_tokenize(text)
     
     def _fallback_tokenize(self, text: str) -> dict[str, np.ndarray]:

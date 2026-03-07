@@ -155,7 +155,7 @@ def _get_skill_command_resolver() -> Optional[SkillCommandResolver]:
 def create_agent_config() -> AgentCoreConfig:
     """创建 Agent 配置.
     
-    注入 LLM、Tool、SystemPrompt 适配器。
+    注入 LLM、Tool、SystemPrompt、Context 适配器。
     系统提示词通过 SystemPromptPort 从 conversation 模块加载，
     保持 agent_core 的独立性。
     
@@ -175,13 +175,49 @@ def create_agent_config() -> AgentCoreConfig:
     system_prompt_adapter = create_system_prompt_adapter()
     system_prompt = system_prompt_adapter.build_system_prompt()
     
+    # 创建 Context adapter (上下文压缩)
+    context_adapter = _create_context_adapter(llm_router)
+    
     return AgentCoreConfig(
         llm=llm_adapter,
         tools=tool_adapter,
         logger=agent_logger,
+        context=context_adapter,
         system_prompt=system_prompt,
         system_prompt_port=system_prompt_adapter,
     )
+
+
+def _create_context_adapter(llm_router):
+    """创建 ContextPort adapter (上下文压缩).
+
+    Args:
+        llm_router: LLMRouter 实例，用于摘要生成
+
+    Returns:
+        XAgentContextAdapter 实例，或 None（创建失败时）
+    """
+    try:
+        from ..adapters.context_adapter import create_context_adapter
+        from ...config.manager import get_config
+
+        config = get_config()
+        workspace_path = config.workspace.path
+
+        return create_context_adapter(
+            llm_router=llm_router,
+            compression_config=config.compression,
+            workspace_path=workspace_path,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to create context adapter, compression disabled",
+            extra={
+                "error": str(e),
+                "error_type": type(e).__name__,
+            }
+        )
+        return None
 
 
 
@@ -469,6 +505,48 @@ async def _persist_assistant_message(
         )
 
 
+async def _load_session_history(agent: Agent, session_id: str) -> None:
+    """从数据库加载会话历史消息到 Agent 内存.
+
+    WebSocket 每次连接会创建新的 Agent 实例，内存中没有历史消息。
+    通过 MemoryManager 从数据库恢复历史，确保 LLM 调用时能看到完整的对话上下文。
+
+    Args:
+        agent: Agent 实例
+        session_id: 会话 ID
+    """
+    try:
+        from ...memory.manager import get_memory_manager
+        memory_manager = get_memory_manager()
+        agent_messages = await memory_manager.get_session_history_as_agent_messages(
+            session_id, limit=200,
+        )
+
+        if not agent_messages:
+            return
+
+        for msg in agent_messages:
+            agent.add_message(msg)
+
+        logger.info(
+            "Session history loaded into Agent via MemoryManager",
+            extra={
+                "session_id": session_id,
+                "loaded_message_count": len(agent_messages),
+            }
+        )
+
+    except Exception as e:
+        logger.error(
+            "Failed to load session history, starting with empty context",
+            extra={
+                "session_id": session_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            }
+        )
+
+
 @router.websocket("/agent/{session_id}")
 async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
     """Agent WebSocket 端点.
@@ -484,9 +562,41 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
         extra={"session_id": session_id}
     )
     
+    # 设置请求上下文（含 Identity），确保 session_id 在整个请求链路中可用
+    from ...conversation.context import AgentContext as ReqContext, set_current_context
+    req_context = ReqContext.for_websocket(session_id=session_id)
+    set_current_context(req_context)
+
+    # 确保 ChatSession 存在（首次连接自动创建，重连时重新激活）
+    from ...services.storage import get_storage_service
+    from ...conversation.dao import ChatSessionDAO, DEFAULT_USER_ID, DEFAULT_AGENT_ID, DEFAULT_CHANNEL_ID
+    from ...conversation.dao.models import SessionStatus
+
+    chat_session_dao = ChatSessionDAO(get_storage_service())
+    existing_chat_session = await chat_session_dao.get_by_id(session_id)
+    if existing_chat_session is None:
+        await chat_session_dao.create(
+            user_id=DEFAULT_USER_ID,
+            agent_id=DEFAULT_AGENT_ID,
+            channel_id=DEFAULT_CHANNEL_ID,
+            session_id=session_id,
+        )
+        logger.info("ChatSession 自动创建", extra={"session_id": session_id})
+    elif existing_chat_session.status != SessionStatus.ACTIVE.value:
+        await chat_session_dao.update_status(session_id, SessionStatus.ACTIVE)
+        logger.info("ChatSession 重新激活", extra={"session_id": session_id})
+    
+    logger.info(
+        "Identity activated for WebSocket session",
+        extra=req_context.identity.to_dict(),
+    )
+    
     # 创建 Agent
     config = create_agent_config()
     agent = Agent(config)
+
+    # 从数据库加载历史消息，确保重连后对话上下文连续
+    await _load_session_history(agent, session_id)
     
     # 当前处理任务
     message_task: asyncio.Task | None = None
@@ -541,7 +651,10 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
                 # 等待之前的任务完成
                 if message_task and not message_task.done():
                     await message_task
-                
+
+                # 更新 ChatSession 活跃时间
+                await chat_session_dao.touch(session_id)
+
                 # 启动新任务
                 message_task = asyncio.create_task(
                     _handle_message(websocket, agent, content, session_id)
@@ -575,6 +688,10 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
                         "error": str(task_error),
                     }
                 )
+
+        # 断开连接时关闭 ChatSession
+        await chat_session_dao.close(session_id)
+        logger.info("ChatSession 已关闭", extra={"session_id": session_id})
     
     except Exception as e:
         logger.error(

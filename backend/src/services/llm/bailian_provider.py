@@ -1,13 +1,17 @@
 """阿里云百炼 LLM provider implementation."""
 
 import os
+import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
 from openai import AsyncOpenAI
 
+from ...utils.logger import get_logger
 from .provider import LLMProvider, LLMResponse, StreamingLLMResponse
+
+logger = get_logger(__name__)
 
 
 class BailianProvider(LLMProvider):
@@ -44,14 +48,42 @@ class BailianProvider(LLMProvider):
         return bool(self._api_key and self._base_url)
     
     def _get_client(self) -> AsyncOpenAI:
-        """Get or create OpenAI-compatible client for Bailian."""
+        """Get or create OpenAI-compatible client for Bailian with structured HTTP logging."""
         if self._client is None:
+            http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                event_hooks={
+                    "request": [self._on_http_request],
+                    "response": [self._on_http_response],
+                },
+            )
             self._client = AsyncOpenAI(
                 api_key=self._api_key,
                 base_url=self._base_url,
-                timeout=httpx.Timeout(self.timeout),
+                http_client=http_client,
             )
         return self._client
+
+    async def _on_http_request(self, request: httpx.Request) -> None:
+        """Record HTTP request start time."""
+        request.extensions["start_time"] = time.time()
+
+    async def _on_http_response(self, response: httpx.Response) -> None:
+        """Log structured HTTP response with timing."""
+        start_time = response.request.extensions.get("start_time")
+        elapsed_ms = round((time.time() - start_time) * 1000, 2) if start_time else None
+        logger.info(
+            "HTTP request completed",
+            extra={
+                "scene": "http_request",
+                "provider": self.name,
+                "method": response.request.method,
+                "url": str(response.request.url),
+                "status_code": response.status_code,
+                "elapsed_ms": elapsed_ms,
+                "response_bytes": int(response.headers.get("content-length", 0)),
+            },
+        )
     
     async def chat(
         self,

@@ -136,7 +136,7 @@ class ExperienceLearner:
         self,
         query: str,
         tool_names: list[str] | None = None,
-        limit: int = 5,
+        limit: int = 2,
     ) -> list[dict[str, Any]]:
         """检索相关经验.
 
@@ -201,6 +201,7 @@ class ExperienceLearner:
             content = _format_pattern_for_storage(pattern)
             metadata = {
                 "source": "experience",
+                "content_type": "experience",
                 "pattern_type": pattern["pattern"],
                 "trace_id": trace_id,
                 "tool_name": pattern["tool_name"],

@@ -25,9 +25,7 @@ from .plan_port import (
 )
 from .context_port import (
     ContextPort,
-    ContextConfig,
-    CompressionResult,
-    CompressionStrategy,
+    PreparedContext,
 )
 from .system_prompt_port import (
     SystemPromptPort,
@@ -58,9 +56,7 @@ __all__ = [
     "PlanStatus",
     "StepStatus",
     # Context 相关类型
-    "ContextConfig",
-    "CompressionResult",
-    "CompressionStrategy",
+    "PreparedContext",
     # SystemPrompt 相关类型
     "SystemPromptPort",
     "IdentityInfo",

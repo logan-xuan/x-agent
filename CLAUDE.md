@@ -27,6 +27,7 @@ The X-Agent project follows strict constitutional principles that must be adhere
 ### Development Standards
 - **Languages**: TypeScript (strict mode) + Python 3.11+
 - **Naming**: camelCase (TS) / snake_case (Python), PascalCase for classes
+- **Comments**: 所有代码注释、文档字符串（docstring）统一使用中文
 - **Security**: Input validation, command execution whitelisting, encrypted sensitive config storage
 
 ## Architecture

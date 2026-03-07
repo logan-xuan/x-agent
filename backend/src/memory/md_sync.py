@@ -563,6 +563,8 @@ class MarkdownSync:
                     content_type = MemoryContentType.SUMMARY
                 elif content_type_str == "manual":
                     content_type = MemoryContentType.MANUAL
+                elif content_type_str == "experience":
+                    content_type = MemoryContentType.EXPERIENCE
                 
                 entry = MemoryEntry(
                     id=entry_id,

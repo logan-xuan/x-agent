@@ -1,10 +1,13 @@
 """Context loader for agent guidance system.
 
 This module provides:
-- Bootstrap detection and execution
+- AGENTS.md hot-reload with mtime caching
+- Context file information queries
 - Session-aware context loading
-- AGENTS.md reloading on user queries
-- Integration with existing memory system
+
+Note: Bootstrap detection/execution and identity checking are handled
+by SystemPromptBuilder. This module focuses on AGENTS.md hot-reload
+and file information queries.
 """
 
 import time
@@ -19,13 +22,8 @@ from ..memory.models import (
     SessionType,
     CONTEXT_FILES,
 )
-from ..memory.spirit_loader import SpiritLoader, get_spirit_loader
-from ..services.template_service import TemplateService, get_template_service
 from ..utils.file_utils import (
-    async_read_file,
     get_file_mtime,
-    safe_read_file,
-    validate_path_in_workspace,
 )
 from ..utils.logger import get_logger
 
@@ -34,28 +32,13 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-
-class BootstrapStatus:
-    """Status of bootstrap initialization."""
-    
-    def __init__(
-        self,
-        exists: bool = False,
-        completed: bool = False,
-        content: str = ""
-    ) -> None:
-        self.exists = exists
-        self.completed = completed
-        self.content = content
-
-
 class ContextLoader:
-    """Loader for agent context with bootstrap support.
+    """Loader for agent context.
     
-    Extends the existing ContextBuilder with:
-    - Bootstrap.md detection and execution
-    - Session-aware MEMORY.md loading
-    - AGENTS.md hot-reload support
+    Provides:
+    - AGENTS.md hot-reload with mtime caching
+    - Context file information queries for API
+    - Session-aware context loading (delegates to ContextBuilder)
     """
     
     def __init__(self, workspace_path: str = "workspace") -> None:
@@ -67,8 +50,6 @@ class ContextLoader:
         self.workspace_path = Path(workspace_path)
         # Lazy initialization to avoid circular import
         self._context_builder: "ContextBuilder | None" = None
-        self._spirit_loader = SpiritLoader(str(self.workspace_path))
-        self._template_service = TemplateService(str(self.workspace_path))
         
         # Cache for AGENTS.md
         self._agents_content: str | None = None
@@ -87,142 +68,6 @@ class ContextLoader:
             self._context_builder = ContextBuilder(str(self.workspace_path))
         return self._context_builder
     
-    # ============ Bootstrap Detection & Execution ============
-    
-    def check_bootstrap(self) -> BootstrapStatus:
-        """Check if BOOTSTRAP.md exists and get its status.
-        
-        Also checks if identity is already set up - if so, bootstrap is considered
-        completed even if BOOTSTRAP.md still exists.
-        
-        Returns:
-            BootstrapStatus with existence and content info
-        """
-        bootstrap_path = self.workspace_path / "BOOTSTRAP.md"
-        
-        # Check if identity is already set up
-        identity_completed = self._check_identity_completed()
-        
-        if not bootstrap_path.exists():
-            logger.debug("BOOTSTRAP.md not found")
-            return BootstrapStatus(exists=False, completed=identity_completed)
-        
-        # If identity is already set up, bootstrap is considered completed
-        if identity_completed:
-            logger.info(
-                "BOOTSTRAP.md exists but identity already set up, skipping bootstrap"
-            )
-            return BootstrapStatus(exists=True, completed=True, content="")
-        
-        try:
-            content = bootstrap_path.read_text(encoding="utf-8")
-            logger.info(
-                "BOOTSTRAP.md found",
-                extra={"content_length": len(content)}
-            )
-            return BootstrapStatus(exists=True, content=content)
-        except Exception as e:
-            logger.error(
-                "Failed to read BOOTSTRAP.md",
-                extra={"error": str(e)}
-            )
-            return BootstrapStatus(exists=True, completed=False)
-    
-    def _check_identity_completed(self) -> bool:
-        """Check if identity is already set up in IDENTITY.md.
-        
-        Returns:
-            True if identity has a name set, False otherwise
-        """
-        identity_path = self.workspace_path / "IDENTITY.md"
-        
-        if not identity_path.exists():
-            return False
-        
-        try:
-            content = identity_path.read_text(encoding="utf-8")
-            # Check if Name field has a value
-            # Format: "- **Name:** xxx" or "- **Name:**"
-            for line in content.split("\n"):
-                if "**Name:**" in line:
-                    # Extract value after **Name:**
-                    parts = line.split("**Name:**")
-                    if len(parts) > 1:
-                        name_value = parts[1].strip()
-                        # Check if it's not empty
-                        if name_value and name_value != "":
-                            logger.info(
-                                "Identity already set up",
-                                extra={"name": name_value}
-                            )
-                            return True
-            return False
-        except Exception as e:
-            logger.warning(
-                "Failed to check identity completion",
-                extra={"error": str(e)}
-            )
-            return False
-    
-    def execute_bootstrap(self) -> bool:
-        """Execute bootstrap initialization process.
-        
-        This should be called when BOOTSTRAP.md exists.
-        It:
-        1. Ensures required files exist (with defaults)
-        2. Records bootstrap completion
-        3. Optionally deletes BOOTSTRAP.md
-        
-        Returns:
-            True if bootstrap was executed successfully
-        """
-        bootstrap_status = self.check_bootstrap()
-        
-        if not bootstrap_status.exists:
-            logger.info("No BOOTSTRAP.md found, skipping bootstrap")
-            return True  # No bootstrap needed
-        
-        logger.info("Executing bootstrap initialization")
-        
-        try:
-            # Ensure required files exist
-            results = self._template_service.ensure_required_files()
-            
-            # Log what was created
-            created_files = [k for k, v in results.items() if v]
-            if created_files:
-                logger.info(
-                    "Bootstrap created missing files",
-                    extra={"files": created_files}
-                )
-            
-            # Delete BOOTSTRAP.md after successful initialization
-            self._complete_bootstrap()
-            
-            logger.info("Bootstrap initialization completed")
-            return True
-            
-        except Exception as e:
-            logger.error(
-                "Bootstrap initialization failed",
-                extra={"error": str(e)}
-            )
-            return False
-    
-    def _complete_bootstrap(self) -> None:
-        """Complete bootstrap by deleting BOOTSTRAP.md."""
-        bootstrap_path = self.workspace_path / "BOOTSTRAP.md"
-        
-        if bootstrap_path.exists():
-            try:
-                bootstrap_path.unlink()
-                logger.info("BOOTSTRAP.md deleted after initialization")
-            except Exception as e:
-                logger.warning(
-                    "Failed to delete BOOTSTRAP.md",
-                    extra={"error": str(e)}
-                )
-    
     # ============ Session-Aware Context Loading ============
     
     def load_context(
@@ -233,8 +78,6 @@ class ContextLoader:
     ) -> ContextBundle:
         """Load context based on session type.
         
-        This is the main entry point for loading agent context.
-        
         Args:
             session_id: Unique session identifier
             session_type: MAIN or SHARED (affects MEMORY.md loading)
@@ -244,12 +87,6 @@ class ContextLoader:
             ContextBundle with loaded context
         """
         start_time = time.time()
-        
-        # Check bootstrap first
-        bootstrap_status = self.check_bootstrap()
-        if bootstrap_status.exists:
-            logger.info("BOOTSTRAP.md exists, executing initialization")
-            self.execute_bootstrap()
         
         # Clear cache if force reload
         if force_reload:
@@ -264,7 +101,6 @@ class ContextLoader:
         
         # Session-aware MEMORY.md loading
         if session_type == SessionType.SHARED:
-            # Clear MEMORY.md for shared context (privacy protection)
             context.long_term_memory = ""
             logger.info(
                 "MEMORY.md excluded for shared context",
@@ -319,9 +155,8 @@ class ContextLoader:
         """
         agents_path = self.workspace_path / "AGENTS.md"
         
-        # Ensure file exists (graceful degradation)
         if not agents_path.exists():
-            self._template_service.create_file_from_template("AGENTS.md", "agents")
+            return "", False
         
         # Check modification time
         current_mtime = get_file_mtime(agents_path)
@@ -348,17 +183,15 @@ class ContextLoader:
             )
             return content, True
             
-        except Exception as e:
+        except Exception as error:
             logger.error(
                 "Failed to load AGENTS.md",
-                extra={"error": str(e)}
+                extra={"error": str(error)}
             )
             return self._agents_content or "", False
     
     def reload_agents_if_changed(self) -> tuple[str, bool, float]:
         """Reload AGENTS.md if it has changed since last load.
-        
-        This is called on each user query to ensure fresh guidance.
         
         Returns:
             Tuple of (content, was_reloaded, reload_time_ms)
@@ -391,10 +224,10 @@ class ContextLoader:
             "agents_reloaded": was_reloaded,
             "reload_time_ms": reload_time_ms,
             "agents_mtime": self._agents_mtime.isoformat() if self._agents_mtime else None,
-            "performance_ok": reload_time_ms < 1000,  # SC-004 requirement
+            "performance_ok": reload_time_ms < 1000,
         }
     
-    # ============ Utility Methods ============
+    # ============ File Information ============
     
     def get_loaded_files_info(self, session_id: str) -> list[dict]:
         """Get detailed information about loaded files.
@@ -417,7 +250,7 @@ class ContextLoader:
                 "required": context_file.required,
                 "main_session_only": context_file.main_session_only,
                 "loaded": exists,
-                "from_cache": False,  # Would need more tracking for this
+                "from_cache": False,
                 "is_default": not exists,
             }
             
@@ -451,11 +284,12 @@ class ContextLoader:
         
         return files_info
     
+    # ============ Cache Management ============
+    
     def clear_all_cache(self) -> None:
         """Clear all cached data."""
         if self._context_builder is not None:
             self._context_builder.clear_cache()
-        self._spirit_loader.clear_cache()
         self._agents_content = None
         self._agents_mtime = None
         

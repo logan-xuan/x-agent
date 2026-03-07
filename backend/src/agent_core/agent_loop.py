@@ -48,6 +48,7 @@ from .types import (
 )
 from .context_transform import convert_messages_to_llm, estimate_tokens, content_to_dict
 from .tool_executor import execute_tool_calls
+from .experience_learning import ExperienceLearner, format_experience_for_prompt
 
 if TYPE_CHECKING:
     from .config import AgentCoreConfig
@@ -118,8 +119,8 @@ class _AgentLoopRunner:
         self.abort_event = abort_event
         self.prompts = prompts
 
-        # 追踪 - 复用或生成 trace_id
-        # 优先从请求上下文获取 trace_id，确保整个请求链路一致
+        # 追踪 - 从请求上下文的 Identity 获取 trace_id 和 session_id
+        # Identity 是全局唯一身份信息的单一来源
         try:
             from src.conversation.context import get_current_context
         except ImportError:  # 兼容不同运行入口
@@ -129,6 +130,10 @@ class _AgentLoopRunner:
             self.trace_id = req_ctx.trace_id
         else:
             self.trace_id = str(uuid.uuid4())[:12]
+        # session_id 从 Identity 获取，确保与全局一致
+        self.session_id: str = (req_ctx.session_id if req_ctx and req_ctx.session_id else self.trace_id)
+        # agent_id 从 Identity 获取
+        self.agent_id: str = req_ctx.agent_id if req_ctx else self.trace_id
         self.start_time = time.time()
 
         # 日志器（可选）
@@ -150,6 +155,15 @@ class _AgentLoopRunner:
         self._last_assistant_msg: AssistantMessage | None = None
         self._last_tool_results: list[ToolResultMessage] = []
         self._last_llm_call_id: str = ""
+
+        # 经验学习
+        self._experience_learner: ExperienceLearner | None = None
+        self._tool_call_logs: list[dict] = []
+        if config.enable_experience_learning and config.memory is not None:
+            self._experience_learner = ExperienceLearner(
+                memory=config.memory,
+                search_timeout_ms=config.experience_search_timeout_ms,
+            )
 
         # 日志: agent loop 开始
         if self.logger:
@@ -174,19 +188,16 @@ class _AgentLoopRunner:
     async def run(self) -> AsyncGenerator[AgentEvent, None]:
         """主循环: 协调双层循环."""
         try:
-            from src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext, ContextSource
+            from src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext
         except ImportError:
-            from backend.src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext, ContextSource  # type: ignore
+            from backend.src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext  # type: ignore
         req_ctx = get_current_context()
         if not req_ctx:
-            # 如果没有上下文，创建一个新的
-            req_ctx = ReqContext(
-                trace_id=self.trace_id,
-                source=ContextSource.INTERNAL
-            )
+            # 如果没有上下文（如 CLI 或测试入口），创建一个带 Identity 的新上下文
+            req_ctx = ReqContext.for_cli()
+            req_ctx.trace_id = self.trace_id
             set_current_context(req_ctx)
         elif not req_ctx.trace_id:
-            # 如果上下文没有 trace_id，设置它
             req_ctx.trace_id = self.trace_id
 
         async for ev in self._emit_start_events():
@@ -283,7 +294,7 @@ class _AgentLoopRunner:
         self.pending_messages = []
 
     async def _call_llm(self) -> AsyncGenerator[AgentEvent, None]:
-        """执行一次 LLM 调用: 消息转换 → 日志 → 流式响应 → 日志.
+        """执行一次 LLM 调用: 消息转换 → 上下文压缩 → 日志 → 流式响应 → 日志.
 
         结果存入 self._last_assistant_msg.
         """
@@ -293,6 +304,26 @@ class _AgentLoopRunner:
 
         # 转换消息为 LLM 格式
         llm_messages = convert_messages_to_llm(self.current_context.messages)
+
+        # 上下文压缩 (通过 ContextPort，如果已配置)
+        if (
+            self.config.context is not None
+            and self.config.enable_context_compression
+        ):
+            prepared = await self.config.context.prepare_context(
+                session_id=self.session_id,
+                messages=llm_messages,
+                system_prompt=self.current_context.system_prompt,
+            )
+            llm_messages = prepared.messages
+
+        # 经验检索: LLM 调用前检索相关历史经验，注入 system prompt
+        if self._experience_learner is not None:
+            experience_prompt = await self._retrieve_and_format_experience()
+            if experience_prompt:
+                self.current_context.system_prompt = (
+                    self.current_context.system_prompt + "\n\n" + experience_prompt
+                )
 
         # 日志: LLM 调用开始
         if self.logger:
@@ -395,6 +426,24 @@ class _AgentLoopRunner:
                         error=str(event.result.details.get("error", "")) if event.is_error and event.result else None,
                     )
 
+                # 收集工具调用日志用于经验提取
+                if self._experience_learner is not None:
+                    result_text = ""
+                    if event.result and event.result.content:
+                        text_parts: list[str] = []
+                        for content_item in event.result.content:
+                            if isinstance(content_item, TextContent):
+                                text_parts.append(content_item.text)
+                        result_text = " ".join(text_parts)[:200]
+
+                    self._tool_call_logs.append({
+                        "tool_name": event.tool_name,
+                        "arguments": {},
+                        "is_error": event.is_error,
+                        "duration_ms": event.duration_ms,
+                        "result_summary": result_text,
+                    })
+
                 result_msg = ToolResultMessage(
                     tool_call_id=event.tool_call_id,
                     tool_name=event.tool_name,
@@ -436,9 +485,52 @@ class _AgentLoopRunner:
         yield MessageEndEvent(message=error_msg)
         self.new_messages.append(error_msg)
 
+    async def _retrieve_and_format_experience(self) -> str:
+        """检索相关经验并格式化为 prompt 文本.
+
+        从用户消息中提取查询文本，检索历史经验，
+        返回格式化后的经验文本用于注入 system prompt。
+
+        Returns:
+            格式化后的经验文本，空字符串表示无相关经验
+        """
+        if self._experience_learner is None:
+            return ""
+
+        # 从最近的用户消息中提取查询文本
+        query_parts = []
+        for msg in reversed(self.current_context.messages):
+            if hasattr(msg, "role") and getattr(msg, "role", None) == "user":
+                for content_item in getattr(msg, "content", []):
+                    if hasattr(content_item, "text") and content_item.text:
+                        query_parts.append(content_item.text[:200])
+                        break
+                if query_parts:
+                    break
+
+        if not query_parts:
+            return ""
+
+        query = " ".join(query_parts)
+        experiences = await self._experience_learner.retrieve_experience(query)
+        return format_experience_for_prompt(experiences)
+
     async def _emit_end_event(self) -> AsyncGenerator[AgentEvent, None]:
         """发送 Agent 结束事件和日志."""
         total_duration = (time.time() - self.start_time) * 1000
+
+        # 经验提取: 对话结束后异步分析工具调用序列，提取经验模式
+        if (
+            self._experience_learner is not None
+            and self._tool_call_logs
+        ):
+            asyncio.create_task(
+                self._experience_learner.extract_experience(
+                    trace_id=self.trace_id,
+                    tool_call_logs=self._tool_call_logs,
+                ),
+                name=f"extract-experience-{self.trace_id[:8]}",
+            )
 
         if self.logger:
             was_aborted = self._is_aborted()

@@ -9,13 +9,15 @@ This module provides the built-in tools that are always available:
 - get_terminal_output: Check background process output
 - kill_process: Kill a background process
 - get_current_time: Get current local time
-- fetch_web_content: Fetch web page content (NEW)
+- fetch_web_content: Fetch web page content
+- memory_search: Search long-term memory
 """
 
 from .file_ops import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool, SearchFilesTool
 from .aliyun_web_search import AliyunWebSearchTool
 from .get_current_time import GetCurrentTimeTool
 from .fetch_web_content import FetchWebContentTool
+from .memory_search import MemorySearchTool
 from .terminal import RunInTerminalTool, GetTerminalOutputTool, KillProcessTool
 
 __all__ = [
@@ -27,12 +29,12 @@ __all__ = [
     "AliyunWebSearchTool",
     "GetCurrentTimeTool",
     "FetchWebContentTool",
+    "MemorySearchTool",
     "RunInTerminalTool",
     "GetTerminalOutputTool",
     "KillProcessTool",
     "get_builtin_tools",
 ]
-
 
 def get_builtin_tools() -> list:
     """Get all built-in tools.
@@ -52,6 +54,7 @@ def get_builtin_tools() -> list:
         AliyunWebSearchTool(),
         GetCurrentTimeTool(),
         FetchWebContentTool(),
+        MemorySearchTool(),
         terminal_tool,
         GetTerminalOutputTool(terminal_tool),
         KillProcessTool(terminal_tool),

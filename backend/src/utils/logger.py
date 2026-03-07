@@ -255,37 +255,52 @@ F = TypeVar('F', bound=Callable[..., Any])
 
 
 class TraceIDFilter(logging.Filter):
-    """Filter that automatically injects trace_id and module info into log records."""
-    
+    """Filter that automatically injects identity fields into log records.
+
+    Reads from the current :class:`AgentContext` (which delegates to
+    :class:`Identity`) so that every log line carries the full identity.
+    """
+
     def filter(self, record: logging.LogRecord) -> bool:
-        # Import here to avoid circular dependency
         try:
             from ..conversation.context import get_current_context
             ctx = get_current_context()
-            record.trace_id = ctx.trace_id if ctx else None
-            record.request_id = ctx.request_id if ctx else None
-            record.session_id = ctx.session_id if ctx else None
+            if ctx:
+                record.trace_id = ctx.trace_id
+                record.request_id = ctx.request_id
+                record.session_id = ctx.session_id
+                record.agent_id = ctx.agent_id
+                record.channel_id = ctx.channel_id
+                record.user_id = ctx.user_id
+                record.agent_type = ctx.agent_type.value if ctx.agent_type else None
+            else:
+                record.trace_id = None
+                record.request_id = None
+                record.session_id = None
+                record.agent_id = None
+                record.channel_id = None
+                record.user_id = None
+                record.agent_type = None
         except Exception:
             record.trace_id = None
             record.request_id = None
             record.session_id = None
-        
+            record.agent_id = None
+            record.channel_id = None
+            record.user_id = None
+            record.agent_type = None
+
         # Extract module and class info from logger name
-        # name format: src.api.websocket or src.conversation.context.AgentContext
-        parts = record.name.split('.')
         record.module_path = record.name
-        
-        # Try to extract class name if present in the message or from logger name
         record.class_name = getattr(record, 'class_name', None)
-        
+
         return True
 
 
 class ModuleInfoProcessor:
-    """Structlog processor that adds module and class information."""
-    
+    """Structlog processor that adds identity and module information."""
+
     def __call__(self, logger: Any, method_name: str, event_dict: dict) -> dict:
-        # Add trace info from context
         try:
             from ..conversation.context import get_current_context
             ctx = get_current_context()
@@ -293,12 +308,16 @@ class ModuleInfoProcessor:
                 event_dict['trace_id'] = ctx.trace_id
                 event_dict['request_id'] = ctx.request_id
                 event_dict['session_id'] = ctx.session_id
+                event_dict['agent_id'] = ctx.agent_id
+                event_dict['channel_id'] = ctx.channel_id
+                event_dict['user_id'] = ctx.user_id
+                event_dict['agent_type'] = ctx.agent_type.value if ctx.agent_type else None
         except Exception:
             pass
-        
+
         # Add module info
         event_dict['module'] = event_dict.get('logger', 'unknown')
-        
+
         return event_dict
 
 

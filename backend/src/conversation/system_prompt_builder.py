@@ -387,7 +387,10 @@ class SystemPromptBuilder:
 
         try:
             raw_content = file_path.read_text(encoding="utf-8", errors="replace")
-            content, is_truncated = _truncate_content(raw_content, MAX_SINGLE_FILE_CHARS)
+            keep_tail = filename == "MEMORY.md"
+            content, is_truncated = _truncate_content(
+                raw_content, MAX_SINGLE_FILE_CHARS, keep_tail=keep_tail,
+            )
 
             if is_truncated:
                 logger.info(
@@ -546,18 +549,30 @@ class SystemPromptBuilder:
 # ─── 模块级工具函数 ───
 
 
-def _truncate_content(content: str, max_chars: int = MAX_SINGLE_FILE_CHARS) -> tuple[str, bool]:
-    """截断过长内容，保留前 70% + 后 20%.
+def _truncate_content(
+    content: str,
+    max_chars: int = MAX_SINGLE_FILE_CHARS,
+    keep_tail: bool = False,
+) -> tuple[str, bool]:
+    """截断过长内容.
+
+    默认保留前 70% + 后 20%。当 keep_tail=True 时保留末尾内容
+    （适用于 MEMORY.md 等按时间正序追加的文件，最新条目在末尾）。
 
     Args:
         content: 原始内容
         max_chars: 最大字符数
+        keep_tail: 是否优先保留末尾（最新内容）
 
     Returns:
         (截断后的内容, 是否被截断)
     """
     if len(content) <= max_chars:
         return content, False
+
+    if keep_tail:
+        truncated = "...\n" + content[-max_chars:]
+        return truncated, True
 
     front_size = int(max_chars * 0.7)
     back_size = int(max_chars * 0.2)

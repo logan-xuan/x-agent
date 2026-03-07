@@ -54,7 +54,7 @@ class ToolSemanticMap:
         },
         "memory": {
             "type": "builtin_tool",
-            "module": "src.services.smart_memory",
+            "module": "src.memory.manager",
             "description": "记忆存储和检索",
             "can_call_directly": True
         },

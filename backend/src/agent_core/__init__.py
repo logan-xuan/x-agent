@@ -71,7 +71,6 @@ from .agent import Agent, run_agent_once
 from .agent_loop import agent_loop
 from .event_stream import EventStream, EventCollector
 from .logger import AgentLogger
-from .memory_integration import ToolCallMemoryWriter, generate_tool_call_summary, is_important_tool_call
 from .experience_learning import ExperienceLearner, format_experience_for_prompt, detect_retry_patterns
 from .hooks import (
     HookPoint,
@@ -150,10 +149,7 @@ __all__ = [
     "EventCollector",
     # Logger
     "AgentLogger",
-    # Memory & Experience
-    "ToolCallMemoryWriter",
-    "generate_tool_call_summary",
-    "is_important_tool_call",
+    # Experience
     "ExperienceLearner",
     "format_experience_for_prompt",
     "detect_retry_patterns",

@@ -1,0 +1,24 @@
+{
+  "tasks": [
+    {
+      "id": "sample_task_1",
+      "name": "Sample Task 1",
+      "description": "A sample task that runs every minute",
+      "cron_expression": "* * * * *",
+      "command": "echo 'Sample task executed at $(date)' >> /tmp/sample_task.log",
+      "enabled": true,
+      "last_run": null,
+      "next_run": null
+    },
+    {
+      "id": "sample_task_2", 
+      "name": "Sample Task 2",
+      "description": "A sample task that runs daily at midnight",
+      "cron_expression": "0 0 * * *",
+      "command": "echo 'Daily task executed at $(date)' >> /tmp/daily_task.log",
+      "enabled": true,
+      "last_run": null,
+      "next_run": null
+    }
+  ]
+}

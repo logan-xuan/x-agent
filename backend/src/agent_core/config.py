@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .ports.memory_port import MemoryPort
     from .ports.logger_port import LoggerPort
     from .ports.plan_port import PlanPort
-    from .ports.context_port import ContextPort, ContextConfig
+    from .ports.context_port import ContextPort
     from .ports.system_prompt_port import SystemPromptPort
     from .ports.skill_port import SkillPort
     from .hooks import HookRegistry
@@ -108,7 +108,7 @@ class AgentCoreConfig:
     memory_write_async: bool = True  # 异步写入记忆
     
     # === 上下文配置 ===
-    context_config: "ContextConfig | None" = None
+    # (上下文配置由 ContextPort 实现者内部管理)
     
     # === 扩展点 ===
     hooks: "HookRegistry | None" = None

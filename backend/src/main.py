@@ -5,7 +5,8 @@ import sys
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from collections.abc import Callable
+from typing import Any, AsyncGenerator, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api.middleware import ErrorHandlerMiddleware, TracingMiddleware
 from .api.middleware.rate_limit import RateLimitMiddleware
 from .config.manager import ConfigManager
-from .conversation.context import context_manager, ContextSource
+from .conversation.context import context_manager
 from .services.storage import init_storage, close_storage
 from .services.llm.router import LLMRouter
 from .utils.logger import get_logger, setup_logging
@@ -111,6 +112,19 @@ def _clear_context_cache() -> None:
         logger.warning("Failed to clear context cache", extra={"error": str(e)})
 
 
+def _make_memory_sync_callback(manager: Any) -> Callable[[str], None]:
+    """Create a file-change callback that syncs memory via MemoryManager."""
+    def on_memory_file_changed(file_path: str) -> None:
+        try:
+            manager.sync_to_vectors(file_path)
+        except Exception as exc:
+            logger.error(
+                "Failed to sync memory file change",
+                extra={"file_path": file_path, "error": str(exc)},
+            )
+    return on_memory_file_changed
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager with proper startup/shutdown.
@@ -183,6 +197,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 3. Initialize database
     await init_storage()
     logger.info("Database initialized")
+
+    # 3.1 Ensure default entities (User, Agent, Channel)
+    # 先解析 workspace 路径，供 ensure_default_entities 读取 SPIRIT.md
+    raw_workspace_path = config.workspace.path
+    expanded_workspace_path = Path(raw_workspace_path).expanduser()
+    if expanded_workspace_path.is_absolute():
+        workspace_path = str(expanded_workspace_path.resolve())
+    else:
+        backend_dir = Path(__file__).parent
+        workspace_path = str((backend_dir / raw_workspace_path).resolve())
+
+    from .conversation.dao import ensure_default_entities
+    await ensure_default_entities(workspace_path=workspace_path)
+    logger.info("Default entities ensured")
     
     # 4. Initialize LLM router
     _llm_router = LLMRouter(config.models)
@@ -202,52 +230,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.config_manager = _config_manager
     app.state.llm_router = _llm_router
     
-    # 6. Start file watcher for memory sync (Phase 7)
+    # 6. Initialize MemoryManager and start file watcher
     from .memory.file_watcher import get_file_watcher
-    from .memory.md_sync import get_md_sync
-    from .memory.vector_store import get_vector_store
-    from .memory.embedder import get_embedder
+    from .memory.manager import init_memory_manager
+    from .conversation.session import SessionManager
     
-    # Handle ~ expansion and absolute/relative paths correctly
-    raw_workspace_path = config.workspace.path
-    expanded_workspace_path = Path(raw_workspace_path).expanduser()
-    if expanded_workspace_path.is_absolute():
-        workspace_path = str(expanded_workspace_path.resolve())
-    else:
-        backend_dir = Path(__file__).parent
-        workspace_path = str((backend_dir / raw_workspace_path).resolve())
+    # workspace_path 已在步骤 3.1 中解析完成，直接复用
     
+    # Initialize MemoryManager (unified entry point for all memory operations)
+    session_manager = SessionManager()
+    memory_manager = init_memory_manager(
+        workspace_path=workspace_path,
+        llm_router=_llm_router,
+        session_manager=session_manager,
+    )
+    app.state.memory_manager = memory_manager
+    logger.info("MemoryManager initialized")
+    
+    # Start file watcher with callbacks (including entity sync)
+    from .conversation.dao.bootstrap import _sync_owner_to_db, _sync_identity_to_db, _sync_spirit_to_db
+
+    def _on_spirit_changed() -> None:
+        logger.info("SPIRIT.md changed, hot-reload triggered")
+        _sync_spirit_to_db(workspace_path)
+
+    def _on_owner_changed() -> None:
+        logger.info("OWNER.md changed, hot-reload triggered")
+        _sync_owner_to_db(workspace_path)
+
+    def _on_identity_changed() -> None:
+        _clear_context_cache()
+        logger.info("IDENTITY.md changed, context cache cleared")
+        _sync_identity_to_db(workspace_path)
+
     _file_watcher = get_file_watcher(workspace_path)
-    
-    # Get dependencies for sync
-    md_sync = get_md_sync(workspace_path)
-    vector_store = get_vector_store()
-    embedder = get_embedder()
-    
-    # Define sync callback for memory file changes
-    def on_memory_file_changed(file_path: str) -> None:
-        """Handle memory file changes and sync to vector store."""
-        try:
-            md_sync.sync_on_file_change(file_path, vector_store, embedder)
-        except Exception as e:
-            logger.error(
-                "Failed to sync memory file change",
-                extra={"file_path": file_path, "error": str(e)}
-            )
-    
-    # Start file watcher with callbacks
     _file_watcher.start(
-        on_spirit_changed=lambda: logger.info("SPIRIT.md changed, hot-reload triggered"),
-        on_owner_changed=lambda: logger.info("OWNER.md changed, hot-reload triggered"),
+        on_spirit_changed=_on_spirit_changed,
+        on_owner_changed=_on_owner_changed,
         on_tools_changed=lambda: logger.info("TOOLS.md changed, hot-reload triggered"),
-        on_memory_changed=on_memory_file_changed,
-        on_identity_changed=lambda: (_clear_context_cache(), logger.info("IDENTITY.md changed, context cache cleared")),
+        on_memory_changed=_make_memory_sync_callback(memory_manager),
+        on_identity_changed=_on_identity_changed,
     )
     logger.info("File watcher started for memory sync")
     
     # 7. Initial sync: Markdown -> Vector Store
     try:
-        synced_count = md_sync.sync_all_entries_to_vector_store(vector_store, embedder)
+        synced_count = memory_manager.sync_to_vectors()
         logger.info(
             "Initial memory sync completed",
             extra={"synced_entries": synced_count}
@@ -345,7 +373,6 @@ def create_app() -> FastAPI:
     
     # === ROUTES ===
     from .api.v1.config import router as config_router
-    from .api.v1.context import router as context_router
     from .api.v1.dev import router as dev_router
     from .api.v1.health import router as health_router
     from .api.v1.stats import router as stats_router
@@ -353,17 +380,18 @@ def create_app() -> FastAPI:
     from .api.v1.trace import router as trace_router
     from .api.v1.skills import router as skills_router
     from .api.v1.sessions import router as sessions_router
+    from .api.v1.admin import router as admin_router
     from .agent_core.api import agent_websocket_router, agent_rest_router
     
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
     app.include_router(config_router, prefix="/api/v1", tags=["Config"])
-    app.include_router(context_router, prefix="/api/v1", tags=["Context"])
     app.include_router(stats_router, prefix="/api/v1", tags=["Stats"])
     app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
     app.include_router(dev_router, prefix="/api/v1", tags=["Developer"])
     app.include_router(trace_router, prefix="/api/v1", tags=["Trace"])
     app.include_router(skills_router, prefix="/api/v1", tags=["Skills"])
     app.include_router(sessions_router, prefix="/api/v1", tags=["Sessions"])
+    app.include_router(admin_router, prefix="/api/v1", tags=["Admin"])
     app.include_router(agent_websocket_router, prefix="/ws", tags=["WebSocket"])
     app.include_router(agent_rest_router, prefix="/api/v1", tags=["Agent Logs"])
     

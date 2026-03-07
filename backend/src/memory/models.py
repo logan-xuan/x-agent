@@ -25,6 +25,7 @@ class MemoryContentType(str, Enum):
     DECISION = "decision"
     SUMMARY = "summary"
     MANUAL = "manual"
+    EXPERIENCE = "experience"
 
 
 class SessionType(str, Enum):
