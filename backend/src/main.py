@@ -198,8 +198,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_storage()
     logger.info("Database initialized")
 
-    # 3.1 Ensure default entities (User, Agent, Channel)
-    # 先解析 workspace 路径，供 ensure_default_entities 读取 SPIRIT.md
+    # 3.1 Ensure default User exists (Agent/Channel are config-driven)
     raw_workspace_path = config.workspace.path
     expanded_workspace_path = Path(raw_workspace_path).expanduser()
     if expanded_workspace_path.is_absolute():
@@ -209,7 +208,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         workspace_path = str((backend_dir / raw_workspace_path).resolve())
 
     from .conversation.dao import ensure_default_entities
-    await ensure_default_entities(workspace_path=workspace_path)
+    await ensure_default_entities()
     logger.info("Default entities ensured")
     
     # 4. Initialize LLM router
@@ -247,21 +246,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.memory_manager = memory_manager
     logger.info("MemoryManager initialized")
     
-    # Start file watcher with callbacks (including entity sync)
-    from .conversation.dao.bootstrap import _sync_owner_to_db, _sync_identity_to_db, _sync_spirit_to_db
-
+    # Start file watcher with callbacks
     def _on_spirit_changed() -> None:
         logger.info("SPIRIT.md changed, hot-reload triggered")
-        _sync_spirit_to_db(workspace_path)
 
     def _on_owner_changed() -> None:
         logger.info("OWNER.md changed, hot-reload triggered")
-        _sync_owner_to_db(workspace_path)
 
     def _on_identity_changed() -> None:
         _clear_context_cache()
         logger.info("IDENTITY.md changed, context cache cleared")
-        _sync_identity_to_db(workspace_path)
 
     _file_watcher = get_file_watcher(workspace_path)
     _file_watcher.start(
@@ -286,7 +280,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             extra={"error": str(e)}
         )
     
-    # 8. Install global exception hooks
+    # 8. Initialize and start cron scheduler
+    from .cron.scheduler import get_scheduler as get_cron_scheduler
+    _cron_scheduler = get_cron_scheduler()
+    await _cron_scheduler.initialize()
+    await _cron_scheduler.start()
+    app.state.cron_scheduler = _cron_scheduler
+    logger.info("Cron scheduler initialized and started")
+    
+    # 9. Install global exception hooks
     _install_global_exception_hooks()
     
     logger.info("X-Agent started successfully")
@@ -296,22 +298,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # === SHUTDOWN ===
     logger.info("Shutting down X-Agent...")
     
-    # 1. Stop file watcher
+    # 1. Stop cron scheduler
+    if _cron_scheduler:
+        await _cron_scheduler.stop()
+        logger.info("Cron scheduler stopped")
+    
+    # 2. Stop file watcher
     if _file_watcher:
         _file_watcher.stop()
         logger.info("File watcher stopped")
     
-    # 2. Stop config watcher
+    # 3. Stop config watcher
     if _config_manager:
         _config_manager.stop_watcher()
         logger.info("Configuration watcher stopped")
     
-    # 3. Close LLM connections
+    # 4. Close LLM connections
     if _llm_router:
         await _llm_router.close()
         logger.info("LLM router closed")
     
-    # 4. Close database connections
+    # 5. Close database connections
     await close_storage()
     logger.info("Database connections closed")
     
@@ -381,7 +388,9 @@ def create_app() -> FastAPI:
     from .api.v1.skills import router as skills_router
     from .api.v1.sessions import router as sessions_router
     from .api.v1.admin import router as admin_router
-    from .agent_core.api import agent_websocket_router, agent_rest_router
+    from .gateway.endpoints import websocket_router as agent_websocket_router
+    from .gateway.endpoints import rest_router as gateway_rest_router
+    from .agent_core.api import agent_rest_router
     
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
     app.include_router(config_router, prefix="/api/v1", tags=["Config"])
@@ -393,7 +402,12 @@ def create_app() -> FastAPI:
     app.include_router(sessions_router, prefix="/api/v1", tags=["Sessions"])
     app.include_router(admin_router, prefix="/api/v1", tags=["Admin"])
     app.include_router(agent_websocket_router, prefix="/ws", tags=["WebSocket"])
+    app.include_router(gateway_rest_router, prefix="/api/v1", tags=["Gateway"])
     app.include_router(agent_rest_router, prefix="/api/v1", tags=["Agent Logs"])
+    
+    # Add cron scheduler router
+    from .cron.api.router import router as cron_router
+    app.include_router(cron_router, prefix="/api/v1", tags=["Cron"])
     
     return app
 

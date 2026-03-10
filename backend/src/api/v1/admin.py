@@ -128,7 +128,9 @@ class AgentResponse(BaseModel):
     agent_type: str
     agent_persona: str
     user_id: str
-    create_time: Optional[str] = None
+    workspace: str = ""
+    feature: str = ""
+    create_time: Optional[str] = None  # 配置驱动下无创建时间
 
 
 class UpdateAgentRequest(BaseModel):
@@ -138,16 +140,10 @@ class UpdateAgentRequest(BaseModel):
 
 @router.get("/admin/agents", response_model=list[AgentResponse])
 async def list_agents(_: None = Depends(verify_admin)) -> list[AgentResponse]:
-    """列出所有 Agent。"""
-    storage = get_storage_service()
-    agent_dao = AgentDAO(storage)
-    # 获取所有用户的 Agent
-    user_dao = UserDAO(storage)
-    users = await user_dao.list_all()
-    all_agents = []
-    for user in users:
-        agents = await agent_dao.list_by_user(user.user_id)
-        all_agents.extend(agents)
+    """列出所有 Agent（配置驱动，直接从配置加载）。"""
+    from ...conversation.dao.models import Agent
+
+    all_agents = Agent.list_all()
     return [
         AgentResponse(
             agent_id=agent.agent_id,
@@ -155,7 +151,9 @@ async def list_agents(_: None = Depends(verify_admin)) -> list[AgentResponse]:
             agent_type=agent.agent_type,
             agent_persona=agent.agent_persona,
             user_id=agent.user_id,
-            create_time=agent.create_time.isoformat() if agent.create_time else None,
+            workspace=agent.workspace,
+            feature=agent.feature,
+            create_time=None,
         )
         for agent in all_agents
     ]
@@ -190,7 +188,9 @@ async def update_agent(
         agent_type=current_agent.agent_type,
         agent_persona=current_agent.agent_persona,
         user_id=current_agent.user_id,
-        create_time=current_agent.create_time.isoformat() if current_agent.create_time else None,
+        workspace=current_agent.workspace,
+        feature=current_agent.feature,
+        create_time=None,  # 配置驱动下无创建时间
     )
 
 
@@ -222,15 +222,10 @@ class ChannelResponse(BaseModel):
 
 @router.get("/admin/channels", response_model=list[ChannelResponse])
 async def list_channels(_: None = Depends(verify_admin)) -> list[ChannelResponse]:
-    """列出所有 Channel。"""
-    storage = get_storage_service()
-    channel_dao = ChannelDAO(storage)
-    user_dao = UserDAO(storage)
-    users = await user_dao.list_all()
-    all_channels = []
-    for user in users:
-        channels = await channel_dao.list_by_user(user.user_id)
-        all_channels.extend(channels)
+    """列出所有 Channel（配置驱动，直接从配置加载）。"""
+    from ...conversation.dao.models import Channel
+
+    all_channels = Channel.list_all()
     return [
         ChannelResponse(
             channel_id=ch.channel_id,
@@ -238,7 +233,7 @@ async def list_channels(_: None = Depends(verify_admin)) -> list[ChannelResponse
             channel_protocol=ch.channel_protocol,
             user_id=ch.user_id,
             agent_id=ch.agent_id,
-            create_time=ch.create_time.isoformat() if ch.create_time else None,
+            create_time=None,
         )
         for ch in all_channels
     ]
