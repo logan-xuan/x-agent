@@ -4,7 +4,7 @@ import asyncio
 import importlib
 import importlib.util
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,7 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.calendarinterval import CalendarIntervalTrigger
 from apscheduler._events import JobAcquired, JobReleased
-from apscheduler._enums import JobOutcome, CoalescePolicy
+from apscheduler._enums import JobOutcome, CoalescePolicy, ConflictPolicy
 
 from ..utils.logger import get_logger
 from ..conversation.identity import get_identity_manager
@@ -120,6 +120,10 @@ class CronScheduler:
             # Recover persisted tasks BEFORE starting the scheduler
             # This prevents crashes from orphaned jobs referencing deleted tasks
             await self._recover_persisted_tasks()
+            
+            # Clean up stale jobs left over from previous runs to prevent
+            # burst-execution of all missed fire times on restart
+            await self._cleanup_stale_jobs()
             
             # Start in background
             await self._scheduler.start_in_background()
@@ -446,6 +450,48 @@ class CronScheduler:
                 extra={"task_id": task_id, "error": str(cleanup_err)}
             )
 
+    async def _cleanup_stale_jobs(self) -> None:
+        """Remove all pending jobs from the data store on startup.
+        
+        When the service restarts, APScheduler may have accumulated many pending
+        jobs for missed fire times (especially if misfire_grace_time was not set).
+        These stale jobs would all execute in rapid succession, causing burst
+        behavior instead of following the configured schedule cadence.
+        
+        By clearing all pending jobs before starting the scheduler worker loop,
+        we ensure that only newly generated jobs (from the next fire time onward)
+        are executed.
+        """
+        if not self._config or not self._config.job_store_url:
+            return
+        
+        try:
+            import aiosqlite
+            db_path = self._config.job_store_url.replace("sqlite:///", "")
+            async with aiosqlite.connect(db_path) as db:
+                # Count pending jobs before cleanup
+                cursor = await db.execute("SELECT COUNT(*) FROM jobs")
+                row = await cursor.fetchone()
+                pending_count = row[0] if row else 0
+                
+                if pending_count == 0:
+                    return
+                
+                # Delete all job_results first (foreign key references), then jobs
+                await db.execute("DELETE FROM job_results WHERE job_id IN (SELECT id FROM jobs)")
+                await db.execute("DELETE FROM jobs")
+                await db.commit()
+                
+                logger.info(
+                    "Cleaned up stale jobs on startup to prevent burst execution",
+                    extra={"deleted_count": pending_count}
+                )
+        except Exception as e:
+            logger.warning(
+                "Failed to cleanup stale jobs on startup",
+                extra={"error": str(e)}
+            )
+
     async def _register_predefined_jobs(self) -> None:
         """Register jobs from configuration."""
         if not self._config:
@@ -626,12 +672,34 @@ class CronScheduler:
         # config.metadata may contain task_name, agent_id, user_id, etc. from manager layer
         schedule_metadata = dict(config.metadata) if config.metadata else {}
         schedule_metadata["func_path"] = resolved_func
+        schedule_metadata["conflict_policy"] = config.conflict_policy
+        schedule_metadata["coalesce"] = config.coalesce
+        
+        # Convert misfire_grace_time from seconds to timedelta
+        misfire_grace = timedelta(seconds=config.misfire_grace_time)
+        
+        # Map config string values to APScheduler enum values
+        coalesce_map = {
+            "earliest": CoalescePolicy.earliest,
+            "latest": CoalescePolicy.latest,
+            "all": CoalescePolicy.all,
+        }
+        coalesce_policy = coalesce_map.get(config.coalesce, CoalescePolicy.latest)
+        
+        conflict_map = {
+            "replace": ConflictPolicy.replace,
+            "do_nothing": ConflictPolicy.do_nothing,
+            "exception": ConflictPolicy.exception,
+        }
+        conflict_policy = conflict_map.get(config.conflict_policy, ConflictPolicy.replace)
         
         schedule_id = await self._scheduler.add_schedule(
             func_or_task_id=func,
             trigger=trigger,
             id=config.id,
-            coalesce=CoalescePolicy.all,
+            coalesce=coalesce_policy,
+            misfire_grace_time=misfire_grace,
+            conflict_policy=conflict_policy,
             metadata=schedule_metadata,
         )
         
@@ -704,25 +772,38 @@ class CronScheduler:
                                 trigger_args[field.name] = str(getattr(field, 'values', ''))
                 
                 # Safely extract other attributes
-                coalesce = getattr(s, 'coalesce', None)
-                conflict_policy = getattr(s, 'conflict_policy', None)
+                coalesce_attr = getattr(s, 'coalesce', None)
+                metadata = getattr(s, 'metadata', {}) or {}
+                
+                # coalesce: prefer APScheduler's persisted value, fallback to metadata
+                if coalesce_attr is not None and hasattr(coalesce_attr, 'name'):
+                    coalesce_value = coalesce_attr.name.lower()  # type: ignore[union-attr]
+                else:
+                    coalesce_value = metadata.get("coalesce", "latest")
+                
+                # conflict_policy: APScheduler does NOT persist this on the schedule object,
+                # so we always read it from metadata where we stored it during add_schedule
+                conflict_policy_value = metadata.get("conflict_policy", "replace")
                 
                 next_fire_time = getattr(s, 'next_fire_time', None)
                 last_fire_time = getattr(s, 'last_fire_time', None)
                 result.append({
-                    "id": str(getattr(s, 'id', 'unknown')),  # This is the schedule_id (user-provided)
-                    "task_id": getattr(s, 'task_id', 'unknown'),  # This is APScheduler's internal task_id
+                    "id": str(getattr(s, 'id', 'unknown')),
+                    "task_id": getattr(s, 'task_id', 'unknown'),
                     "trigger": {
                         "type": trigger_type,
                         "args": trigger_args,
                     },
                     "next_fire_time": next_fire_time.isoformat() if next_fire_time is not None else None,
                     "last_fire_time": last_fire_time.isoformat() if last_fire_time is not None else None,
-                    "coalesce": coalesce.name.lower() if hasattr(coalesce, 'name') else str(coalesce),  # type: ignore[union-attr]
-                    "conflict_policy": conflict_policy.name.lower() if hasattr(conflict_policy, 'name') else str(conflict_policy),  # type: ignore[union-attr]
+                    "coalesce": coalesce_value,
+                    "conflict_policy": conflict_policy_value,
                     "paused": getattr(s, 'paused', False),
-                    "enabled": not getattr(s, 'paused', False),  # Inverse of paused
-                    "metadata": getattr(s, 'metadata', {}),
+                    "enabled": not getattr(s, 'paused', False),
+                    "func_path": metadata.get("func_path", None),
+                    "task_name": metadata.get("task_name", None),
+                    "task_description": metadata.get("task_description", None),
+                    "metadata": metadata,
                 })
             return result
         except Exception as e:

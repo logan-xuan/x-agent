@@ -1,6 +1,6 @@
 """管理后台 API。
 
-提供 User、Agent、Channel、ChatSession 的查看和管理功能，
+提供 User、Agent、Channel、Session 的查看和管理功能，
 通过简单密码认证保护。
 """
 
@@ -9,8 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...services.storage import get_storage_service
-from ...conversation.dao.dao import AgentDAO, ChannelDAO, ChatSessionDAO, UserDAO
-from ...conversation.dao.models import SessionStatus
+from ...conversation.dao.dao import UserDAO
 from ...utils.logger import get_logger
 
 router = APIRouter()
@@ -138,6 +137,27 @@ class UpdateAgentRequest(BaseModel):
     agent_persona: Optional[str] = None
 
 
+@router.get("/agents", response_model=list[AgentResponse])
+async def list_agents_public() -> list[AgentResponse]:
+    """列出所有 Agent（公开接口，无需认证）。"""
+    from ...conversation.dao.models import Agent
+
+    all_agents = Agent.list_all()
+    return [
+        AgentResponse(
+            agent_id=agent.agent_id,
+            agent_name=agent.agent_name,
+            agent_type=agent.agent_type,
+            agent_persona=agent.agent_persona,
+            user_id=agent.user_id,
+            workspace=agent.workspace,
+            feature=agent.feature,
+            create_time=None,
+        )
+        for agent in all_agents
+    ]
+
+
 @router.get("/admin/agents", response_model=list[AgentResponse])
 async def list_agents(_: None = Depends(verify_admin)) -> list[AgentResponse]:
     """列出所有 Agent（配置驱动，直接从配置加载）。"""
@@ -165,22 +185,12 @@ async def update_agent(
     request: UpdateAgentRequest,
     _: None = Depends(verify_admin),
 ) -> AgentResponse:
-    """更新 Agent 信息。"""
-    storage = get_storage_service()
-    agent_dao = AgentDAO(storage)
+    """更新 Agent 信息（配置驱动，仅返回当前配置，不支持持久化修改）。"""
+    from ...conversation.dao.models import Agent
 
-    current_agent = await agent_dao.get_by_id(agent_id)
+    current_agent = Agent.from_config(agent_id)
     if current_agent is None:
         raise HTTPException(status_code=404, detail="Agent 不存在")
-
-    if request.agent_name is not None:
-        result = await agent_dao.update_name(agent_id, request.agent_name)
-        if result is not None:
-            current_agent = result
-    if request.agent_persona is not None:
-        result = await agent_dao.update_persona(agent_id, request.agent_persona)
-        if result is not None:
-            current_agent = result
 
     return AgentResponse(
         agent_id=current_agent.agent_id,
@@ -190,21 +200,20 @@ async def update_agent(
         user_id=current_agent.user_id,
         workspace=current_agent.workspace,
         feature=current_agent.feature,
-        create_time=None,  # 配置驱动下无创建时间
+        create_time=None,
     )
-
 
 @router.delete("/admin/agents/{agent_id}")
 async def delete_agent(
     agent_id: str, _: None = Depends(verify_admin)
 ) -> dict:
-    """删除 Agent（级联删除关联数据）。"""
-    storage = get_storage_service()
-    agent_dao = AgentDAO(storage)
-    deleted = await agent_dao.delete(agent_id)
-    if not deleted:
+    """删除 Agent（配置驱动，不支持删除）。"""
+    from ...conversation.dao.models import Agent
+
+    agent = Agent.from_config(agent_id)
+    if agent is None:
         raise HTTPException(status_code=404, detail="Agent 不存在")
-    return {"success": True, "message": f"Agent {agent_id} 已删除"}
+    raise HTTPException(status_code=400, detail="Agent 由配置文件管理，不支持通过 API 删除")
 
 
 # ---------------------------------------------------------------------------
@@ -243,59 +252,60 @@ async def list_channels(_: None = Depends(verify_admin)) -> list[ChannelResponse
 async def delete_channel(
     channel_id: str, _: None = Depends(verify_admin)
 ) -> dict:
-    """删除 Channel（级联删除关联会话）。"""
-    storage = get_storage_service()
-    channel_dao = ChannelDAO(storage)
-    deleted = await channel_dao.delete(channel_id)
-    if not deleted:
+    """删除 Channel（配置驱动，不支持删除）。"""
+    from ...conversation.dao.models import Channel
+
+    channel = Channel.from_config(channel_id)
+    if channel is None:
         raise HTTPException(status_code=404, detail="Channel 不存在")
-    return {"success": True, "message": f"Channel {channel_id} 已删除"}
+    raise HTTPException(status_code=400, detail="Channel 由配置文件管理，不支持通过 API 删除")
 
 
 # ---------------------------------------------------------------------------
-# ChatSession 管理
+# Session 管理（使用 SessionManager，基于 sessions 表）
 # ---------------------------------------------------------------------------
 
 class SessionResponse(BaseModel):
     session_id: str
     session_name: str
-    user_id: str
-    agent_id: str
-    channel_id: str
+    user_id: str = ""
+    agent_id: str = ""
+    channel_id: str = ""
     status: str
     create_time: Optional[str] = None
     updated_at: Optional[str] = None
 
-
 class UpdateSessionStatusRequest(BaseModel):
-    status: str = Field(..., description="新状态：active / closed / archived")
+    status: str = Field(..., description="新状态：active / closed")
 
+def _session_to_response(s) -> SessionResponse:
+    """将 Session ORM 对象转为 SessionResponse。"""
+    return SessionResponse(
+        session_id=s.id,
+        session_name=s.title or "未命名",
+        agent_id=s.agent_id or "",
+        status=s.status,
+        create_time=s.created_at.isoformat() if s.created_at else None,
+        updated_at=s.updated_at.isoformat() if s.updated_at else None,
+    )
 
 @router.get("/admin/sessions", response_model=list[SessionResponse])
 async def list_sessions(_: None = Depends(verify_admin)) -> list[SessionResponse]:
-    """列出所有 ChatSession。"""
-    storage = get_storage_service()
-    session_dao = ChatSessionDAO(storage)
-    user_dao = UserDAO(storage)
-    users = await user_dao.list_all()
-    all_sessions = []
-    for user in users:
-        sessions = await session_dao.list_by_user(user.user_id)
-        all_sessions.extend(sessions)
+    """列出所有 Session（基于 sessions 表）。"""
+    from ...conversation.session import SessionManager
+    session_manager = SessionManager()
+    sessions = await session_manager.list_sessions(limit=200)
     return [
         SessionResponse(
-            session_id=s.session_id,
-            session_name=s.session_name,
-            user_id=s.user_id,
-            agent_id=s.agent_id,
-            channel_id=s.channel_id,
+            session_id=s.id,
+            session_name=s.title or "未命名",
+            agent_id=s.agent_id or "",
             status=s.status,
-            create_time=s.create_time.isoformat() if s.create_time else None,
+            create_time=s.created_at.isoformat() if s.created_at else None,
             updated_at=s.updated_at.isoformat() if s.updated_at else None,
         )
-        for s in all_sessions
+        for s in sessions
     ]
-
 
 @router.put("/admin/sessions/{session_id}/status", response_model=SessionResponse)
 async def update_session_status(
@@ -304,39 +314,39 @@ async def update_session_status(
     _: None = Depends(verify_admin),
 ) -> SessionResponse:
     """更新会话状态。"""
+    from ...models.session import SessionStatus as WebSessionStatus
     try:
-        new_status = SessionStatus(request.status)
+        new_status = WebSessionStatus(request.status)
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"无效状态：{request.status}，可选值：active / closed / archived",
+            detail=f"无效状态：{request.status}，可选值：active / closed",
         )
 
-    storage = get_storage_service()
-    session_dao = ChatSessionDAO(storage)
-    session = await session_dao.update_status(session_id, new_status)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    return SessionResponse(
-        session_id=session.session_id,
-        session_name=session.session_name,
-        user_id=session.user_id,
-        agent_id=session.agent_id,
-        channel_id=session.channel_id,
-        status=session.status,
-        create_time=session.create_time.isoformat() if session.create_time else None,
-        updated_at=session.updated_at.isoformat() if session.updated_at else None,
-    )
+    from ...conversation.session import SessionManager
+    from sqlalchemy import select
+    from ...models.session import Session
 
+    session_manager = SessionManager()
+    async with session_manager._storage.session() as db_session:
+        session = await db_session.get(Session, session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        session.status = new_status.value
+        from datetime import datetime
+        session.updated_at = datetime.utcnow()
+        await db_session.commit()
+        await db_session.refresh(session)
+    return _session_to_response(session)
 
 @router.delete("/admin/sessions/{session_id}")
 async def delete_session(
-    session_id: str, _: None = Depends(verify_admin)
+    session_id: str, _: None = Depends(verify_admin),
 ) -> dict:
     """删除会话。"""
-    storage = get_storage_service()
-    session_dao = ChatSessionDAO(storage)
-    deleted = await session_dao.delete(session_id)
+    from ...conversation.session import SessionManager
+    session_manager = SessionManager()
+    deleted = await session_manager.delete_session(session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="会话不存在")
     return {"success": True, "message": f"会话 {session_id} 已删除"}

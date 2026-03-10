@@ -22,7 +22,9 @@ interface Agent {
   agent_type: string;
   agent_persona: string;
   user_id: string;
-  create_time: string | null;
+  workspace: string;
+  feature: string;
+  create_time?: string | null;  // 配置驱动下可能不存在
 }
 
 interface Channel {
@@ -31,7 +33,7 @@ interface Channel {
   channel_protocol: string;
   user_id: string;
   agent_id: string;
-  create_time: string | null;
+  create_time?: string | null;  // 配置驱动下可能不存在
 }
 
 interface Session {
@@ -495,8 +497,8 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                       { key: 'agent_id', label: 'ID', render: (value) => <code className="text-xs">{String(value).slice(0, 12)}...</code> },
                       { key: 'agent_name', label: '名称' },
                       { key: 'agent_type', label: '类型' },
-                      { key: 'agent_persona', label: '人设', render: (value) => <span title={String(value || '')} className="cursor-help">{String(value || '-').slice(0, 30) + (String(value || '').length > 30 ? '...' : '')}</span> },
-                      { key: 'create_time', label: '创建时间', render: (value) => formatTime(value as string | null) },
+                      { key: 'workspace', label: '工作空间', render: (value) => <span className="text-xs text-gray-500">{String(value || '-')}</span> },
+                      { key: 'feature', label: '特性', render: (value) => <span className="text-xs">{String(value || '-').slice(0, 20)}</span> },
                     ]}
                     data={agents}
                     actions={(row) => (
@@ -515,9 +517,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                       { key: 'channel_id', label: 'ID', render: (value) => <code className="text-xs">{String(value).slice(0, 12)}...</code> },
                       { key: 'channel_type', label: '类型' },
                       { key: 'channel_protocol', label: '协议' },
-                      { key: 'user_id', label: '用户 ID', render: (value) => <code className="text-xs">{String(value).slice(0, 12)}...</code> },
                       { key: 'agent_id', label: 'Agent ID', render: (value) => <code className="text-xs">{String(value).slice(0, 12)}...</code> },
-                      { key: 'create_time', label: '创建时间', render: (value) => formatTime(value as string | null) },
                     ]}
                     data={channels}
                     actions={(row) => (

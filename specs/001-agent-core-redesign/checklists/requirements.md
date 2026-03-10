@@ -32,7 +32,7 @@
 
 ## New Sections Added (v2)
 
-- [x] Pi-Agent 核心设计思想参考
+- [x] x-agent 核心设计思想参考
 - [x] 记忆存储集成 (User Story 3)
 - [x] 工具选择与经验推荐 (User Story 4)
 - [x] 经验反思与学习 (User Story 5)
@@ -44,5 +44,5 @@
 
 - Spec is ready for `/speckit.clarify` or `/speckit.plan`
 - All items passed validation
-- Technical reference document: `arch/pi-agent-loop-tech.md`
+- Technical reference document: `arch/agent-core-loop-tech.md`
 - 规范已整合记忆存储、工具选择策略和经验反思机制

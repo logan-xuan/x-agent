@@ -12,7 +12,8 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { DevModeWindow } from '../dev/DevModeWindow';
 import { SkillMenu } from '../skills/SkillMenu';
-import { Skill, listSkills } from '@/services/api';
+import { AgentSwitcher } from './AgentSwitcher';
+import { Skill, listSkills, AgentInfo } from '@/services/api';
 
 interface AgentChatWindowProps {
     sessionId: string | null;
@@ -22,11 +23,13 @@ interface AgentChatWindowProps {
     isLoading: boolean;
     isConnecting?: boolean;
     connectionStatus: ConnectionStatus;
+    currentAgentId: string | null;
     onSendMessage: (content: string) => void;
     onAbort: () => void;
     onClearMessages: () => void;
     onOpenSettings?: () => void;
     onNewSession?: () => void;
+    onAgentChange?: (agent: AgentInfo) => void;
 }
 
 export function AgentChatWindow({
@@ -37,11 +40,13 @@ export function AgentChatWindow({
     isLoading,
     isConnecting,
     connectionStatus,
+    currentAgentId,
     onSendMessage,
     onAbort,
-    onClearMessages,
+    onClearMessages: _onClearMessages,
     onOpenSettings,
     onNewSession,
+    onAgentChange,
 }: AgentChatWindowProps) {
     const [inputValue, setInputValue] = useState('');
     const [isDevModeOpen, setIsDevModeOpen] = useState(false);
@@ -165,17 +170,18 @@ export function AgentChatWindow({
     }, [handleSend, showSkillMenu, isComposing]);
 
     // 连接状态配置
-    const getStatusConfig = () => {
+    const getStatusConfig = (): { variant: 'success' | 'warning' | 'destructive'; label: string; dotClass: string } => {
         if (isConnecting) {
-            return { variant: 'warning' as const, label: '初始化...', dotClass: 'bg-yellow-500 animate-pulse' };
+            return { variant: 'warning', label: '初始化...', dotClass: 'bg-yellow-500 animate-pulse' };
         }
         switch (connectionStatus) {
             case 'connected':
-                return { variant: 'success' as const, label: '已连接', dotClass: 'bg-green-500' };
+                return { variant: 'success', label: '已连接', dotClass: 'bg-green-500' };
             case 'connecting':
-                return { variant: 'warning' as const, label: '连接中...', dotClass: 'bg-yellow-500 animate-pulse' };
+                return { variant: 'warning', label: '连接中...', dotClass: 'bg-yellow-500 animate-pulse' };
             case 'disconnected':
-                return { variant: 'destructive' as const, label: '已断开', dotClass: 'bg-red-500' };
+            default:
+                return { variant: 'destructive', label: '已断开', dotClass: 'bg-red-500' };
         }
     };
 
@@ -190,8 +196,12 @@ export function AgentChatWindow({
                         <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
                             X-AGENT
                         </h1>
+                        <AgentSwitcher
+                            currentAgentId={currentAgentId}
+                            onAgentChange={onAgentChange ?? (() => { })}
+                        />
                         {sessionId && (
-                            <span className="text-xs text-gray-400 font-mono">
+                            <span className="text-xs text-gray-400 font-mono hidden sm:inline">
                                 {sessionId.slice(0, 8)}...
                             </span>
                         )}

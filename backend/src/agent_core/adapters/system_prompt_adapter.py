@@ -62,15 +62,22 @@ class XAgentSystemPromptAdapter:
         return self._builder.load_identity()
 
 
-def create_system_prompt_adapter() -> XAgentSystemPromptAdapter:
+def create_system_prompt_adapter(
+    workspace_path: str | None = None,
+) -> XAgentSystemPromptAdapter:
     """创建 SystemPrompt 适配器的工厂函数.
 
     自动实例化 conversation.SystemPromptBuilder 并包装为适配器。
+
+    Args:
+        workspace_path: workspace 目录路径。为 None 时由 SystemPromptBuilder
+            从全局配置读取默认路径（单 Agent 场景）。多 Agent 场景下应传入
+            对应 Agent 的 workspace 路径，确保加载正确的 Bootstrap 文件。
 
     Returns:
         XAgentSystemPromptAdapter 实例
     """
     from ...conversation.system_prompt_builder import SystemPromptBuilder
 
-    builder = SystemPromptBuilder()
+    builder = SystemPromptBuilder(workspace_path=workspace_path)
     return XAgentSystemPromptAdapter(builder)

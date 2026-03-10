@@ -227,6 +227,44 @@ class AgentContext:
     # --- 工厂类方法 ----------------------------------------------
 
     @classmethod
+    def for_internal(
+        cls,
+        session_id: str,
+        *,
+        source: str = "cron",
+        agent_id: Optional[str] = None,
+        channel_type: ChannelType = ChannelType.WEB_CHAT,
+        **metadata: Any,
+    ) -> "AgentContext":
+        """为内部触发（cron/webhook/agent-to-agent）创建上下文。
+
+        与 for_websocket 的区别：
+        - channel_protocol = INTERNAL
+        - user_id = "system"
+        - metadata 中携带 source 信息
+
+        Args:
+            session_id: 会话 ID。
+            source: 触发来源（cron/webhook/agent/system）。
+            agent_id: 目标 Agent ID。
+            channel_type: 目标渠道类型。
+            **metadata: 附加元数据。
+
+        Returns:
+            配置好的 AgentContext。
+        """
+        identity_mgr = get_identity_manager()
+        identity = identity_mgr.create(
+            session_id=session_id,
+            agent_id=agent_id,
+            channel_type=channel_type,
+            channel_protocol=ChannelProtocol.INTERNAL,
+            user_id="system",
+            metadata={"source": source, **metadata},
+        )
+        return cls(identity=identity, metadata={"source": source, **metadata})
+
+    @classmethod
     def for_websocket(
         cls,
         session_id: str,

@@ -3,17 +3,12 @@
 from .models import (
     Agent,
     Channel,
-    ChatSession,
     SessionStatus,
     User,
 )
-from .dao import (
-    AgentDAO,
-    ChannelDAO,
-    ChatSessionDAO,
-    UserDAO,
-)
+from .dao import UserDAO
 from .bootstrap import (
+    CLI_CHANNEL_ID,
     DEFAULT_AGENT_ID,
     DEFAULT_CHANNEL_ID,
     DEFAULT_USER_ID,
@@ -24,15 +19,12 @@ __all__ = [
     # 模型
     "Agent",
     "Channel",
-    "ChatSession",
     "SessionStatus",
     "User",
     # DAO
-    "AgentDAO",
-    "ChannelDAO",
-    "ChatSessionDAO",
     "UserDAO",
     # 启动引导
+    "CLI_CHANNEL_ID",
     "DEFAULT_AGENT_ID",
     "DEFAULT_CHANNEL_ID",
     "DEFAULT_USER_ID",

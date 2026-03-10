@@ -11,6 +11,7 @@ This module provides the built-in tools that are always available:
 - get_current_time: Get current local time
 - fetch_web_content: Fetch web page content
 - memory_search: Search long-term memory
+- notify: Send notifications to users
 """
 
 from .file_ops import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool, SearchFilesTool
@@ -18,6 +19,7 @@ from .aliyun_web_search import AliyunWebSearchTool
 from .get_current_time import GetCurrentTimeTool
 from .fetch_web_content import FetchWebContentTool
 from .memory_search import MemorySearchTool
+from .notify_tool import NotifyTool
 from .terminal import RunInTerminalTool, GetTerminalOutputTool, KillProcessTool
 
 __all__ = [
@@ -30,6 +32,7 @@ __all__ = [
     "GetCurrentTimeTool",
     "FetchWebContentTool",
     "MemorySearchTool",
+    "NotifyTool",
     "RunInTerminalTool",
     "GetTerminalOutputTool",
     "KillProcessTool",
@@ -55,6 +58,7 @@ def get_builtin_tools() -> list:
         GetCurrentTimeTool(),
         FetchWebContentTool(),
         MemorySearchTool(),
+        NotifyTool(),
         terminal_tool,
         GetTerminalOutputTool(terminal_tool),
         KillProcessTool(terminal_tool),

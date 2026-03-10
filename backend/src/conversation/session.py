@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.message import Message
-from ..models.session import Session
+from ..models.session import Session, SessionStatus
 from ..services.storage import StorageService
 from ..utils.logger import get_logger
 
@@ -30,7 +30,12 @@ class SessionManager:
         """
         self._storage = storage or StorageService()
     
-    async def create_session(self, title: str | None = None) -> Session:
+    async def create_session(
+        self,
+        title: str | None = None,
+        agent_id: str | None = None,
+        close_existing: bool = False,
+    ) -> Session:
         """Create a new chat session.
 
         创建新会话后，异步触发对最近一个有消息的会话进行 LLM 总结，
@@ -38,38 +43,78 @@ class SessionManager:
 
         Args:
             title: Optional session title
-            
+            agent_id: Optional agent ID to associate with this session
+            close_existing: If True, close all existing active sessions for this agent
+                before creating the new one. Should only be set when the user explicitly
+                requests a new session (e.g. clicks "New Session" button).
+
         Returns:
             Created session
         """
         # 创建前先获取最近的会话列表，用于后续总结
         previous_sessions = await self.list_sessions(limit=5)
 
+        # 仅在用户主动新建会话时才关闭旧 session，切换 agent 时不关闭
+        if close_existing and agent_id:
+            await self._close_active_sessions_for_agent(agent_id)
+
         session = Session(
             id=str(uuid.uuid4()),
             title=title or f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            agent_id=agent_id,
+            status=SessionStatus.ACTIVE.value,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
             message_count=0,
         )
-        
+
         async with self._storage.session() as db_session:
             db_session.add(session)
             await db_session.commit()
             await db_session.refresh(session)
-        
+
         logger.info(
             "Created session",
-            extra={
-                "session_id": session.id,
-                "title": session.title,
-            }
+            extra={"session_id": session.id, "title": session.title, "agent_id": agent_id},
         )
 
         # 异步触发：总结最近一个有消息的会话到长期记忆
         self._trigger_history_summarization(previous_sessions, session.id)
 
         return session
+
+    async def _close_active_sessions_for_agent(self, agent_id: str) -> int:
+        """关闭同一 agent 的所有 active session。
+
+        确保每个 agent 在 webchat 上只有一个有效 session。
+        创建新 session 前调用，将旧的 active session 标记为 closed。
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            关闭的 session 数量
+        """
+        closed_count = 0
+        async with self._storage.session() as db_session:
+            result = await db_session.execute(
+                select(Session).where(
+                    Session.agent_id == agent_id,
+                    Session.status == SessionStatus.ACTIVE.value,
+                )
+            )
+            active_sessions = list(result.scalars().all())
+            for session in active_sessions:
+                session.status = SessionStatus.CLOSED.value
+                session.updated_at = datetime.utcnow()
+                closed_count += 1
+            if closed_count > 0:
+                await db_session.commit()
+                logger.info(
+                    "Closed active sessions for agent before creating new session",
+                    extra={"agent_id": agent_id, "closed_count": closed_count},
+                )
+        return closed_count
 
     def _trigger_history_summarization(
         self,
@@ -172,12 +217,18 @@ class SessionManager:
             )
             return list(result.scalars().all())
     
-    async def ensure_session(self, session_id: str, title: str | None = None) -> Session:
+    async def ensure_session(
+        self,
+        session_id: str,
+        title: str | None = None,
+        agent_id: str | None = None,
+    ) -> Session:
         """Ensure a session exists, creating it if necessary.
         
         Args:
             session_id: Session UUID
             title: Optional title for new session
+            agent_id: Optional agent ID to associate with this session
             
         Returns:
             Existing or newly created session
@@ -190,6 +241,8 @@ class SessionManager:
             session = Session(
                 id=session_id,
                 title=title or "Agent 对话",
+                agent_id=agent_id,
+                status=SessionStatus.ACTIVE.value,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
                 message_count=0,
@@ -356,6 +409,92 @@ class SessionManager:
             for msg in messages
         ]
     
+    async def reactivate_session(self, session_id: str) -> bool:
+        """重新激活一个已关闭的 session。
+
+        WebSocket 重连时，如果 session 存在但状态不是 active，则重新激活。
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            True if reactivated, False if not found
+        """
+        async with self._storage.session() as db_session:
+            session = await db_session.get(Session, session_id)
+            if not session:
+                return False
+            if session.status != SessionStatus.ACTIVE.value:
+                session.status = SessionStatus.ACTIVE.value
+                session.updated_at = datetime.utcnow()
+                await db_session.commit()
+                logger.info("Session reactivated", extra={"session_id": session_id})
+        return True
+
+    async def touch_session(self, session_id: str) -> bool:
+        """更新 session 的活跃时间。
+
+        每次消息时调用，更新 updated_at 时间戳。
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            True if touched, False if not found
+        """
+        async with self._storage.session() as db_session:
+            session = await db_session.get(Session, session_id)
+            if not session:
+                return False
+            session.updated_at = datetime.utcnow()
+            await db_session.commit()
+        return True
+
+    async def get_active_session_by_agent(self, agent_id: str) -> Session | None:
+        """获取指定 agent 最新的 active session。
+
+        用于通知系统和 session_resolver 查找有效 session。
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            最新的 active Session，没有则返回 None
+        """
+        async with self._storage.session() as db_session:
+            result = await db_session.execute(
+                select(Session)
+                .where(
+                    Session.agent_id == agent_id,
+                    Session.status == SessionStatus.ACTIVE.value,
+                )
+                .order_by(Session.updated_at.desc())
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
+
+    async def close_session(self, session_id: str) -> bool:
+        """关闭指定 session，将状态标记为 closed。
+
+        WebSocket 断开时由 dispatcher 调用，同步关闭 sessions 表中的记录。
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            True if closed, False if not found
+        """
+        async with self._storage.session() as db_session:
+            session = await db_session.get(Session, session_id)
+            if not session:
+                return False
+            session.status = SessionStatus.CLOSED.value
+            session.updated_at = datetime.utcnow()
+            await db_session.commit()
+
+        logger.info("Session closed", extra={"session_id": session_id})
+        return True
+
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session and all its messages.
         

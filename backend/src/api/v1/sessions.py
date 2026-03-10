@@ -20,6 +20,8 @@ def _get_session_manager() -> SessionManager:
 class CreateSessionRequest(BaseModel):
     """Request body for creating a session."""
     title: str | None = None
+    agent_id: str | None = None
+    close_existing: bool = False
 
 
 @router.get("")
@@ -50,6 +52,27 @@ async def list_sessions(
     }
 
 
+@router.get("/active-by-agent/{agent_id}")
+async def get_active_session_by_agent(agent_id: str) -> dict:
+    """Get the most recent active session for a given agent.
+
+    Returns the latest active session associated with this agent_id if one exists,
+    otherwise returns null so the caller can create a new one.
+
+    Args:
+        agent_id: The agent ID to look up
+
+    Returns:
+        Dictionary with session data or null
+    """
+    session_manager = _get_session_manager()
+    agent_session = await session_manager.get_active_session_by_agent(agent_id)
+
+    return {
+        "success": True,
+        "data": agent_session.to_dict() if agent_session else None,
+    }
+
 @router.post("")
 async def create_session(request: CreateSessionRequest) -> dict:
     """Create a new chat session.
@@ -61,11 +84,15 @@ async def create_session(request: CreateSessionRequest) -> dict:
         Created session data
     """
     session_manager = _get_session_manager()
-    session = await session_manager.create_session(title=request.title)
+    session = await session_manager.create_session(
+        title=request.title,
+        agent_id=request.agent_id,
+        close_existing=request.close_existing,
+    )
 
     logger.info(
         "Session created via API",
-        extra={"session_id": session.id, "title": session.title},
+        extra={"session_id": session.id, "title": session.title, "agent_id": session.agent_id},
     )
 
     return {

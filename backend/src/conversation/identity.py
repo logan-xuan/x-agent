@@ -36,12 +36,16 @@ class ChannelType(str, Enum):
     CLI = "cli"
     DINGTALK = "dingtalk"
     WECHAT = "wechat"
+    TELEGRAM = "telegram"
+    SLACK = "slack"
+    EMAIL = "email"
 
 class ChannelProtocol(str, Enum):
     """渠道底层通信协议。"""
     WEBSOCKET = "websocket"
     REST_API = "rest_api"
     SSE = "sse"
+    INTERNAL = "internal"  # 内部触发（cron/webhook/agent-to-agent）
 
 
 @dataclass(frozen=True)

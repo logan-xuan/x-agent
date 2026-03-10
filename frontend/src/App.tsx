@@ -6,10 +6,29 @@ import { AgentChatWindow } from './components/agent';
 import { SettingsWindow } from './components/settings/SettingsWindow';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { useAgent } from './hooks/useAgent';
+import { AgentInfo, createSession as createSessionApi, getActiveSessionByAgent } from './services/api';
 
 type View = 'agent' | 'settings' | 'admin';
 
+/** 全局当前 session key（兼容旧数据） */
 const AGENT_SESSION_STORAGE_KEY = 'x-agent-agent-session-id';
+
+/** 按 agent_id 存储各自 session ID 的 localStorage key */
+function agentSessionKey(agentId: string): string {
+  return `x-agent-session-${agentId}`;
+}
+
+/** 从 localStorage 读取指定 agent 的 session ID */
+function getStoredSessionId(agentId: string): string | null {
+  return localStorage.getItem(agentSessionKey(agentId));
+}
+
+/** 将指定 agent 的 session ID 写入 localStorage */
+function storeSessionId(agentId: string, sessionId: string): void {
+  localStorage.setItem(agentSessionKey(agentId), sessionId);
+  // 同步更新全局 key，供兼容旧逻辑使用
+  localStorage.setItem(AGENT_SESSION_STORAGE_KEY, sessionId);
+}
 
 /** 简单的 URL 路由检测 */
 function getInitialView(): View {
@@ -23,6 +42,9 @@ function App() {
   const [view, setView] = useState<View>(getInitialView);
   const [agentSessionId, setAgentSessionId] = useState<string | null>(() => {
     return localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
+  });
+  const [currentAgentId, setCurrentAgentId] = useState<string | null>(() => {
+    return localStorage.getItem('x-agent-current-agent-id');
   });
   const [isAgentInitialized, setIsAgentInitialized] = useState(false);
   const initializingRef = useRef(false);
@@ -46,7 +68,12 @@ function App() {
   useEffect(() => {
     const initAgentSession = async () => {
       try {
-        const savedSessionId = localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
+        const savedAgentId = localStorage.getItem('x-agent-current-agent-id');
+
+        // 1. 优先从按 agent_id 存储的 key 里恢复 session
+        const savedSessionId = savedAgentId
+          ? getStoredSessionId(savedAgentId)
+          : localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
 
         if (savedSessionId) {
           try {
@@ -55,13 +82,37 @@ function App() {
             setIsAgentInitialized(true);
             return;
           } catch (error) {
-            console.warn('Failed to load saved agent session, creating new one:', error);
+            console.warn('Failed to load saved agent session, will try active session lookup:', error);
+            if (savedAgentId) {
+              localStorage.removeItem(agentSessionKey(savedAgentId));
+            }
             localStorage.removeItem(AGENT_SESSION_STORAGE_KEY);
           }
         }
 
-        const session = await agentCreateSession('Agent 对话');
-        localStorage.setItem(AGENT_SESSION_STORAGE_KEY, session.id);
+        // 2. 尝试查找当前 agent 已有的 active session（避免创建重复 session）
+        if (savedAgentId) {
+          try {
+            const existingSession = await getActiveSessionByAgent(savedAgentId);
+            if (existingSession) {
+              await agentLoadHistory(existingSession.id);
+              storeSessionId(savedAgentId, existingSession.id);
+              setAgentSessionId(existingSession.id);
+              setIsAgentInitialized(true);
+              return;
+            }
+          } catch (error) {
+            console.warn('Failed to find active session for agent, creating new one:', error);
+          }
+        }
+
+        // 3. 没有可复用的 session，创建新 session（带 agent_id 确保后续能按 agent 查找）
+        const session = await agentCreateSession('Agent 对话', savedAgentId ?? undefined);
+        if (savedAgentId) {
+          storeSessionId(savedAgentId, session.id);
+        } else {
+          localStorage.setItem(AGENT_SESSION_STORAGE_KEY, session.id);
+        }
         setAgentSessionId(session.id);
         setIsAgentInitialized(true);
       } catch (error) {
@@ -76,12 +127,46 @@ function App() {
     }
   }, [isAgentInitialized, agentCreateSession, agentLoadHistory]);
 
-  // Save agent session ID
-  useEffect(() => {
-    if (agentSessionId) {
-      localStorage.setItem(AGENT_SESSION_STORAGE_KEY, agentSessionId);
+  // Handle agent switch: restore the session for this agent from localStorage first,
+  // then fall back to querying the backend for an active session, and finally create a new one.
+  // Never close existing sessions during a switch — only the "New Session" button does that.
+  const handleAgentChange = async (agent: AgentInfo) => {
+    try {
+      setCurrentAgentId(agent.agent_id);
+      localStorage.setItem('x-agent-current-agent-id', agent.agent_id);
+      agentClearMessages();
+
+      // 1. 优先从 localStorage 恢复该 agent 的 session（最快路径，无需网络请求）
+      const storedSessionId = getStoredSessionId(agent.agent_id);
+      if (storedSessionId) {
+        try {
+          await agentLoadHistory(storedSessionId);
+          storeSessionId(agent.agent_id, storedSessionId);
+          setAgentSessionId(storedSessionId);
+          return;
+        } catch (error) {
+          console.warn('Stored session no longer valid, looking up active session:', error);
+          localStorage.removeItem(agentSessionKey(agent.agent_id));
+        }
+      }
+
+      // 2. 查询后端该 agent 的 active session
+      const existingSession = await getActiveSessionByAgent(agent.agent_id);
+      if (existingSession) {
+        await agentLoadHistory(existingSession.id);
+        storeSessionId(agent.agent_id, existingSession.id);
+        setAgentSessionId(existingSession.id);
+        return;
+      }
+
+      // 3. 没有可复用的 session，创建新 session（不关闭其他 agent 的 session）
+      const session = await agentCreateSession(agent.agent_name + ' 对话', agent.agent_id);
+      storeSessionId(agent.agent_id, session.id);
+      setAgentSessionId(session.id);
+    } catch (error) {
+      console.error('Failed to switch agent:', error);
     }
-  }, [agentSessionId]);
+  };
 
   // Update URL when view changes
   useEffect(() => {
@@ -121,14 +206,25 @@ function App() {
       isLoading={agentIsLoading}
       isConnecting={!isAgentInitialized}
       connectionStatus={agentConnectionStatus}
+      currentAgentId={currentAgentId}
       onSendMessage={agentSendMessage}
       onAbort={agentAbort}
       onClearMessages={agentClearMessages}
       onOpenSettings={() => setView('settings')}
+      onAgentChange={handleAgentChange}
       onNewSession={async () => {
         try {
-          const session = await agentCreateSession('Agent 对话');
-          localStorage.setItem(AGENT_SESSION_STORAGE_KEY, session.id);
+          // 用户主动新建会话：关闭当前 agent 的旧 session，创建新 session
+          const session = await createSessionApi(
+            currentAgentId ? undefined : 'Agent 对话',
+            currentAgentId ?? undefined,
+            true, // closeExisting=true，仅此处关闭旧 session
+          );
+          if (currentAgentId) {
+            storeSessionId(currentAgentId, session.id);
+          } else {
+            localStorage.setItem(AGENT_SESSION_STORAGE_KEY, session.id);
+          }
           setAgentSessionId(session.id);
         } catch (error) {
           console.error('Failed to create new agent session:', error);

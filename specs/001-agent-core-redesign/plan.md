@@ -5,7 +5,7 @@
 
 ## Summary
 
-重新设计 X-Agent 的核心 agent loop，采用 pi-agent 的事件驱动双层循环架构。实现完整的日志观测系统，集成记忆存储和工具经验学习机制。前端新建独立聊天页面，复用现有 UI 组件和交互模式。
+重新设计 X-Agent 的核心 agent loop，采用 x-agent 的事件驱动双层循环架构。实现完整的日志观测系统，集成记忆存储和工具经验学习机制。前端新建独立聊天页面，复用现有 UI 组件和交互模式。
 
 ## Technical Context
 
@@ -266,7 +266,7 @@ frontend/src/
 
 | 任务 | 说明 |
 |------|------|
-| 分析 pi-agent 源码 | 理解双层循环、事件流、steering 机制 |
+| 分析 x-agent 源码 | 理解双层循环、事件流、steering 机制 |
 | 分析现有 orchestrator | 理解现有工具执行、LLM 调用流程 |
 | 分析现有 memory 系统 | 确认 MarkdownSync, HybridSearch 接口 |
 | 确认 LLM router 接口 | 确认流式响应接口 |
@@ -441,7 +441,7 @@ frontend/src/
 
 ## Technical Reference
 
-详细技术设计: `arch/pi-agent-loop-tech.md`
+详细技术设计: `arch/agent-core-loop-tech.md`
 
 包含:
 - 完整 Python 类型定义

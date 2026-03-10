@@ -12,7 +12,7 @@
 
 > **目标**: 确认技术可行性，理解现有代码，定义 Port 接口
 
-### 0.1 分析 pi-agent 源码
+### 0.1 分析 x-agent 源码
 - [x] **T0.1.1** 分析 `agent.ts` - 理解 Agent 类结构和状态管理
 - [x] **T0.1.2** 分析 `agent-loop.ts` - 理解双层循环架构（外层 follow-up，内层 tool calls + steering）
 - [x] **T0.1.3** 提取事件流模型 - 记录事件类型和触发时机

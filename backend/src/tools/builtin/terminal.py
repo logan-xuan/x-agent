@@ -273,12 +273,20 @@ class RunInTerminalTool(BaseTool):
     def description(self) -> str:
         return (
             "Execute a shell command in the terminal. "
-            "Use this tool to perform file operations (delete, copy, move), run scripts, git commands, etc. "
-            "IMPORTANT: Always call this tool directly when you need to execute a command. "
-            "If a command requires user confirmation (e.g., rm, npm install), the system will automatically "
-            "show a confirmation dialog to the user. Do NOT ask the user for confirmation yourself - "
-            "just call the tool and the system will handle the confirmation flow."
-        )
+            "This is your primary tool for interacting with the system - use it whenever you need to "
+            "run commands, inspect files, or perform operations.\n\n"
+            "**Common Use Cases:**\n"
+            "- File operations: ls, cat, grep, find, mkdir, cp, mv, touch\n"
+            "- Version control: git status, git log, git diff, git add, git commit\n"
+            "- Development: python, node, npm, pip, yarn, pnpm\n"
+            "- System info: uname, whoami, pwd, env, which\n"
+            "- Text processing: echo, head, tail, wc, sort, uniq\n"
+            "- Archives: tar, zip, unzip, gzip\n"
+            "- Network: curl, wget, ping\n"            "- Containers: docker, docker-compose, kubectl, helm\n"
+            "- Databases: mysql, psql, mongo, redis-cli\n"
+            "- X-Agent CLI: x-agent status, x-agent agent create, x-agent chat, x-agent config show, x-agent tools list, x-agent session list\n"
+            "- Use 'x-agent --help' or 'x-agent <command> --help' to see detailed usage\n\n"
+            "**IMPORTANT:** Always call this tool directly when you need to execute a command."        )
     
     @property
     def parameters(self) -> list[ToolParameter]:

@@ -229,6 +229,48 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.config_manager = _config_manager
     app.state.llm_router = _llm_router
     
+    # 5.5 Initialize Multi-Agent Context Loader (if multi-agent config exists)
+    if hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents:
+        try:
+            from .conversation.multi_agent_context_loader import MultiAgentContextLoader
+            
+            multi_agent_context_loader = MultiAgentContextLoader(config.multi_agent)
+            agent_contexts = multi_agent_context_loader.initialize_all_agents()
+            app.state.multi_agent_context_loader = multi_agent_context_loader
+
+            # 注册全局单例，供 agent_bridge 等模块直接导入使用
+            from .conversation.multi_agent_context_loader import set_multi_agent_context_loader
+            set_multi_agent_context_loader(multi_agent_context_loader)
+            
+            # Log summary of loaded context files
+            total_files = sum(len(files) for files in agent_contexts.values())
+            logger.info(
+                "Multi-Agent context initialized",
+                extra={
+                    "agent_count": len(agent_contexts),
+                    "total_context_files": total_files,
+                }
+            )
+            
+            # Log detailed status for each agent
+            for agent_id, files in agent_contexts.items():
+                loaded_count = sum(1 for exists in files.values() if exists)
+                logger.info(
+                    f"Agent {agent_id} context loaded",
+                    extra={
+                        "agent_id": agent_id,
+                        "loaded_files": loaded_count,
+                        "total_files": len(files),
+                        "files": files,
+                    }
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to initialize multi-agent context loader",
+                extra={"error": str(e)},
+            )
+            # Non-fatal error, continue startup
+    
     # 6. Initialize MemoryManager and start file watcher
     from .memory.file_watcher import get_file_watcher
     from .memory.manager import init_memory_manager

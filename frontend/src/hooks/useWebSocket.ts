@@ -44,6 +44,7 @@ export function useWebSocket({
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldReconnectRef = useRef(true); // 用于控制是否应该重连
+  const lastActivityRef = useRef(Date.now()); // 上次活动时间戳，用于检测 JS 暂停
 
   // Store callbacks in refs
   const onMessageRef = useRef(onMessage);
@@ -73,6 +74,19 @@ export function useWebSocket({
     heartbeatTimerRef.current = setInterval(() => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      // 使用时间戳检测真正的心跳超时，避免 DevTools 暂停 JS 导致的误判
+      const now = Date.now();
+      const timeSinceLastActivity = now - lastActivityRef.current;
+
+      // 如果距离上次活动的时间远超心跳间隔（如 DevTools 暂停了 JS），
+      // 说明是浏览器暂停导致的，不是真正的网络断开，重置计数器
+      if (timeSinceLastActivity > heartbeatInterval * 2.5) {
+        console.log('[WS_HEARTBEAT] JS was paused (DevTools?), resetting heartbeat counter');
+        missedHeartbeatsRef.current = 0;
+        lastActivityRef.current = now;
         return;
       }
 
@@ -114,26 +128,85 @@ export function useWebSocket({
 
     // 尝试复用缓存的连接
     const cachedWs = connectionCache.get(url);
-    if (cachedWs && cachedWs.readyState === WebSocket.OPEN) {
-      console.log('[WS_REUSE] Reusing cached connection to:', url);
-      wsRef.current = cachedWs;
-      setStatus('connected');
+    if (cachedWs) {
+      if (cachedWs.readyState === WebSocket.OPEN) {
+        console.log('[WS_REUSE] Reusing cached OPEN connection to:', url);
+        wsRef.current = cachedWs;
+        setStatus('connected');
 
-      // 重新绑定事件处理器
-      cachedWs.onmessage = (event) => {
-        missedHeartbeatsRef.current = 0;
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'pong') return;
-          onMessageRef.current?.(data);
-        } catch (e) {
-          console.error('Failed to parse WebSocket message:', event.data, e);
-        }
-      };
+        // 重新绑定事件处理器
+        cachedWs.onmessage = (event) => {
+          missedHeartbeatsRef.current = 0;
+          lastActivityRef.current = Date.now();
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'pong') return;
+            onMessageRef.current?.(data);
+          } catch (e) {
+            console.error('Failed to parse WebSocket message:', event.data, e);
+          }
+        };
 
-      startHeartbeat();
-      onConnectRef.current?.();
-      return;
+        startHeartbeat();
+        onConnectRef.current?.();
+        return;
+      }
+
+      if (cachedWs.readyState === WebSocket.CONNECTING) {
+        // 连接正在建立中（StrictMode 卸载后立即重新挂载），复用它
+        console.log('[WS_REUSE] Reusing cached CONNECTING connection to:', url);
+        wsRef.current = cachedWs;
+        setStatus('connecting');
+
+        // 重新绑定事件处理器，等连接建立后触发
+        cachedWs.onopen = () => {
+          console.log('[WS_OPEN] Reused connection opened');
+          if (connectionId === connectionIdRef.current) {
+            if (reconnectAttemptsRef.current > 0) {
+              console.log('[WS_RECONNECT] Reconnection successful!');
+              reconnectAttemptsRef.current = 0;
+            }
+            setStatus('connected');
+            missedHeartbeatsRef.current = 0;
+            lastActivityRef.current = Date.now();
+            startHeartbeat();
+            onConnectRef.current?.();
+          }
+        };
+
+        cachedWs.onmessage = (event) => {
+          missedHeartbeatsRef.current = 0;
+          lastActivityRef.current = Date.now();
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'pong') return;
+            onMessageRef.current?.(data);
+          } catch (e) {
+            console.error('Failed to parse WebSocket message:', event.data, e);
+          }
+        };
+
+        cachedWs.onclose = (event) => {
+          console.log('[WS_CLOSE] Reused connection closed:', { code: event.code, reason: event.reason });
+          if (connectionId === connectionIdRef.current) {
+            wsRef.current = null;
+            clearHeartbeat();
+            if (connectionCache.get(url) === cachedWs) {
+              connectionCache.delete(url);
+            }
+            setStatus('disconnected');
+            onDisconnectRef.current?.();
+          }
+        };
+
+        cachedWs.onerror = (error) => {
+          if (connectionId === connectionIdRef.current) {
+            onErrorRef.current?.(error);
+          }
+        };
+
+        return;
+      }
     }
 
     // Check if we already have an open connection to the same URL
@@ -221,15 +294,12 @@ export function useWebSocket({
     };
 
     ws.onmessage = (event) => {
-      // Reset heartbeat counter on any message
+      // Reset heartbeat counter and activity timestamp on any message
       missedHeartbeatsRef.current = 0;
-
-      // Debug: log raw WebSocket message
-      console.log('[WS_RAW] Received message:', event.data);
+      lastActivityRef.current = Date.now();
 
       try {
         const data = JSON.parse(event.data);
-        console.log('[WS_PARSED] Parsed data:', data);
         // Ignore pong messages
         if (data.type === 'pong') {
           return;
@@ -263,9 +333,9 @@ export function useWebSocket({
         // Close connection properly
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
           console.log('[WS_CLOSE] Closing connection to:', url);
-          ws.close();
+          ws.close(1000, 'component unmounted');
         }
-      }, 100); // 100ms 延迟，足够 StrictMode 重新挂载
+      }, 200); // 200ms 延迟，足够 StrictMode 重新挂载
 
       cleanupTimeouts.set(url, timeoutId);
       wsRef.current = null;

@@ -70,7 +70,7 @@ interface UseAgentReturn {
     sendMessage: (content: string) => void;
     abort: () => void;
     clearMessages: () => void;
-    createSession: (title?: string) => Promise<{ id: string; title: string }>;
+    createSession: (title?: string, agentId?: string) => Promise<{ id: string; title: string }>;
     loadHistory: (sessionId: string) => Promise<void>;
 }
 
@@ -224,6 +224,30 @@ export function useAgent({
                 setIsLoading(false);
                 break;
 
+            case 'notification':
+                // 通知消息（来自 cron 定时任务、AgentInvoker 等非用户发起的推送）
+                {
+                    const notificationContent = (msg.content as string) || '';
+                    const notificationTitle = msg.title as string | undefined;
+                    const notificationSource = msg.source as string | undefined;
+                    const displayContent = notificationTitle
+                        ? `**${notificationTitle}**\n\n${notificationContent}`
+                        : notificationContent;
+
+                    if (displayContent) {
+                        const notificationMessage: AgentMessage = {
+                            id: (msg.message_id as string) || `notification-${Date.now()}`,
+                            sessionId: currentSessionId || '',
+                            role: 'assistant',
+                            content: displayContent,
+                            createdAt: (msg.created_at as string) || new Date().toISOString(),
+                            model: notificationSource || 'notification',
+                        };
+                        setMessages(prev => [...prev, notificationMessage]);
+                    }
+                }
+                break;
+
             case 'pong':
                 // 心跳响应，忽略
                 break;
@@ -307,8 +331,8 @@ export function useAgent({
     }, []);
 
     // 创建新会话，调用后端 API 持久化 session 记录
-    const createSession = useCallback(async (title?: string): Promise<{ id: string; title: string }> => {
-        const session = await createSessionApi(title || 'Agent 对话');
+    const createSession = useCallback(async (title?: string, agentId?: string): Promise<{ id: string; title: string }> => {
+        const session = await createSessionApi(title || 'Agent 对话', agentId);
         setCurrentSessionId(session.id);
         setMessages([]);
         return { id: session.id, title: session.title ?? 'Agent 对话' };

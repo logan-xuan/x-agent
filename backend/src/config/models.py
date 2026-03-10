@@ -81,6 +81,10 @@ class WorkspaceConfig(BaseModel):
         default="skills",
         description="User skills directory (relative to workspace path)"
     )
+    jobs_dir: str = Field(
+        default="jobs",
+        description="Cron jobs directory (relative to workspace path)"
+    )
 
 
 class SearchConfig(BaseModel):
@@ -331,6 +335,91 @@ class AliyunOpensearchConfig(BaseModel):
     )
 
 
+class AgentModelConfig(BaseModel):
+    """Agent-specific model configuration."""
+    
+    name: str = Field(default="", description="Model configuration name to use")
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0, description="Temperature parameter")
+    max_tokens: int | None = Field(default=None, ge=1, description="Maximum tokens to generate")
+
+
+class AgentConfig(BaseModel):
+    """Agent configuration - defines an AI agent."""
+    
+    id: str = Field(..., description="Unique agent identifier")
+    name: str = Field(..., description="Display name")
+    type: Literal["main", "specialized"] = Field(default="main", description="Agent type")
+    persona: str = Field(default="", description="System prompt/persona description")
+    workspace: str = Field(default="", description="Agent workspace directory path")
+    features: str = Field(default="", description="Feature tags, comma-separated (e.g., 'code-review,daily-summary')")
+    model: AgentModelConfig = Field(default_factory=AgentModelConfig, description="Model configuration")
+    enable_memory: bool = Field(default=True, description="Whether to enable memory")
+    enable_plan: bool = Field(default=False, description="Whether to enable plan mode")
+    enable_context_compression: bool = Field(default=True, description="Whether to enable context compression")
+    enable_experience_learning: bool = Field(default=True, description="Whether to enable experience learning")
+
+
+class ChannelConfig(BaseModel):
+    """Channel configuration - defines how users interact with agents."""
+    
+    id: str = Field(..., description="Unique channel identifier")
+    type: str = Field(..., description="Channel type (web, slack, email, etc.)")
+    protocol: Literal["websocket", "webhook", "smtp", "http"] = Field(default="websocket", description="Communication protocol")
+    agent_id: str = Field(..., description="Associated agent ID")
+    default_user: str = Field(default="admin", description="Default user for this channel")
+    enabled: bool = Field(default=True, description="Whether this channel is enabled")
+    config: dict[str, Any] = Field(default_factory=dict, description="Channel-specific configuration")
+
+
+class MultiAgentConfig(BaseModel):
+    """Multi-agent configuration.
+    
+    Defines agents and their channels, loaded from x-agent.yaml.
+    Replaces database-stored Agent/Channel entities.
+    """
+    
+    agents: list[AgentConfig] = Field(default_factory=list, description="List of agent configurations")
+    channels: list[ChannelConfig] = Field(default_factory=list, description="List of channel configurations")
+    
+    def get_agent(self, agent_id: str) -> AgentConfig | None:
+        """Get agent by ID."""
+        for agent in self.agents:
+            if agent.id == agent_id:
+                return agent
+        return None
+    
+    def get_agent_by_name(self, name: str) -> AgentConfig | None:
+        """Get agent by name."""
+        for agent in self.agents:
+            if agent.name == name:
+                return agent
+        return None
+    
+    def get_channels_for_agent(self, agent_id: str) -> list[ChannelConfig]:
+        """Get all channels for a specific agent."""
+        return [ch for ch in self.channels if ch.agent_id == agent_id]
+    
+    def get_channel(self, channel_id: str) -> ChannelConfig | None:
+        """Get channel by ID."""
+        for ch in self.channels:
+            if ch.id == channel_id:
+                return ch
+        return None
+    
+    def get_enabled_channels(self) -> list[ChannelConfig]:
+        """Get all enabled channels."""
+        return [ch for ch in self.channels if ch.enabled]
+    
+    @model_validator(mode="after")
+    def validate_agent_references(self) -> "MultiAgentConfig":
+        """Ensure all channel agent_id references exist."""
+        agent_ids = {agent.id for agent in self.agents}
+        for channel in self.channels:
+            if channel.agent_id not in agent_ids:
+                raise ValueError(f"Channel '{channel.id}' references unknown agent '{channel.agent_id}'")
+        return self
+
+
 class Config(BaseModel):
     """Root configuration model."""
     
@@ -343,42 +432,6 @@ class Config(BaseModel):
     compression: CompressionConfig = Field(default_factory=CompressionConfig, description="Context compression config")
     plan: PlanConfig = Field(default_factory=PlanConfig, description="Plan mode config")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills metadata config")
-    aliyun_opensearch: AliyunOpensearchConfig = Field(default_factory=AliyunOpensearchConfig, description="Aliyun OpenSearch config")
-    
-    @field_validator("models")
-    @classmethod
-    def validate_primary_model(cls, v: list[ModelConfig]) -> list[ModelConfig]:
-        """Ensure exactly one primary model exists."""
-        primaries = [m for m in v if m.is_primary]
-        if len(primaries) != 1:
-            raise ValueError(f"Must have exactly one primary model, found {len(primaries)}")
-        return v
-    
-    @model_validator(mode="after")
-    def validate_backup_priorities(self) -> "Config":
-        """Validate backup model priorities."""
-        backups = [m for m in self.models if not m.is_primary]
-        if backups:
-            priorities = [b.priority for b in backups]
-            if len(priorities) != len(set(priorities)):
-                raise ValueError("Backup model priorities must be unique")
-        return self
-    
-    def get_primary_model(self) -> ModelConfig:
-        """Get the primary model configuration."""
-        for model in self.models:
-            if model.is_primary:
-                return model
-        raise RuntimeError("No primary model found")
-    
-    def get_backup_models(self) -> list[ModelConfig]:
-        """Get backup models sorted by priority."""
-        backups = [m for m in self.models if not m.is_primary]
-        return sorted(backups, key=lambda m: m.priority)
-    
-    def get_model_by_name(self, name: str) -> ModelConfig | None:
-        """Get model configuration by name."""
-        for model in self.models:
-            if model.name == name:
-                return model
-        return None
+    aliyun_opensearch: AliyunOpensearchConfig = Field(default_factory=lambda: AliyunOpensearchConfig(api_key="", host=""), description="Aliyun OpenSearch config")
+    cron: dict[str, Any] = Field(default_factory=dict, description="Cron scheduler config")
+    multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig, description="Multi-agent configuration")

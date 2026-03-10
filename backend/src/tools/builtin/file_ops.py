@@ -5,6 +5,11 @@ Provides tools for:
 - Writing files
 - Listing directories
 - Searching for files
+
+Security features:
+- Source code protection to prevent accidental modifications
+- File path validation
+- Workspace restriction
 """
 
 import os
@@ -17,7 +22,6 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 # Office Open XML file extensions and their corresponding skills
 OFFICE_EXTENSIONS = {
     ".pptx": "pptx",
@@ -27,6 +31,51 @@ OFFICE_EXTENSIONS = {
 
 # ZIP file magic bytes (Office Open XML files are ZIP archives)
 ZIP_MAGIC_BYTES = b"PK"
+
+# Protected directories that should not be edited by agent
+PROTECTED_DIRECTORIES = {
+    "backend/src",
+    "frontend/src",
+    ".git",
+}
+
+# Protected file patterns
+PROTECTED_PATTERNS = {
+    "*.py",
+    "*.ts",
+    "*.tsx",
+    "*.js",
+    "*.jsx",
+    "*.go",
+    "*.java",
+    "*.cpp",
+    "*.c",
+    "*.h",
+}
+
+def _is_protected_file(file_path: Path) -> bool:
+    """Check if a file is protected from editing.
+    
+    Args:
+        file_path: Path to check
+        
+    Returns:
+        True if file is protected, False otherwise
+    """
+    # Check if file is in protected directory
+    for protected_dir in PROTECTED_DIRECTORIES:
+        try:
+            file_path.relative_to(protected_dir)
+            return True
+        except ValueError:
+            continue
+    
+    # Check if file matches protected patterns
+    for pattern in PROTECTED_PATTERNS:
+        if fnmatch.fnmatch(file_path.name, pattern):
+            return True
+    
+    return False
 
 
 def _get_workspace_path() -> Path:
@@ -129,6 +178,18 @@ class EditFileTool(BaseTool):
             
             if not path.is_file():
                 return ToolResult.error_result(f"Not a file: {file_path}")
+            
+            # Check if file is protected (source code protection)
+            if _is_protected_file(path):
+                logger.warning(
+                    "Attempted to edit protected file",
+                    extra={"file_path": str(path)}
+                )
+                return ToolResult.error_result(
+                    f"Cannot edit protected file: {file_path}. "
+                    f"Source code files are protected from modification by the agent. "
+                    f"Please use manual editing or request explicit permission."
+                )
             
             # Read current content
             content = path.read_text(encoding="utf-8", errors="replace")

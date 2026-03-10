@@ -3,7 +3,7 @@
 **Feature Branch**: `001-agent-core-redesign`  
 **Created**: 2026-02-28  
 **Status**: Draft  
-**Input**: 重新设计 agent loop 核心，参考 pi-agent 设计模式，前端新建独立聊天页面，后端重构 agent-loop 和编排流程，增加完整日志观测系统
+**Input**: 重新设计 agent loop 核心，参考 x-agent 设计模式，前端新建独立聊天页面，后端重构 agent-loop 和编排流程，增加完整日志观测系统
 
 ## Overview
 
@@ -18,9 +18,9 @@
 5. **记忆集成** - 工具调用结果写入记忆，支持经验检索和学习
 6. **智能工具选择** - 基于历史经验优化工具选择和参数推荐
 
-### Pi-Agent 核心设计思想（参考）
+### x-Agent 核心设计思想（参考）
 
-本重构参考 pi-agent 的核心设计模式：
+本重构参考 x-agent 的核心设计模式：
 
 **1. 双层循环架构**
 - 外层循环：处理 follow-up messages（agent 结束后的追加消息）
@@ -164,7 +164,7 @@
 
 ### Functional Requirements
 
-**核心 Agent Loop（参考 pi-agent）**
+**核心 Agent Loop（参考 x-agent）**
 
 - **FR-001**: 系统 MUST 支持通过 WebSocket 进行实时双向通信
 - **FR-002**: 系统 MUST 支持流式响应，用户能实时看到 AI 生成的内容
@@ -241,7 +241,7 @@
 
 ## Assumptions
 
-1. **pi-agent 设计模式适用**: 假设 pi-agent 的事件驱动、双层循环架构适合 X-Agent 的需求
+1. **x-agent 设计模式适用**: 假设 x-agent 的事件驱动、双层循环架构适合 X-Agent 的需求
 2. **WebSocket 连接稳定性**: 假设 WebSocket 连接在大多数情况下是稳定的，断线重连是异常情况
 3. **日志内存存储**: 假设日志暂时存储在内存中，后续可扩展到持久化存储
 4. **单用户场景**: 假设当前主要针对单用户本地使用场景
@@ -343,7 +343,7 @@
 
 ## Technical Reference
 
-详细技术设计参考：`arch/pi-agent-loop-tech.md`
+详细技术设计参考：`arch/agent-core-loop-tech.md`
 
 该文档包含：
 - 完整的类型定义（Python + TypeScript）

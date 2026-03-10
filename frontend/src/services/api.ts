@@ -18,8 +18,18 @@ import type {
   TraceDetailLevel,
   SearchResponse,
   CompressionRecordQueryResponse,
-  CompressionRecord,
 } from '@/types';
+
+/** Agent info returned from /api/v1/agents */
+export interface AgentInfo {
+  agent_id: string;
+  agent_name: string;
+  agent_type: string;
+  agent_persona: string;
+  user_id: string;
+  workspace: string;
+  feature: string;
+}
 
 const API_BASE_URL = '/api/v1';
 
@@ -53,15 +63,38 @@ export async function checkHealth(): Promise<HealthResponse> {
   return apiRequest<HealthResponse>('/health');
 }
 
+/** List all available agents */
+export async function listAgents(): Promise<AgentInfo[]> {
+  const response = await fetch(`${API_BASE_URL}/agents`, {
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error('Failed to fetch agents');
+  }
+  const data = await response.json();
+  // Backend returns a plain array directly (not wrapped in ApiResponse)
+  return Array.isArray(data) ? data : (data.data ?? []);
+}
+
+/** Get the most recent active session for a given agent, returns null if none exists */
+export async function getActiveSessionByAgent(agentId: string): Promise<Session | null> {
+  const data = await apiRequest<Session | null>(`/sessions/active-by-agent/${agentId}`);
+  return data;
+}
+
 /** Session APIs */
 export async function listSessions(limit = 20, offset = 0): Promise<{ items: Session[]; total: number }> {
   return apiRequest<{ items: Session[]; total: number }>(`/sessions?limit=${limit}&offset=${offset}`);
 }
 
-export async function createSession(title?: string): Promise<Session> {
+export async function createSession(
+  title?: string,
+  agentId?: string,
+  closeExisting = false,
+): Promise<Session> {
   return apiRequest<Session>('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, agent_id: agentId, close_existing: closeExisting }),
   });
 }
 
@@ -248,6 +281,107 @@ export async function analyzeTrace(
   }
 
   return response.json();
+}
+
+/** Cron/Scheduler APIs */
+
+interface JobConfig {
+  id: string;
+  name: string;
+  func: string;
+  trigger_type: 'interval' | 'cron' | 'date' | 'calendar';
+  trigger_args: Record<string, unknown>;
+  coalesce: 'latest' | 'earliest' | 'all';
+  conflict_policy: 'replace' | 'do_nothing' | 'exception';
+  enabled: boolean;
+  max_running_jobs?: number;
+  misfire_grace_time?: number;
+  metadata?: Record<string, unknown>;
+}
+
+interface Schedule {
+  id: string;
+  task_id: string;
+  trigger: {
+    type: string;
+    args: Record<string, unknown>;
+  };
+  next_fire_time: string | null;
+  last_fire_time: string | null;
+  coalesce: string;
+  conflict_policy: string;
+  paused: boolean;
+}
+
+interface Job {
+  id: string;
+  task_id: string;
+  schedule_id: string | null;
+  state: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | string;
+  created_at: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  result: unknown;
+  exception: string | null;
+}
+
+interface SchedulerStatus {
+  running: boolean;
+  timezone: string;
+  data_store: string;
+  schedule_count: number;
+  job_count: number;
+}
+
+/** List all scheduled jobs */
+export async function listSchedules(): Promise<Schedule[]> {
+  return apiRequest<Schedule[]>('/cron/list_schedules');
+}
+
+/** Create a new schedule */
+export async function createSchedule(config: JobConfig): Promise<{ id: string; status: string }> {
+  return apiRequest<{ id: string; status: string }>('/cron/schedules', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+/** Delete a schedule */
+export async function deleteSchedule(scheduleId: string): Promise<void> {
+  await apiRequest<void>(`/cron/schedules/${scheduleId}`, {
+    method: 'DELETE',
+  });
+}
+
+/** Pause a schedule */
+export async function pauseSchedule(scheduleId: string): Promise<void> {
+  await apiRequest<void>(`/cron/schedules/${scheduleId}/pause`, {
+    method: 'POST',
+  });
+}
+
+/** Resume a schedule */
+export async function resumeSchedule(scheduleId: string): Promise<void> {
+  await apiRequest<void>(`/cron/schedules/${scheduleId}/resume`, {
+    method: 'POST',
+  });
+}
+
+/** Run a task immediately */
+export async function runTask(taskId: string): Promise<void> {
+  await apiRequest<void>(`/cron/tasks/${taskId}/run`, {
+    method: 'POST',
+  });
+}
+
+/** Get all jobs */
+export async function listJobs(): Promise<Job[]> {
+  return apiRequest<Job[]>('/cron/jobs');
+}
+
+/** Get scheduler status */
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  return apiRequest<SchedulerStatus>('/cron/status');
 }
 
 /** Get detailed information for a specific node in the trace */

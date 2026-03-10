@@ -4,10 +4,11 @@
 - User: 用户（保留数据库持久化）
 - Agent: 智能体（从 x-agent.yaml 配置加载，内存实体）
 - Channel: 渠道（从 x-agent.yaml 配置加载，内存实体）
-- ChatSession: 会话（保留数据库持久化）
 
 Agent 和 Channel 不再读取数据库，而是直接从 x-agent.yaml 的 multi_agent 配置中加载，
 确保配置与运行时行为的一致性。
+
+Session 相关模型已迁移到 backend/src/models/session.py（Session 模型，sessions 表）。
 """
 
 import uuid
@@ -51,11 +52,6 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     create_time: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), index=True,
-    )
-
-    # 关系：一个用户拥有多个会话
-    chat_sessions: Mapped[list["ChatSession"]] = relationship(
-        "ChatSession", back_populates="user", cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:
@@ -350,70 +346,3 @@ class Channel:
         }
 
 
-class ChatSession(Base):
-    """会话实体。
-
-    用户与 Agent 之间的一次完整对话。
-    保留数据库持久化，但 agent_id 和 channel_id 引用配置中的实体。
-
-    Attributes:
-        session_id: 会话唯一标识
-        session_name: 会话名称
-        user_id: 用户ID（外键）
-        agent_id: Agent ID（引用 x-agent.yaml 配置）
-        channel_id: Channel ID（引用 x-agent.yaml 配置）
-        status: 会话状态
-    """
-    __tablename__ = "chat_sessions"
-
-    session_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
-    )
-    session_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.user_id", ondelete="CASCADE"), index=True,
-    )
-    agent_id: Mapped[str] = mapped_column(
-        String(36), index=True, nullable=False,
-        comment="Agent ID (引用 x-agent.yaml 配置)",
-    )
-    channel_id: Mapped[str] = mapped_column(
-        String(36), index=True, nullable=False,
-        comment="Channel ID (引用 x-agent.yaml 配置)",
-    )
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=SessionStatus.ACTIVE.value,
-    )
-    create_time: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), index=True,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), onupdate=func.now(), index=True,
-    )
-
-    # 关系
-    user: Mapped["User"] = relationship("User", back_populates="chat_sessions")
-
-    def get_agent(self) -> Agent | None:
-        """获取关联的 Agent（从配置加载）。"""
-        return Agent.from_config(self.agent_id)
-
-    def get_channel(self) -> Channel | None:
-        """获取关联的 Channel（从配置加载）。"""
-        return Channel.from_config(self.channel_id)
-
-    def __repr__(self) -> str:
-        return f"<ChatSession(session_id={self.session_id}, name={self.session_name}, status={self.status})>"
-
-    def to_dict(self) -> dict:
-        """序列化为字典。"""
-        return {
-            "session_id": self.session_id,
-            "session_name": self.session_name,
-            "user_id": self.user_id,
-            "agent_id": self.agent_id,
-            "channel_id": self.channel_id,
-            "status": self.status,
-            "create_time": self.create_time.isoformat() if self.create_time else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }

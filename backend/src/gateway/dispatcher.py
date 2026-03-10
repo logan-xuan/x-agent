@@ -1,0 +1,423 @@
+"""Gateway 请求分发器。
+
+GatewayDispatcher 是 Gateway 的核心编排组件，负责：
+1. Agent 解析：根据 Envelope 中的 agent_id / agent_name 路由到目标 Agent
+2. Identity 构建：为每个请求创建 AgentContext（含 Identity）
+3. Session 管理：确保 Session 存在（首次自动创建，重连时重新激活）
+4. 请求分发：将 Envelope 转换为 AgentBridge.run() 调用，产出 GatewayEvent 流
+
+从 agent_core/api/websocket.py 中的以下逻辑迁移而来：
+- agent_websocket() 中的 Session 管理
+- AgentContext.for_websocket() 的 Identity 构建
+- Agent 实例创建和历史加载
+
+设计原则：
+- 协议无关：不依赖 WebSocket/HTTP 等具体协议
+- 输入 Envelope，输出 AsyncGenerator[GatewayEvent]
+- 多 Agent 路由：agent_id > agent_name > DEFAULT_AGENT_ID
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncGenerator
+from typing import Optional
+
+from .agent_bridge import AgentBridge
+from .agent_info import AgentInfo
+
+from ..agent_core.agent import Agent
+from .envelope import Envelope, EnvelopeIntent
+from .response import GatewayEvent
+from .errors import (
+    AgentNotFoundError,
+    DispatchError,
+    EnvelopeValidationError,
+    SessionNotFoundError,
+)
+
+from ..conversation.identity import (
+    AgentType,
+    ChannelProtocol,
+    ChannelType,
+    Identity,
+    IdentityManager,
+    get_identity_manager,
+)
+from ..conversation.context import (
+    AgentContext,
+    set_current_context,
+)
+from ..conversation.dao import (
+    DEFAULT_AGENT_ID,
+    DEFAULT_CHANNEL_ID,
+    DEFAULT_USER_ID,
+)
+from ..conversation.dao.models import (
+    Agent as AgentORM,
+)
+
+try:
+    from ..utils.logger import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
+
+def _get_storage_service():
+    """获取 StorageService 实例。"""
+    from ..services.storage import get_storage_service
+    return get_storage_service()
+
+
+class GatewayDispatcher:
+    """Gateway 请求分发器。
+
+    编排 Envelope → Agent 解析 → Identity 构建 → Session 管理 → AgentBridge.run()
+    的完整流程，产出协议无关的 GatewayEvent 流。
+
+    典型用法::
+
+        dispatcher = GatewayDispatcher()
+        envelope = Envelope.create_chat(
+            session_id="sess-123",
+            content="你好",
+            channel_type=ChannelType.WEB_CHAT,
+            channel_protocol=ChannelProtocol.WEBSOCKET,
+        )
+        async for event in dispatcher.dispatch(envelope):
+            # 各端点负责将 GatewayEvent 转换为自己的协议格式
+            print(event)
+    """
+
+    def __init__(self, bridge: AgentBridge | None = None) -> None:
+        self._bridge = bridge or AgentBridge()
+
+    async def dispatch(
+        self,
+        envelope: Envelope,
+        *,
+        abort_event: asyncio.Event | None = None,
+        agent: Optional[Agent] = None,
+    ) -> AsyncGenerator[GatewayEvent, None]:
+        """分发 Envelope 请求。
+
+        完整流程：
+        1. 验证 Envelope
+        2. 解析目标 Agent（agent_id > agent_name > DEFAULT_AGENT_ID）
+        3. 构建 Identity 和 AgentContext
+        4. 确保 Session 存在
+        5. 根据 intent 分发到对应处理器
+
+        Args:
+            envelope: 统一消息信封。
+            abort_event: 中止事件。
+            agent: 可选的已有 Agent 实例。有状态协议（如 WebSocket）
+                   在连接级别创建 Agent 并缓存，每条消息复用同一实例，
+                   避免重复加载历史。无状态协议（如 REST/SSE）不传此参数，
+                   由 dispatcher 内部创建新实例。
+
+        Yields:
+            GatewayEvent 事件流。
+        """
+        # 1. 验证 Envelope
+        self._validate_envelope(envelope)
+
+        # 2. 解析目标 Agent
+        agent_info = await self._resolve_agent(envelope)
+
+        # 3. 构建 Identity 和 AgentContext
+        context = self._build_context(envelope, agent_info)
+        set_current_context(context)
+
+        logger.info(
+            "Gateway dispatch started",
+            extra={
+                "session_id": envelope.session_id,
+                "intent": envelope.intent.value,
+                "agent_id": agent_info.agent_id,
+                "agent_name": agent_info.agent_name,
+                "channel_type": envelope.channel_type.value,
+            },
+        )
+
+        # 4. 根据 intent 分发
+        if envelope.intent == EnvelopeIntent.PING:
+            yield GatewayEvent.pong(
+                agent_id=agent_info.agent_id,
+                agent_name=agent_info.agent_name,
+            )
+            return
+
+        if envelope.intent == EnvelopeIntent.ABORT:
+            yield GatewayEvent.error(
+                message="Abort acknowledged",
+                error_type="AbortError",
+                agent_id=agent_info.agent_id,
+                agent_name=agent_info.agent_name,
+            )
+            return
+
+        if envelope.intent == EnvelopeIntent.CHAT:
+            async for event in self._dispatch_chat(
+                envelope, agent_info,
+                abort_event=abort_event,
+                agent=agent,
+            ):
+                yield event
+            return
+
+        yield GatewayEvent.error(
+            message=f"Unknown intent: {envelope.intent.value}",
+            error_type="EnvelopeValidationError",
+            agent_id=agent_info.agent_id,
+            agent_name=agent_info.agent_name,
+        )
+
+    async def ensure_session(
+        self,
+        session_id: str,
+        agent_info: AgentInfo,
+        *,
+        user_id: str | None = None,
+        channel_id: str | None = None,
+    ) -> None:
+        """确保 Session 存在（首次自动创建，重连时重新激活）。
+
+        Args:
+            session_id: 会话 ID。
+            agent_info: 目标 Agent 信息。
+            user_id: 用户 ID，默认使用 DEFAULT_USER_ID。
+            channel_id: 渠道 ID，默认使用 DEFAULT_CHANNEL_ID。
+        """
+        from ..conversation.session import SessionManager
+
+        session_manager = SessionManager()
+
+        # 确保 sessions 表中存在
+        existing = await session_manager.get_session(session_id)
+        if existing is None:
+            await session_manager.ensure_session(
+                session_id,
+                title="Agent 对话",
+                agent_id=agent_info.agent_id,
+            )
+            logger.info(
+                "Session auto-created",
+                extra={"session_id": session_id, "agent_id": agent_info.agent_id},
+            )
+        elif existing.status != "active":
+            await session_manager.reactivate_session(session_id)
+            logger.info("Session reactivated", extra={"session_id": session_id})
+
+    async def close_session(self, session_id: str) -> None:
+        """关闭 Session。
+
+        Args:
+            session_id: 会话 ID。
+        """
+        from ..conversation.session import SessionManager
+
+        session_manager = SessionManager()
+        await session_manager.close_session(session_id)
+
+        logger.info("Session closed", extra={"session_id": session_id})
+
+    async def touch_session(self, session_id: str) -> None:
+        """更新 Session 活跃时间。
+
+        Args:
+            session_id: 会话 ID。
+        """
+        from ..conversation.session import SessionManager
+
+        session_manager = SessionManager()
+        await session_manager.touch_session(session_id)
+
+    # ------------------------------------------------------------------
+    # 内部方法
+    # ------------------------------------------------------------------
+
+    def _validate_envelope(self, envelope: Envelope) -> None:
+        """验证 Envelope 的必要字段。
+
+        委托给 Envelope.validate() 作为唯一验证入口，
+        将返回的错误列表转换为 EnvelopeValidationError 异常。
+
+        Args:
+            envelope: 待验证的 Envelope。
+
+        Raises:
+            EnvelopeValidationError: 验证失败。
+        """
+        errors = envelope.validate()
+        if errors:
+            raise EnvelopeValidationError(errors)
+
+    async def _resolve_agent(self, envelope: Envelope) -> AgentInfo:
+        """解析目标 Agent。
+
+        路由优先级：agent_id > agent_name > DEFAULT_AGENT_ID
+
+        Args:
+            envelope: 消息信封。
+
+        Returns:
+            解析到的 AgentInfo。
+
+        Raises:
+            AgentNotFoundError: 指定的 Agent 不存在。
+        """
+        # 优先级 1: 通过 agent_id 查找
+        if envelope.agent_id:
+            agent = AgentORM.from_config(envelope.agent_id)
+            if agent is None:
+                raise AgentNotFoundError(
+                    f"Agent not found: agent_id={envelope.agent_id}"
+                )
+            return AgentInfo.from_orm(agent)
+
+        # 优先级 2: 通过 agent_name 查找
+        if envelope.agent_name:
+            agent = self._find_agent_by_name(envelope.agent_name)
+            if agent is None:
+                raise AgentNotFoundError(
+                    f"Agent not found: agent_name={envelope.agent_name}"
+                )
+            return AgentInfo.from_orm(agent)
+
+        # 优先级 3: 使用默认 Agent
+        agent = AgentORM.from_config(DEFAULT_AGENT_ID)
+        if agent is None:
+            return AgentInfo.default()
+
+        return AgentInfo.from_orm(agent)
+
+    def _find_agent_by_name(self, agent_name: str) -> Optional[AgentORM]:
+        """通过 agent_name 查找 Agent（从配置加载）。
+
+        Args:
+            agent_name: Agent 名称。
+
+        Returns:
+            Agent 实例，未找到时返回 None。
+        """
+        all_agents = AgentORM.list_all()
+        return next((a for a in all_agents if a.agent_name == agent_name), None)
+
+    def _build_context(
+        self,
+        envelope: Envelope,
+        agent_info: AgentInfo,
+    ) -> AgentContext:
+        """构建 AgentContext（含 Identity）。
+
+        Args:
+            envelope: 消息信封。
+            agent_info: 目标 Agent 信息。
+
+        Returns:
+            配置好的 AgentContext。
+        """
+        identity_manager = get_identity_manager()
+
+        # 将 AgentInfo 的 agent_type 映射到 Identity 的 AgentType
+        agent_type_mapping = {
+            "main": AgentType.MAIN,
+            "partner": AgentType.PARTNER,
+            "sub": AgentType.SUB,
+        }
+        agent_type = agent_type_mapping.get(agent_info.agent_type, AgentType.MAIN)
+
+        identity = identity_manager.create(
+            session_id=envelope.session_id,
+            agent_id=agent_info.agent_id,
+            channel_id=envelope.channel_id,
+            user_id=envelope.user_id,
+            agent_type=agent_type,
+            channel_type=envelope.channel_type,
+            channel_protocol=envelope.channel_protocol,
+        )
+
+        context = AgentContext(identity=identity)
+        identity_manager.activate(identity)
+
+        logger.debug(
+            "AgentContext built",
+            extra=identity.to_dict(),
+        )
+        return context
+
+    async def _dispatch_chat(
+        self,
+        envelope: Envelope,
+        agent_info: AgentInfo,
+        *,
+        abort_event: asyncio.Event | None = None,
+        agent: Optional[Agent] = None,
+    ) -> AsyncGenerator[GatewayEvent, None]:
+        """分发 CHAT 意图的请求。
+
+        完整流程：
+        1. 确保 Session 存在
+        2. 更新 Session 活跃时间
+        3. 获取 Agent 实例（复用已有或新建并加载历史）
+        4. 调用 AgentBridge.run() 产出 GatewayEvent
+
+        有状态协议（如 WebSocket）在连接级别创建 Agent 并缓存，
+        通过 agent 参数传入已有实例，跳过创建和历史加载。
+        无状态协议（如 REST/SSE）不传 agent，每次请求新建实例。
+
+        Args:
+            envelope: 消息信封。
+            agent_info: 目标 Agent 信息。
+            abort_event: 中止事件。
+            agent: 可选的已有 Agent 实例，有状态协议复用。
+
+        Yields:
+            GatewayEvent 事件流。
+        """
+        try:
+            # 1. 确保 Session 存在
+            await self.ensure_session(
+                envelope.session_id,
+                agent_info,
+                user_id=envelope.user_id,
+                channel_id=envelope.channel_id,
+            )
+
+            # 2. 更新活跃时间
+            await self.touch_session(envelope.session_id)
+
+            # 3. 获取 Agent 实例
+            if agent is None:
+                # 无状态协议：每次请求创建新 Agent 并加载历史
+                agent = self._bridge.create_agent(agent_info=agent_info)
+                await self._bridge.load_session_history(agent, envelope.session_id)
+
+            # 4. 调用 AgentBridge.run()
+            async for event in self._bridge.run(
+                agent=agent,
+                content=envelope.content,
+                session_id=envelope.session_id,
+                agent_info=agent_info,
+                images=envelope.images if envelope.images else None,
+                abort_event=abort_event,
+            ):
+                yield event
+
+        except Exception as exc:
+            logger.exception(
+                "Error dispatching chat",
+                extra={
+                    "session_id": envelope.session_id,
+                    "error": str(exc),
+                },
+            )
+            yield GatewayEvent.error(
+                message=str(exc),
+                error_type=type(exc).__name__,
+                agent_id=agent_info.agent_id,
+                agent_name=agent_info.agent_name,
+            )

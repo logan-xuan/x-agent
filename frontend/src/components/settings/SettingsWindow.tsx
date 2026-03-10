@@ -1,11 +1,12 @@
 /** Settings window component */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
 import { Spinner } from '../ui/Spinner';
 import { ModelEditor } from './ModelEditor';
 import { ProviderStatusCard } from './ProviderStatusCard';
+import { CronManager } from './CronManager';
 
 interface ProviderStatus {
   name: string;
@@ -115,8 +116,8 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'status' | 'edit' | 'stats'>('status');
-  
+  const [activeTab, setActiveTab] = useState<'status' | 'stats' | 'edit' | 'cron'>('status');
+
   // Stats state
   const [aggregatedStats, setAggregatedStats] = useState<AggregatedStats | null>(null);
   const [providerStats, setProviderStats] = useState<ProviderStats[]>([]);
@@ -124,19 +125,19 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
   const [dailyStats, setDailyStats] = useState<DailyStats[]>([]);
   const [statsTimeRange, setStatsTimeRange] = useState<'1' | '7' | '30'>('7');
   const [isLoadingStats, setIsLoadingStats] = useState(false);
-  
-  const fetchData = async () => {
+
+  const fetchData = useCallback(async () => {
     try {
       const [statusRes, configRes] = await Promise.all([
         fetch(`${API_BASE}/config/status`),
         fetch(`${API_BASE}/config/edit`),
       ]);
-      
+
       if (!statusRes.ok || !configRes.ok) throw new Error('Failed to fetch data');
-      
+
       const statusData = await statusRes.json();
       const configData = await configRes.json();
-      
+
       setStatus(statusData);
       setEditableConfig(configData);
       setError(null);
@@ -145,9 +146,9 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
     } finally {
       setIsLoading(false);
     }
-  };
-  
-  const fetchStats = async () => {
+  }, []);
+
+  const fetchStats = useCallback(async () => {
     setIsLoadingStats(true);
     try {
       const days = statsTimeRange;
@@ -157,7 +158,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
         fetch(`${API_BASE}/stats/recent-errors?limit=5`),
         fetch(`${API_BASE}/stats/daily?days=${days}`),
       ]);
-      
+
       if (aggregatedRes.ok) setAggregatedStats(await aggregatedRes.json());
       if (providerRes.ok) setProviderStats(await providerRes.json());
       if (errorsRes.ok) setRecentErrors(await errorsRes.json());
@@ -167,20 +168,18 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
     } finally {
       setIsLoadingStats(false);
     }
-  };
-  
+  }, [statsTimeRange]);
+
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
   }, []);
-  
+
   useEffect(() => {
     if (activeTab === 'stats') {
       fetchStats();
     }
   }, [activeTab, statsTimeRange]);
-  
+
   const handleReload = async () => {
     setIsReloading(true);
     setError(null);
@@ -196,7 +195,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
       setIsReloading(false);
     }
   };
-  
+
   const handleResetCircuit = async (providerName: string) => {
     try {
       const response = await fetch(
@@ -209,7 +208,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
       setError(err instanceof Error ? err.message : 'Reset failed');
     }
   };
-  
+
   const handleResetAll = async () => {
     try {
       const response = await fetch(
@@ -222,7 +221,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
       setError(err instanceof Error ? err.message : 'Reset all failed');
     }
   };
-  
+
   const handleUpdateModel = async (name: string, updates: Partial<EditableModel>) => {
     setIsUpdating(name);
     setError(null);
@@ -232,12 +231,12 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Update failed');
       }
-      
+
       await fetchData();
       setSuccess('配置已更新');
       setTimeout(() => setSuccess(null), 3000);
@@ -247,7 +246,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
       setIsUpdating(null);
     }
   };
-  
+
   return (
     <div className="fixed inset-0 flex flex-col bg-white dark:bg-gray-900">
       {/* Header */}
@@ -268,43 +267,48 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
           )}
         </div>
       </header>
-      
+
       {/* Tabs */}
       <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-700">
         <div className="max-w-3xl mx-auto flex">
           <button
             onClick={() => setActiveTab('status')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'status'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'status'
+              ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+              : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
           >
             状态监控
           </button>
           <button
             onClick={() => setActiveTab('stats')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'stats'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'stats'
+              ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+              : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
           >
             统计分析
           </button>
           <button
             onClick={() => setActiveTab('edit')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'edit'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}
+            className={`px-4 py-3 text-sm font-medium transition-colors ${activeTab === 'edit'
+              ? 'text-blue-600 border-b-2 border-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
           >
             配置编辑
           </button>
+          <button
+            onClick={() => setActiveTab('cron')}
+            className={`px-4 py-3 text-sm font-medium transition-colors ${activeTab === 'cron'
+              ? 'text-blue-600 border-b-2 border-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
+          >
+            定时任务
+          </button>
         </div>
       </div>
-      
       {/* Messages */}
       {error && (
         <div className="max-w-3xl mx-auto w-full px-4 pt-4">
@@ -314,7 +318,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
           </div>
         </div>
       )}
-      
+
       {success && (
         <div className="max-w-3xl mx-auto w-full px-4 pt-4">
           <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3 text-green-600 dark:text-green-400">
@@ -322,7 +326,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
           </div>
         </div>
       )}
-      
+
       {/* Content */}
       <div className="flex-1 overflow-auto">
         <div className="max-w-3xl mx-auto px-4 py-4">
@@ -358,7 +362,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                   </p>
                 </CardContent>
               </Card>
-              
+
               {/* Providers */}
               <div>
                 <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">
@@ -385,11 +389,10 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                         <button
                           key={days}
                           onClick={() => setStatsTimeRange(days)}
-                          className={`px-3 py-1 text-sm rounded-lg transition-colors ${
-                            statsTimeRange === days
-                              ? 'bg-blue-500 text-white'
-                              : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                          }`}
+                          className={`px-3 py-1 text-sm rounded-lg transition-colors ${statsTimeRange === days
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                            }`}
                         >
                           {days === '1' ? '今天' : `最近 ${days} 天`}
                         </button>
@@ -398,7 +401,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                   </div>
                 </CardContent>
               </Card>
-              
+
               {isLoadingStats ? (
                 <div className="flex items-center justify-center h-40">
                   <Spinner size="lg" />
@@ -439,7 +442,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                       </div>
                     </CardContent>
                   </Card>
-                  
+
                   {/* Provider Stats */}
                   <Card className="mb-3">
                     <CardHeader className="pb-2">
@@ -472,7 +475,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                       )}
                     </CardContent>
                   </Card>
-                  
+
                   {/* Recent Errors */}
                   <Card className="mb-3">
                     <CardHeader className="pb-2">
@@ -500,7 +503,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                       )}
                     </CardContent>
                   </Card>
-                  
+
                   {/* Daily Stats */}
                   <Card className="mb-3">
                     <CardHeader className="pb-2">
@@ -534,6 +537,8 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                 </>
               )}
             </>
+          ) : activeTab === 'cron' ? (
+            <CronManager />
           ) : (
             <>
               <div className="mb-3">
@@ -544,7 +549,7 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                   编辑模型配置后，更改会自动保存到配置文件并重新加载
                 </p>
               </div>
-              
+
               {editableConfig?.models.map((model) => (
                 <ModelEditor
                   key={model.name}

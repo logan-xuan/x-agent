@@ -7,7 +7,7 @@
 import pytest
 
 from src.services.storage import StorageService
-from src.conversation.dao.dao import AgentDAO, ChannelDAO, ChatSessionDAO, UserDAO
+from src.conversation.dao.dao import UserDAO
 
 
 @pytest.fixture
