@@ -4,7 +4,7 @@
 
 set -e
 
-BASE_URL="${1:-http://localhost:8000/api/v1}"
+BASE_URL="${1:-http://localhost:8888/api/v1}"
 echo "=== Phase 5 & 6 功能验证 ==="
 echo "Backend URL: $BASE_URL"
 echo ""

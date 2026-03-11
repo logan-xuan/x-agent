@@ -114,7 +114,7 @@ logging:
 
 启动脚本将：
 - 自动检查并安装依赖
-- 启动后端服务 (http://localhost:8000)
+- 启动后端服务 (http://localhost:8888)
 - 启动前端服务 (http://localhost:5173)
 - 按 Ctrl+C 可优雅关闭所有服务
 
@@ -128,7 +128,7 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 python -m src.main
 ```
 
-后端服务将启动在 http://localhost:8000
+后端服务将启动在 http://localhost:8888
 
 **终端 2 - 启动前端：**
 
@@ -154,7 +154,7 @@ yarn dev  # 或 npm run dev
 ### 1. 健康检查
 
 ```bash
-curl http://localhost:8000/api/v1/health
+curl http://localhost:8888/api/v1/health
 ```
 
 预期响应：

@@ -90,8 +90,8 @@ cd backend && pip install -e ".[dev]"
 ./start.sh
 
 # Start services separately
-./start-backend.sh  # Backend on http://localhost:8000
-./start-frontend.sh # Frontend on http://localhost:5173
+./start-backend.sh  # Backend on http://localhost:8888
+./start-frontend.sh # Frontend on http://localhost:5177
 
 # Run backend standalone
 python -m src.main
@@ -126,7 +126,7 @@ cp x-agent.yaml.example x-agent.yaml
 ### Backend Endpoints
 - Health Check: `GET /api/v1/health`
 - Chat API: `POST /api/v1/chat`
-- WebSocket: `ws://localhost:8000/ws/chat/{session_id}`
+- WebSocket: `ws://localhost:8888/ws/chat/{session_id}`
 - Configuration: `GET /api/v1/config/status`
 - Memory: `GET/POST /api/v1/memory`
 - Developer Mode: `GET /api/v1/dev/prompt-logs`

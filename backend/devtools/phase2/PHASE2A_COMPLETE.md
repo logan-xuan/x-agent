@@ -216,7 +216,7 @@ async def run_streaming(
 1. **测试完整流程** (推荐)
    ```bash
    # 启动服务后测试
-   curl -X POST http://localhost:8000/api/chat \
+   curl -X POST http://localhost:8888/api/chat \
      -H "Content-Type: application/json" \
      -d '{"message": "/demo-skill create test.txt"}'
    ```

@@ -359,13 +359,35 @@ class AgentConfig(BaseModel):
     enable_experience_learning: bool = Field(default=True, description="Whether to enable experience learning")
 
 
+class PeerMatch(BaseModel):
+    """Peer matching condition for agent binding."""
+    
+    kind: Literal["user", "group", "channel"] = Field(..., description="Peer kind: user, group, or channel")
+    id: str = Field(..., description="Peer ID (e.g., user ID, group ID, or '*' for wildcard)")
+
+class BindingMatch(BaseModel):
+    """Binding match condition."""
+    
+    channel: str = Field(..., description="Channel ID to match")
+    peer: PeerMatch = Field(..., description="Peer matching condition")
+
+class AgentBinding(BaseModel):
+    """Agent binding configuration - defines which agent handles messages from specific channel/peer combinations."""
+    
+    agent_id: str = Field(..., description="Agent ID to bind to")
+    match: BindingMatch = Field(..., description="Match condition for this binding")
+
 class ChannelConfig(BaseModel):
-    """Channel configuration - defines how users interact with agents."""
+    """Channel configuration - defines how users interact with agents.
+    
+    Note: agent_id is kept for backward compatibility with web/cli channels.
+    For third-party channels (telegram, slack, etc.), use bindings instead.
+    """
     
     id: str = Field(..., description="Unique channel identifier")
     type: str = Field(..., description="Channel type (web, slack, email, etc.)")
     protocol: Literal["websocket", "webhook", "smtp", "http"] = Field(default="websocket", description="Communication protocol")
-    agent_id: str = Field(..., description="Associated agent ID")
+    agent_id: str | None = Field(default=None, description="Associated agent ID (for backward compatibility)")
     default_user: str = Field(default="admin", description="Default user for this channel")
     enabled: bool = Field(default=True, description="Whether this channel is enabled")
     config: dict[str, Any] = Field(default_factory=dict, description="Channel-specific configuration")
@@ -374,12 +396,17 @@ class ChannelConfig(BaseModel):
 class MultiAgentConfig(BaseModel):
     """Multi-agent configuration.
     
-    Defines agents and their channels, loaded from x-agent.yaml.
+    Defines agents, channels, and bindings, loaded from x-agent.yaml.
     Replaces database-stored Agent/Channel entities.
+    
+    Binding Logic:
+    - For web/cli channels: use channel.agent_id (backward compatible)
+    - For third-party channels: use bindings to match channel + peer -> agent
     """
     
     agents: list[AgentConfig] = Field(default_factory=list, description="List of agent configurations")
     channels: list[ChannelConfig] = Field(default_factory=list, description="List of channel configurations")
+    bindings: list[AgentBinding] = Field(default_factory=list, description="List of agent bindings")
     
     def get_agent(self, agent_id: str) -> AgentConfig | None:
         """Get agent by ID."""
@@ -396,7 +423,7 @@ class MultiAgentConfig(BaseModel):
         return None
     
     def get_channels_for_agent(self, agent_id: str) -> list[ChannelConfig]:
-        """Get all channels for a specific agent."""
+        """Get all channels for a specific agent (backward compatible)."""
         return [ch for ch in self.channels if ch.agent_id == agent_id]
     
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
@@ -410,13 +437,63 @@ class MultiAgentConfig(BaseModel):
         """Get all enabled channels."""
         return [ch for ch in self.channels if ch.enabled]
     
+    def resolve_agent_for_channel(self, channel_id: str, peer_id: str | None = None, peer_kind: str = "user") -> str | None:
+        """Resolve agent ID for a channel and peer.
+        
+        Priority:
+        1. If channel has agent_id set, use it (backward compatibility for web/cli)
+        2. If bindings defined, match by channel + peer
+        3. Return None if no match
+        
+        Args:
+            channel_id: Channel ID
+            peer_id: Peer ID (user ID, group ID, etc.)
+            peer_kind: Peer kind (user, group, channel)
+        
+        Returns:
+            Agent ID or None
+        """
+        channel = self.get_channel(channel_id)
+        
+        # Priority 1: Check channel.agent_id (backward compatibility)
+        if channel and channel.agent_id:
+            return channel.agent_id
+        
+        # Priority 2: Match bindings
+        for binding in self.bindings:
+            if binding.match.channel != channel_id:
+                continue
+            
+            # Check peer match
+            if binding.match.peer.kind == peer_kind:
+                if binding.match.peer.id == "*" or binding.match.peer.id == peer_id:
+                    return binding.agent_id
+        
+        return None
+    
+    def get_bindings_for_channel(self, channel_id: str) -> list[AgentBinding]:
+        """Get all bindings for a specific channel."""
+        return [b for b in self.bindings if b.match.channel == channel_id]
+    
     @model_validator(mode="after")
     def validate_agent_references(self) -> "MultiAgentConfig":
-        """Ensure all channel agent_id references exist."""
+        """Ensure all channel agent_id and binding agent_id references exist."""
         agent_ids = {agent.id for agent in self.agents}
+        
+        # Validate channel.agent_id references
         for channel in self.channels:
-            if channel.agent_id not in agent_ids:
+            if channel.agent_id and channel.agent_id not in agent_ids:
                 raise ValueError(f"Channel '{channel.id}' references unknown agent '{channel.agent_id}'")
+        
+        # Validate binding agent_id references
+        for binding in self.bindings:
+            if binding.agent_id not in agent_ids:
+                raise ValueError(f"Binding references unknown agent '{binding.agent_id}'")
+            
+            # Validate binding channel reference
+            if not self.get_channel(binding.match.channel):
+                raise ValueError(f"Binding references unknown channel '{binding.match.channel}'")
+        
         return self
 
 

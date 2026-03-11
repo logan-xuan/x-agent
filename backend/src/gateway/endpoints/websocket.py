@@ -241,6 +241,17 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
         },
     )
 
+    # 重新激活 session（WebSocket 断开时会标记为 closed，重连时需要恢复为 active）
+    try:
+        from ...conversation.session import SessionManager as _ReactivateSessionManager
+        _reactivate_mgr = _ReactivateSessionManager()
+        await _reactivate_mgr.reactivate_session(session_id)
+    except Exception as reactivate_error:
+        logger.warning(
+            "Failed to reactivate session on WebSocket connect",
+            extra={"session_id": session_id, "error": str(reactivate_error)},
+        )
+
     # 连接建立后，投递 outbox 中暂存的离线消息（如 cron 定时任务生成的通知）
     try:
         from ..message_bus import get_message_bus
@@ -312,6 +323,34 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
         connection_agent_info = AgentInfo(
             agent_id=DEFAULT_AGENT_ID,
             agent_name="default",
+        )
+
+    # 投递 agent 级别的暂存消息（通知发送时目标 agent 没有活跃 session，
+    # 消息以空 session_id 暂存，重连后通过 agent_id 查找并投递）
+    try:
+        from ..message_bus import get_message_bus as _get_agent_bus
+        agent_bus = _get_agent_bus()
+        agent_delivered = await agent_bus.drain_outbox_by_agent(
+            agent_id=connection_agent_info.agent_id,
+            session_id=session_id,
+        )
+        if agent_delivered:
+            logger.info(
+                "Agent-level outbox drained on WebSocket connect",
+                extra={
+                    "session_id": session_id,
+                    "agent_id": connection_agent_info.agent_id,
+                    "delivered_count": len(agent_delivered),
+                },
+            )
+    except Exception as agent_drain_error:
+        logger.warning(
+            "Failed to drain agent-level outbox on connect",
+            extra={
+                "session_id": session_id,
+                "agent_id": connection_agent_info.agent_id,
+                "error": str(agent_drain_error),
+            },
         )
 
     # 连接级别：创建 Agent 实例并加载历史，整个连接生命周期复用

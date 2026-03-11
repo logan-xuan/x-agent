@@ -84,10 +84,19 @@ class NotificationMessage:
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
 
-    def to_ws_dict(self) -> dict[str, Any]:
-        """转换为 WebSocket 推送格式。"""
+    def to_ws_dict(self, message_id: str | None = None) -> dict[str, Any]:
+        """转换为 WebSocket 推送格式。
+
+        Args:
+            message_id: 消息 ID（可选，如果不提供则生成 UUID）
+
+        Returns:
+            适合通过 WebSocket 发送的字典。
+        """
+        import uuid
         return {
             "type": "notification",
+            "message_id": message_id or str(uuid.uuid4()),
             "content": self.content,
             "title": self.title or "",
             "urgency": self.urgency,
@@ -202,20 +211,25 @@ class WebChatNotificationChannel:
         from .message_bus import MessageBus, OutboundMessage, get_message_bus
 
         try:
-            # 1. 解析 session_id
+            # 1. 解析 session_id（不自动创建）
             session_id = target.session_id
-            if not session_id:
+            if not session_id and target.agent_id:
                 resolver = ActiveSessionResolver()
-                session_id = await resolver.resolve(
-                    agent_id=target.agent_id or DEFAULT_AGENT_ID,
-                    channel_type=ChannelType.WEB_CHAT,
-                    auto_create=True,
-                )
+                try:
+                    session_id = await resolver.resolve(
+                        agent_id=target.agent_id,
+                        channel_type=ChannelType.WEB_CHAT,
+                        auto_create=False,  # 不自动创建 session
+                    )
+                except Exception:
+                    # 没有活跃 session，使用 agent_id 作为暂存标识
+                    session_id = None
 
             # 2. 通过 MessageBus 发送
             bus = get_message_bus()
             outbound = OutboundMessage(
-                session_id=session_id,
+                session_id=session_id or "",
+                agent_id=target.agent_id or DEFAULT_AGENT_ID,
                 message_type=message.message_type,
                 content={
                     "content": message.content,
@@ -226,13 +240,27 @@ class WebChatNotificationChannel:
                 created_at=message.created_at,
             )
 
-            result = await bus.send(session_id, outbound)
+            # 如果有 session_id，直接发送；否则暂存到 outbox
+            if session_id:
+                result = await bus.send(session_id, outbound)
+                # 通知消息在此层持久化到 messages 表（MessageBus 不负责持久化，
+                # AgentInvoker 链路由 AgentBridge 持久化，NotifyTool 链路在此处持久化）
+                await self._persist_notification(session_id, outbound)
+            else:
+                # 没有 session_id，暂存到 outbox（等待用户创建 session 后投递）
+                await bus._outbox.save(outbound)
+                from .message_bus import SendResult
+                result = SendResult(
+                    delivered=False,
+                    queued=True,
+                    session_id=target.agent_id or DEFAULT_AGENT_ID,
+                )
 
             return ChannelSendResult(
                 channel_type=ChannelType.WEB_CHAT,
                 delivered=result.delivered,
                 queued=result.queued,
-                session_id=session_id,
+                session_id=session_id or result.session_id,
             )
 
         except Exception as exc:
@@ -256,6 +284,59 @@ class WebChatNotificationChannel:
 
         # 没有 session_id 时，WebChat 总是"可用"的（可以暂存到 outbox）
         return True
+
+    async def _persist_notification(
+        self,
+        session_id: str,
+        message: Any,
+    ) -> None:
+        """将通知消息持久化到 messages 表。
+
+        NotifyTool 链路不经过 AgentBridge，没有自动持久化机制，
+        因此在 WebChatNotificationChannel 层负责将通知写入 messages 表，
+        确保用户刷新页面后仍能看到历史通知。
+
+        Args:
+            session_id: 会话 ID。
+            message: OutboundMessage 实例。
+        """
+        try:
+            from ..conversation.session import SessionManager
+
+            session_manager = SessionManager()
+
+            title = message.content.get("title", "")
+            content = message.content.get("content", "")
+            display_content = f"{title}\n\n{content}" if title else content
+
+            await session_manager.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=display_content,
+                metadata={
+                    "message_id": message.message_id,
+                    "message_type": message.message_type,
+                    "source": message.source,
+                    "urgency": message.content.get("urgency", "normal"),
+                },
+            )
+
+            logger.debug(
+                "Notification persisted to messages table",
+                extra={
+                    "session_id": session_id,
+                    "message_id": message.message_id,
+                },
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to persist notification message",
+                extra={
+                    "session_id": session_id,
+                    "message_id": message.message_id,
+                    "error": str(exc),
+                },
+            )
 
 
 # ============================================================================

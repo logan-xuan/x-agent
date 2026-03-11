@@ -51,7 +51,8 @@ class OutboundMessage:
 
     Attributes:
         message_id: 消息唯一标识。
-        session_id: 目标会话 ID。
+        session_id: 目标会话 ID（如果已知）。
+        agent_id: 目标 Agent ID（用于暂存和投递）。
         message_type: 消息类型（notification/reminder/alert/conversation）。
         content: 消息内容（JSON 序列化的字典）。
         source: 消息来源（agent/cron/system）。
@@ -59,6 +60,7 @@ class OutboundMessage:
     """
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = ""
+    agent_id: str = ""
     message_type: str = "notification"
     content: dict[str, Any] = field(default_factory=dict)
     source: str = "system"
@@ -123,7 +125,8 @@ class OutboxStore:
                         """
                         CREATE TABLE IF NOT EXISTS outbox_messages (
                             message_id TEXT PRIMARY KEY,
-                            session_id TEXT NOT NULL,
+                            session_id TEXT,
+                            agent_id TEXT NOT NULL,
                             message_type TEXT NOT NULL DEFAULT 'notification',
                             content TEXT NOT NULL,
                             source TEXT NOT NULL DEFAULT 'system',
@@ -139,6 +142,14 @@ class OutboxStore:
                         """
                         CREATE INDEX IF NOT EXISTS idx_outbox_session_delivered
                         ON outbox_messages (session_id, is_delivered)
+                        """
+                    )
+                )
+                await db_session.execute(
+                    sa.text(
+                        """
+                        CREATE INDEX IF NOT EXISTS idx_outbox_agent_delivered
+                        ON outbox_messages (agent_id, is_delivered)
                         """
                     )
                 )
@@ -167,14 +178,15 @@ class OutboxStore:
                     sa.text(
                         """
                         INSERT INTO outbox_messages
-                            (message_id, session_id, message_type, content, source, created_at, is_delivered)
+                            (message_id, session_id, agent_id, message_type, content, source, created_at, is_delivered)
                         VALUES
-                            (:message_id, :session_id, :message_type, :content, :source, :created_at, 0)
+                            (:message_id, :session_id, :agent_id, :message_type, :content, :source, :created_at, 0)
                         """
                     ),
                     {
                         "message_id": message.message_id,
-                        "session_id": message.session_id,
+                        "session_id": message.session_id or None,
+                        "agent_id": message.agent_id,
                         "message_type": message.message_type,
                         "content": json.dumps(message.content, ensure_ascii=False),
                         "source": message.source,
@@ -187,6 +199,7 @@ class OutboxStore:
                 extra={
                     "message_id": message.message_id,
                     "session_id": message.session_id,
+                    "agent_id": message.agent_id,
                 },
             )
         except Exception as exc:
@@ -195,6 +208,7 @@ class OutboxStore:
                 extra={
                     "message_id": message.message_id,
                     "session_id": message.session_id,
+                    "agent_id": message.agent_id,
                     "error": str(exc),
                 },
             )
@@ -231,24 +245,73 @@ class OutboxStore:
                 )
                 rows = result.fetchall()
 
-            messages: list[OutboundMessage] = []
-            for row in rows:
-                messages.append(OutboundMessage(
-                    message_id=row[0],
-                    session_id=row[1],
-                    message_type=row[2],
-                    content=json.loads(row[3]) if isinstance(row[3], str) else row[3],
-                    source=row[4],
-                    created_at=datetime.fromisoformat(row[5]) if isinstance(row[5], str) else row[5],
-                ))
-
-            return messages
+            return self._rows_to_messages(rows)
         except Exception as exc:
             logger.error(
                 "Failed to get pending outbox messages",
                 extra={"session_id": session_id, "error": str(exc)},
             )
             return []
+
+    async def get_pending_by_agent(self, agent_id: str, limit: int = 50) -> list[OutboundMessage]:
+        """获取指定 agent 的未投递消息（session_id 为空的暂存消息）。
+
+        当通知发送时目标 agent 没有活跃 session，消息会以空 session_id 暂存。
+        用户重连后，通过 agent_id 查找这些消息并投递。
+
+        Args:
+            agent_id: Agent ID。
+            limit: 最大返回数量。
+
+        Returns:
+            未投递的 OutboundMessage 列表，按创建时间升序。
+        """
+        await self._ensure_table()
+
+        try:
+            from ..services.storage import get_storage_service
+            import sqlalchemy as sa
+
+            storage = get_storage_service()
+            async with storage.session() as db_session:
+                result = await db_session.execute(
+                    sa.text(
+                        """
+                        SELECT message_id, session_id, message_type, content, source, created_at
+                        FROM outbox_messages
+                        WHERE agent_id = :agent_id
+                          AND (session_id IS NULL OR session_id = '')
+                          AND is_delivered = 0
+                        ORDER BY created_at ASC
+                        LIMIT :limit
+                        """
+                    ),
+                    {"agent_id": agent_id, "limit": limit},
+                )
+                rows = result.fetchall()
+
+            return self._rows_to_messages(rows)
+        except Exception as exc:
+            logger.error(
+                "Failed to get pending outbox messages by agent",
+                extra={"agent_id": agent_id, "error": str(exc)},
+            )
+            return []
+
+    @staticmethod
+    def _rows_to_messages(rows) -> list[OutboundMessage]:
+        """将数据库行转换为 OutboundMessage 列表。"""
+        messages: list[OutboundMessage] = []
+        for row in rows:
+            messages.append(OutboundMessage(
+                message_id=row[0],
+                session_id=row[1] or "",
+                message_type=row[2],
+                content=json.loads(row[3]) if isinstance(row[3], str) else row[3],
+                source=row[4],
+                created_at=datetime.fromisoformat(row[5]) if isinstance(row[5], str) else row[5],
+            ))
+        return messages
 
     async def mark_delivered(self, message_ids: list[str]) -> None:
         """标记消息为已投递。
@@ -426,8 +489,15 @@ class MessageBus:
     async def drain_outbox(self, session_id: str) -> list[OutboundMessage]:
         """拉取并投递 outbox 中的未读消息。
 
-        用户重连时调用，将暂存的消息通过 ConnectionRegistry 推送，
+        用户重连或创建新 session 时调用，将暂存的消息通过 ConnectionRegistry 推送，
         并标记为已投递。
+
+        对于之前因没有活跃 session 而暂存到 outbox 的通知消息，
+        此处负责将其持久化到 messages 表（因为暂存时没有 session_id，
+        无法写入 messages 表，只有回捞时才有目标 session_id）。
+
+        注意：有 session_id 的通知消息在 WebChatNotificationChannel.send() 中
+        已经完成持久化，不会进入 outbox，因此不存在重复持久化的问题。
 
         Args:
             session_id: 会话 ID。
@@ -450,6 +520,10 @@ class MessageBus:
                 delivered_ids.append(message.message_id)
                 delivered_messages.append(message)
 
+            # 无论推送是否成功，都持久化通知消息到 messages 表
+            # 这样即使用户离线，消息也会被保存，刷新后可以加载
+            await self._persist_notification_message(session_id, message)
+
         logger.info(
             "Outbox drained",
             extra={
@@ -460,6 +534,99 @@ class MessageBus:
         )
 
         return delivered_messages
+
+    async def drain_outbox_by_agent(
+        self,
+        agent_id: str,
+        session_id: str,
+    ) -> list[OutboundMessage]:
+        """拉取并投递 agent 级别的暂存消息。
+
+        当通知发送时目标 agent 没有活跃 session，消息以空 session_id 暂存到 outbox。
+        用户重连后，通过 agent_id 查找这些消息，绑定到当前 session_id 并投递。
+
+        Args:
+            agent_id: Agent ID。
+            session_id: 当前活跃的 session ID（用于推送和持久化）。
+
+        Returns:
+            成功投递的消息列表。
+        """
+        pending_messages = await self._outbox.get_pending_by_agent(agent_id)
+        if not pending_messages:
+            return []
+
+        delivered_ids: list[str] = []
+        delivered_messages: list[OutboundMessage] = []
+
+        for message in pending_messages:
+            push_result = await self._registry.push(session_id, message.to_ws_dict())
+            if push_result.status in (PushStatus.DELIVERED, PushStatus.PARTIAL):
+                await self._outbox.mark_delivered([message.message_id])
+                delivered_ids.append(message.message_id)
+                delivered_messages.append(message)
+
+            # 持久化到 messages 表（暂存时没有 session_id，此时才有）
+            await self._persist_notification_message(session_id, message)
+
+        logger.info(
+            "Agent-level outbox drained",
+            extra={
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "total_pending": len(pending_messages),
+                "delivered": len(delivered_ids),
+            },
+        )
+
+        return delivered_messages
+
+    async def _persist_notification_message(self, session_id: str, message: OutboundMessage) -> None:
+        """将通知消息持久化到 messages 表。
+
+        Args:
+            session_id: 会话 ID。
+            message: 出站消息。
+        """
+        try:
+            from ..conversation.session import SessionManager
+
+            session_manager = SessionManager()
+            
+            # 格式化消息内容
+            title = message.content.get("title", "")
+            content = message.content.get("content", "")
+            display_content = f"{title}\n\n{content}" if title else content
+
+            # 持久化到 messages 表
+            await session_manager.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=display_content,
+                metadata={
+                    "message_id": message.message_id,
+                    "message_type": message.message_type,
+                    "source": message.source,
+                    "urgency": message.content.get("urgency", "normal"),
+                },
+            )
+
+            logger.debug(
+                "Notification message persisted",
+                extra={
+                    "session_id": session_id,
+                    "message_id": message.message_id,
+                },
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to persist notification message",
+                extra={
+                    "session_id": session_id,
+                    "message_id": message.message_id,
+                    "error": str(exc),
+                },
+            )
 
     async def get_pending_count(self, session_id: str) -> int:
         """获取指定 session 的未投递消息数量。

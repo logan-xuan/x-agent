@@ -101,3 +101,105 @@ tools:
     - dnf
     - pacman
     - brew
+
+# Multi-Agent 配置
+multi_agent:
+  # Agent 定义
+  agents:
+    - id: main-agent
+      name: 主 Agent
+      type: main
+      persona: 你是一个全能的 AI 助手，可以帮助用户解决各种问题
+      workspace: ""
+      features: ""
+      model:
+        name: primary
+      enable_memory: true
+      enable_plan: false
+      enable_context_compression: true
+      enable_experience_learning: true
+    
+    - id: writer-agent
+      name: 写作 Agent
+      type: specialized
+      persona: 你是一个专业的写作助手，擅长创作各种类型的文章
+      workspace: ""
+      features: "writing,creative"
+      model:
+        name: primary
+      enable_memory: true
+      enable_plan: false
+      enable_context_compression: true
+      enable_experience_learning: true
+    
+    - id: tech-agent
+      name: 技术 Agent
+      type: specialized
+      persona: 你是一个技术专家，擅长解答编程和技术问题
+      workspace: ""
+      features: "code,debug,review"
+      model:
+        name: primary
+      enable_memory: true
+      enable_plan: false
+      enable_context_compression: true
+      enable_experience_learning: true
+  
+  # Channel 定义（只定义渠道配置，不绑定 agent）
+  channels:
+    # Web 渠道（使用 agent_id 向后兼容）
+    - id: web_channel
+      type: web
+      protocol: websocket
+      agent_id: main-agent
+      default_user: admin
+      enabled: true
+    
+    # CLI 渠道（使用 agent_id 向后兼容）
+    - id: cli_channel
+      type: cli
+      protocol: http
+      agent_id: main-agent
+      default_user: admin
+      enabled: true
+    
+    # Telegram 渠道（使用 bindings 绑定 agent）
+    - id: telegram
+      type: telegram
+      protocol: webhook
+      agent_id: null  # 第三方渠道使用 bindings，不设置 agent_id
+      default_user: admin
+      enabled: false
+      config:
+        botToken: "你的真实BotToken"
+        groupPolicy: "allowlist"
+        groups:
+          "-4839648923": { "enabled": true }
+          "-5256168581": { "enabled": true }
+          "-5181512010": { "enabled": true }
+  
+  # Agent 绑定规则（channel + peer -> agent）
+  bindings:
+    # Telegram 群组 -4839648923 绑定到 main-agent
+    - agent_id: main-agent
+      match:
+        channel: telegram
+        peer:
+          kind: group
+          id: "-4839648923"
+    
+    # Telegram 群组 -5256168581 绑定到 writer-agent
+    - agent_id: writer-agent
+      match:
+        channel: telegram
+        peer:
+          kind: group
+          id: "-5256168581"
+    
+    # Telegram 群组 -5181512010 绑定到 tech-agent
+    - agent_id: tech-agent
+      match:
+        channel: telegram
+        peer:
+          kind: group
+          id: "-5181512010"

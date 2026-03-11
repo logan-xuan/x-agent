@@ -130,7 +130,7 @@ python -m src.main
 ### 加载上下文
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/context/load \
+curl -X POST http://localhost:8888/api/v1/context/load \
   -H "Content-Type: application/json" \
   -d '{
     "session_id": "session-001",
@@ -171,7 +171,7 @@ curl -X POST http://localhost:8000/api/v1/context/load \
 ### 重载 AGENTS.md
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/context/reload \
+curl -X POST http://localhost:8888/api/v1/context/reload \
   -H "Content-Type: application/json" \
   -d '{
     "session_id": "session-001"
@@ -193,7 +193,7 @@ curl -X POST http://localhost:8000/api/v1/context/reload \
 ### 检测会话类型
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/session/detect \
+curl -X POST http://localhost:8888/api/v1/session/detect \
   -H "Content-Type: application/json" \
   -d '{
     "channel_type": "direct",

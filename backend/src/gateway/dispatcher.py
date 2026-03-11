@@ -258,7 +258,12 @@ class GatewayDispatcher:
     async def _resolve_agent(self, envelope: Envelope) -> AgentInfo:
         """解析目标 Agent。
 
-        路由优先级：agent_id > agent_name > DEFAULT_AGENT_ID
+        路由优先级：
+        1. agent_id（显式指定）
+        2. agent_name（按名称查找）
+        3. bindings（通过 channel + peer 匹配）
+        4. channel.agent_id（向后兼容）
+        5. DEFAULT_AGENT_ID（默认）
 
         Args:
             envelope: 消息信封。
@@ -269,6 +274,10 @@ class GatewayDispatcher:
         Raises:
             AgentNotFoundError: 指定的 Agent 不存在。
         """
+        from ..config.manager import get_config
+
+        config = get_config()
+
         # 优先级 1: 通过 agent_id 查找
         if envelope.agent_id:
             agent = AgentORM.from_config(envelope.agent_id)
@@ -287,12 +296,88 @@ class GatewayDispatcher:
                 )
             return AgentInfo.from_orm(agent)
 
-        # 优先级 3: 使用默认 Agent
+        # 优先级 3: 通过 bindings 解析（channel + peer -> agent）
+        if envelope.channel_id:
+            agent_id = config.multi_agent.resolve_agent_for_channel(
+                envelope.channel_id,
+                envelope.peer_id,
+                envelope.peer_kind,
+            )
+            if agent_id:
+                agent = AgentORM.from_config(agent_id)
+                if agent:
+                    return AgentInfo.from_orm(agent)
+
+        # 优先级 4: 使用 channel.agent_id（向后兼容）
+        if envelope.channel_id:
+            channel = config.multi_agent.get_channel(envelope.channel_id)
+            if channel and channel.agent_id:
+                agent = AgentORM.from_config(channel.agent_id)
+                if agent:
+                    return AgentInfo.from_orm(agent)
+
+        # 优先级 5: 通过 session_id 从数据库查找 agent_id
+        # 当 envelope 没有携带 agent_id/agent_name/channel 信息时（如 cron 任务），
+        # 通过 session 记录反查出该 session 归属的 agent，确保加载正确的上下文。
+        if envelope.session_id:
+            agent_info = await self._resolve_agent_from_session(envelope.session_id)
+            if agent_info is not None:
+                return agent_info
+
+        # 优先级 6: 使用默认 Agent
         agent = AgentORM.from_config(DEFAULT_AGENT_ID)
         if agent is None:
             return AgentInfo.default()
 
         return AgentInfo.from_orm(agent)
+
+    async def _resolve_agent_from_session(self, session_id: str) -> Optional[AgentInfo]:
+        """通过 session_id 从数据库查找对应的 agent_id，并加载完整 AgentInfo。
+
+        当 Envelope 没有携带 agent_id/agent_name/channel 信息时（如 cron 任务触发），
+        通过 session 记录反查出该 session 归属的 agent，确保加载正确的工作空间和上下文。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            解析到的 AgentInfo，未找到时返回 None。
+        """
+        try:
+            from ..conversation.session import SessionManager
+
+            session_manager = SessionManager()
+            session = await session_manager.get_session(session_id)
+
+            if session is None or not session.agent_id:
+                return None
+
+            agent = AgentORM.from_config(session.agent_id)
+            if agent is None:
+                logger.warning(
+                    "Session has agent_id but config not found",
+                    extra={"session_id": session_id, "agent_id": session.agent_id},
+                )
+                return None
+
+            agent_info = AgentInfo.from_orm(agent)
+            logger.info(
+                "Agent resolved from session",
+                extra={
+                    "session_id": session_id,
+                    "agent_id": agent_info.agent_id,
+                    "agent_name": agent_info.agent_name,
+                    "workspace": agent_info.workspace,
+                },
+            )
+            return agent_info
+
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve agent from session",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+            return None
 
     def _find_agent_by_name(self, agent_name: str) -> Optional[AgentORM]:
         """通过 agent_name 查找 Agent（从配置加载）。

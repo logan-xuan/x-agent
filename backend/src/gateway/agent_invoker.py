@@ -11,12 +11,13 @@ AgentInvoker 是非用户发起的 Agent 对话的统一入口。
 完整链路：
 1. Session 解析（ActiveSessionResolver）
 2. 构建 Identity（ChannelProtocol.INTERNAL）
-3. 设置 AgentContext + contextvars
-4. 确保 Session 存在
-5. 创建 Agent + 加载历史
-6. 执行 agent_loop
-7. 持久化消息
-8. 推送到 ConnectionRegistry / 暂存到 Outbox
+3. 从配置精准加载目标 Agent 的完整信息（workspace、persona、type 等）
+4. 设置 AgentContext + contextvars
+5. 确保 Session 存在
+6. 创建 Agent + 加载历史（基于 agent_id 加载独有的上下文文件）
+7. 执行 agent_loop
+8. 持久化消息
+9. 推送到 ConnectionRegistry / 暂存到 Outbox
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from .session_resolver import ActiveSessionResolver
 
 from ..conversation.identity import ChannelType, ChannelProtocol
 from ..conversation.context import AgentContext, set_current_context
+from ..conversation.dao.models import Agent as AgentORM
 
 try:
     from ..utils.logger import get_logger
@@ -168,20 +170,30 @@ class AgentInvoker:
             )
             set_current_context(context)
 
-            # 3. 确保 Session 存在
-            agent_info = AgentInfo(
-                agent_id=agent_id,
-                agent_name="default",
-            )
+            # 3. 从配置精准加载目标 Agent 的完整信息
+            agent_info = self._resolve_agent_info(agent_id)
+
+            # 4. 确保 Session 存在
             await self._dispatcher.ensure_session(
                 resolved_session_id, agent_info,
             )
 
-            # 4. 创建 Agent + 加载历史
+            # 5. 创建 Agent + 加载历史
             agent = self._bridge.create_agent(agent_info=agent_info)
+
+            logger.info(
+                "[AgentInvoker] Agent created, system_prompt preview",
+                extra={
+                    "agent_id": agent_info.agent_id,
+                    "workspace": agent_info.workspace,
+                    "system_prompt_length": len(agent._system_prompt) if hasattr(agent, "_system_prompt") else 0,
+                    "system_prompt_head": (agent._system_prompt[:200] if hasattr(agent, "_system_prompt") and agent._system_prompt else ""),
+                },
+            )
+
             await self._bridge.load_session_history(agent, resolved_session_id)
 
-            # 5. 执行 agent_loop 并收集响应
+            # 6. 执行 agent_loop 并收集响应
             response_content = await self._run_and_collect(
                 agent=agent,
                 content=content,
@@ -189,7 +201,7 @@ class AgentInvoker:
                 agent_info=agent_info,
             )
 
-            # 6. 推送结果到客户端
+            # 7. 推送结果到客户端
             delivered, queued = await self._push_response(
                 session_id=resolved_session_id,
                 response=response_content,
@@ -230,6 +242,45 @@ class AgentInvoker:
                 delivered=False,
                 error=str(exc),
             )
+
+    def _resolve_agent_info(self, agent_id: str) -> AgentInfo:
+        """从配置精准加载目标 Agent 的完整信息。
+
+        通过 AgentORM.from_config() 从 x-agent.yaml 加载 Agent 的完整配置，
+        包括 workspace、persona、type、feature 等字段，确保 AgentBridge
+        能正确解析 agent 独有的工作空间并加载对应的上下文文件
+        （IDENTITY.md、SPIRIT.md、OWNER.md、AGENTS.md、TOOLS.md、MEMORY.md 等）。
+
+        Args:
+            agent_id: 目标 Agent ID。
+
+        Returns:
+            包含完整配置信息的 AgentInfo 值对象。
+
+        Raises:
+            ValueError: agent_id 在配置中不存在。
+        """
+        agent_orm = AgentORM.from_config(agent_id)
+        if agent_orm is None:
+            raise ValueError(
+                f"Agent not found in configuration: agent_id={agent_id}. "
+                f"Please check x-agent.yaml multi_agent.agents section."
+            )
+
+        agent_info = AgentInfo.from_orm(agent_orm)
+
+        logger.info(
+            "[AgentInvoker] Agent info resolved from config",
+            extra={
+                "agent_id": agent_info.agent_id,
+                "agent_name": agent_info.agent_name,
+                "agent_type": agent_info.agent_type,
+                "workspace": agent_info.workspace,
+                "feature": agent_info.feature,
+            },
+        )
+
+        return agent_info
 
     async def _resolve_session(
         self,

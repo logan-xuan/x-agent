@@ -119,13 +119,13 @@ npm run dev
 
 ```bash
 # 检查身份状态
-curl http://localhost:8000/api/v1/identity/status
+curl http://localhost:8888/api/v1/identity/status
 
 # 加载上下文
-curl -X POST http://localhost:8000/api/v1/context/load
+curl -X POST http://localhost:8888/api/v1/context/load
 
 # 创建记忆条目
-curl -X POST http://localhost:8000/api/v1/memory/entries \
+curl -X POST http://localhost:8888/api/v1/memory/entries \
   -H "Content-Type: application/json" \
   -d '{
     "content": "用户决定使用 React 作为前端框架",
@@ -133,7 +133,7 @@ curl -X POST http://localhost:8000/api/v1/memory/entries \
   }'
 
 # 搜索记忆
-curl -X POST http://localhost:8000/api/v1/search \
+curl -X POST http://localhost:8888/api/v1/search \
   -H "Content-Type: application/json" \
   -d '{
     "query": "前端框架选择"
@@ -147,7 +147,7 @@ curl -X POST http://localhost:8000/api/v1/search \
 echo "- 新增爱好：阅读科幻小说" >> workspace/OWNER.md
 
 # 检查是否自动加载（无需重启）
-curl http://localhost:8000/api/v1/identity/owner
+curl http://localhost:8888/api/v1/identity/owner
 ```
 
 ## 文件结构
@@ -174,7 +174,7 @@ workspace/
 
 **方式二**: 通过 API 创建
 ```bash
-curl -X POST http://localhost:8000/api/v1/memory/entries \
+curl -X POST http://localhost:8888/api/v1/memory/entries \
   -H "Content-Type: application/json" \
   -d '{
     "content": "决定下周开始重构",
@@ -199,7 +199,7 @@ AI: 好的，我已更新您的职业信息。
 系统会自动从向量存储重建损坏的 Markdown 文件。手动触发：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/memory/rebuild
+curl -X POST http://localhost:8888/api/v1/memory/rebuild
 ```
 
 ## 性能指标

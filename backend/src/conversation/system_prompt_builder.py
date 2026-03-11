@@ -481,18 +481,62 @@ class SystemPromptBuilder:
         输出顺序:
         1. 角色声明
         2. 重要指令（语言要求）
-        3. Skills 占位标记（由 websocket.py 动态替换）
-        4. 当前时间
+        3. 运行时上下文（session_id / agent_id / channel_id）
+        4. Skills 占位标记（由 websocket.py 动态替换）
+        5. 当前时间
 
         Returns:
             核心提示词字符串
         """
+        runtime_context = self._build_runtime_context()
         return (
             f"You are a personal assistant running inside x-agent.\n\n"
             f"# 重要\n- 请使用中文回复用户\n\n"
+            f"{runtime_context}"
             f"{SKILLS_INJECTION_MARKER}\n\n"
             f"# 当前时间\n{self._format_current_time()}"
         )
+
+    def _build_runtime_context(self) -> str:
+        """构建运行时上下文信息块，注入到 system prompt 中.
+
+        从当前请求的 AgentContext（contextvars）读取 session_id、agent_id、
+        channel_id 等运行时参数，以结构化文本注入到 system prompt，
+        使 LLM 在调用工具时能直接获取这些参数，无需调用方硬编码。
+
+        Returns:
+            运行时上下文字符串（含尾部换行），未获取到上下文时返回空字符串。
+        """
+        try:
+            from .context import get_current_context
+
+            context = get_current_context()
+            if context is None:
+                return ""
+
+            identity = context.identity
+            lines = ["# 运行时上下文（Runtime Context）", ""]
+            lines.append("以下是当前会话的运行时参数，调用工具时可直接使用：")
+            lines.append("")
+
+            if identity.agent_id:
+                lines.append(f"- **agent_id**: `{identity.agent_id}`")
+            if identity.session_id:
+                lines.append(f"- **session_id**: `{identity.session_id}`")
+            if identity.channel_id:
+                lines.append(f"- **channel_id**: `{identity.channel_id}`")
+            if identity.channel_type:
+                lines.append(f"- **channel_type**: `{identity.channel_type.value}`")
+
+            lines.append("")
+            return "\n".join(lines) + "\n\n"
+
+        except Exception as exc:
+            logger.debug(
+                "Failed to build runtime context, skipping",
+                extra={"error": str(exc)},
+            )
+            return ""
 
     def _build_project_context(self, context_files: list[ContextFile]) -> str:
         """将 Bootstrap 文件拼接为 Project Context 区块.

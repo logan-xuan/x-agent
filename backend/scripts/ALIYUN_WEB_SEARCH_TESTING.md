@@ -43,7 +43,7 @@
 
 ```bash
 # 基本搜索
-curl -X POST "http://localhost:8000/api/v1/dev/aliyun-web-search" \
+curl -X POST "http://localhost:8888/api/v1/dev/aliyun-web-search" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "北京今天天气怎么样？",
@@ -52,7 +52,7 @@ curl -X POST "http://localhost:8000/api/v1/dev/aliyun-web-search" \
   }' | jq .
 
 # 自定义参数
-curl -X POST "http://localhost:8000/api/v1/dev/aliyun-web-search" \
+curl -X POST "http://localhost:8888/api/v1/dev/aliyun-web-search" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "2026 年人工智能发展趋势",

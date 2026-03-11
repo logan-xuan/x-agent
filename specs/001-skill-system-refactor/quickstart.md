@@ -89,7 +89,7 @@ keywords: [自定义, 测试]
 4. **刷新技能缓存**
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/skills/cache/clear
+curl -X POST http://localhost:8888/api/v1/skills/cache/clear
 ```
 
 ### 发现技能
@@ -100,7 +100,7 @@ import httpx
 async def discover_skills(user_input: str):
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://localhost:8000/api/v1/skills/discover",
+            "http://localhost:8888/api/v1/skills/discover",
             json={
                 "user_input": user_input,
                 "top_k": 5
@@ -120,7 +120,7 @@ for skill in skills["skills"]:
 async def execute_skill(skill_id: str, params: dict):
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"http://localhost:8000/api/v1/skills/{skill_id}/execute",
+            f"http://localhost:8888/api/v1/skills/{skill_id}/execute",
             json={
                 "session_id": "test-session",
                 "params": params,

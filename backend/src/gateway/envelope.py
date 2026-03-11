@@ -70,6 +70,8 @@ class Envelope:
     channel_id: str | None = None
     agent_id: str | None = None
     agent_name: str | None = None
+    peer_id: str | None = None  # Peer ID（用户 ID、群组 ID 等），用于 bindings 匹配
+    peer_kind: str = "user"  # Peer 类型（user、group、channel），用于 bindings 匹配
     metadata: dict[str, Any] = field(default_factory=dict)
     intent: EnvelopeIntent = EnvelopeIntent.CHAT
 
@@ -86,6 +88,8 @@ class Envelope:
         channel_id: str | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
+        peer_id: str | None = None,
+        peer_kind: str = "user",
         metadata: dict[str, Any] | None = None,
     ) -> Envelope:
         """创建对话类型的 Envelope。
@@ -100,6 +104,8 @@ class Envelope:
             channel_id: 通道标识。
             agent_id: 目标 Agent ID。
             agent_name: 目标 Agent 名称。
+            peer_id: Peer ID（用户 ID、群组 ID 等），用于 bindings 匹配。
+            peer_kind: Peer 类型（user、group、channel），用于 bindings 匹配。
             metadata: 附加数据。
 
         Returns:
@@ -116,6 +122,8 @@ class Envelope:
             channel_id=channel_id,
             agent_id=agent_id,
             agent_name=agent_name,
+            peer_id=peer_id,
+            peer_kind=peer_kind,
             metadata=metadata or {},
             intent=EnvelopeIntent.CHAT,
         )

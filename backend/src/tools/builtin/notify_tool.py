@@ -44,12 +44,18 @@ class NotifyTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Send a notification message to the user. "
-            "Use this tool when you need to proactively push information to the user, "
-            "such as task progress updates, alerts, reminders, or important notifications. "
-            "The message will be delivered in real-time if the user is online, "
-            "or queued for delivery when they reconnect. "
-            "Supports multiple channels: web_chat (default), dingtalk, telegram."
+            "A simple notification channel that delivers messages directly to the user as-is, "
+            "without any intermediate processing or modification by agents. The message content "
+            "you provide will be sent verbatim through the specified channel.\n\n"
+            "You MUST call this tool to actually deliver a notification — simply generating text "
+            "in your response will NOT send any notification to the user.\n\n"
+            "When to use:\n"
+            "- User asks you to 'send', 'notify', 'tell', 'remind', or 'push' a message\n"
+            "- You need to push task progress, alerts, or reminders directly to the user\n\n"
+            "Key parameters:\n"
+            "- content: the notification text to deliver (sent as-is, no processing)\n"
+            "- agent_id: target agent ID (e.g. 'code-reviewer') when routing to a specific agent\n"
+            "- channel: delivery channel — web_chat (default), dingtalk, or telegram"
         )
 
     @property
@@ -106,7 +112,18 @@ class NotifyTool(BaseTool):
                 type=ToolParameterType.STRING,
                 description=(
                     "Target session ID to push the notification to. "
-                    "If not provided, pushes to the current active session."
+                    "If not provided, uses agent_id or current session."
+                ),
+                required=False,
+                default=None,
+            ),
+            ToolParameter(
+                name="agent_id",
+                type=ToolParameterType.STRING,
+                description=(
+                    "Target agent ID to push the notification to. "
+                    "Use this to send notifications to a specific agent. "
+                    "If provided, the system will resolve the active session for this agent."
                 ),
                 required=False,
                 default=None,
@@ -130,6 +147,7 @@ class NotifyTool(BaseTool):
         urgency: str = "normal",
         channel: str = "web_chat",
         session_id: str | None = None,
+        agent_id: str | None = None,
         webhook_url: str | None = None,
     ) -> ToolResult:
         """Execute the notification push.
@@ -140,6 +158,7 @@ class NotifyTool(BaseTool):
             urgency: Urgency level (low/normal/high).
             channel: Target channel (web_chat/dingtalk/telegram).
             session_id: Target session ID (optional).
+            agent_id: Target agent ID (optional).
             webhook_url: DingTalk webhook URL (optional).
 
         Returns:
@@ -167,15 +186,18 @@ class NotifyTool(BaseTool):
             # 2. 构建通知目标
             target = NotificationTarget(
                 session_id=session_id,
+                agent_id=agent_id,
                 webhook_url=webhook_url,
             )
 
-            # 如果没有指定 session_id，尝试从当前上下文获取
-            if not session_id:
+            # 当显式指定了 agent_id 时，不从当前 context 回填 session_id，
+            # 让 WebChatNotificationChannel 通过 ActiveSessionResolver 解析目标 agent 的 session。
+            # 只有在既没有 session_id 也没有 agent_id 时，才回退到当前 context。
+            if not target.session_id and not target.agent_id:
                 target.session_id = self._get_current_session_id()
 
-            # 如果还是没有 session_id，设置 agent_id 让 resolver 自动解析
-            if not target.session_id:
+            # 如果还是没有 session_id 且没有 agent_id，使用当前 agent_id
+            if not target.session_id and not target.agent_id:
                 target.agent_id = self._get_current_agent_id()
 
             # 3. 确定通道类型

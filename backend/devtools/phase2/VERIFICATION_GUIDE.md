@@ -46,7 +46,7 @@
 
 使用 curl 命令：
 ```bash
-curl -X POST http://localhost:8000/api/chat \
+curl -X POST http://localhost:8888/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "/demo-skill create test.txt",
@@ -231,7 +231,7 @@ fi
 # 2. 检查服务状态
 echo ""
 echo "2️⃣ 检查服务状态..."
-if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+if curl -s http://localhost:8888/health > /dev/null 2>&1; then
     echo "   ✅ 后端服务运行正常"
 else
     echo "   ❌ 后端服务未运行"

@@ -217,7 +217,7 @@ class Channel:
                 channel_id=ch_cfg.id,
                 channel_type=ch_cfg.type,
                 channel_protocol=ch_cfg.protocol,
-                agent_id=ch_cfg.agent_id,
+                agent_id=ch_cfg.agent_id or "",  # agent_id 现在是可选的
                 user_id=ch_cfg.default_user,
                 enabled=ch_cfg.enabled,
                 config=ch_cfg.config,
@@ -251,6 +251,30 @@ class Channel:
                 )
 
         return None
+
+    def resolve_agent_id(self, peer_id: str | None = None, peer_kind: str = "user") -> str | None:
+        """解析此 Channel 的 Agent ID（考虑 bindings）。
+
+        优先级：
+        1. 如果 channel.agent_id 不为空，使用它（向后兼容）
+        2. 否则，通过 bindings 匹配 channel + peer -> agent
+
+        Args:
+            peer_id: Peer ID（用户 ID、群组 ID 等）
+            peer_kind: Peer 类型（user、group、channel）
+
+        Returns:
+            Agent ID 或 None
+        """
+        # 优先使用 channel.agent_id（向后兼容）
+        if self.agent_id:
+            return self.agent_id
+
+        # 使用 bindings 解析
+        config = get_config()
+        return config.multi_agent.resolve_agent_for_channel(
+            self.channel_id, peer_id, peer_kind
+        )
 
     @classmethod
     def list_all(cls) -> list["Channel"]:
