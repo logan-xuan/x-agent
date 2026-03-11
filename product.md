@@ -18,31 +18,31 @@ X-Agent 是一个面向个人和企业的 **AI 智能体平台**，解决传统 
 
 ### Web 对话界面
 
-![Web 对话界面](babackend/src/docs/images/screenshot/chat-ui.png)
+![Web 对话界面](docs/images/screenshot/chat-ui.png)
 
 > 支持 Markdown 实时渲染、代码高亮、流式输出，对话体验流畅自然。
 
 ### 多智能体管理
 
-![多智能体管理](backend/src/backend/src/docs/images/screenshot/agent-management.png)
+![多智能体管理](docs/images/screenshot/agent-management.png)
 
 > 每个 Agent 拥有独立人设、独立记忆、独立工具配置，灵活切换。
 
 ### Trace 可观测面板
 
-![Trace 可观测面板](backend/src/docs/images/screenshottrace-panel.png)
+![Trace 可观测面板](docs/images/screenshot/trace-panel.png)
 
 > 全链路可视化追踪，每个请求的调用链、耗时、LLM 详情一目了然。
 
 ### 定时任务管理
 
-![定时任务管理](backend/src/docs/images/screenshotcron-dashboard.png)
+![定时任务管理](docs/images/screenshot/cron-dashboard.png)
 
 > Cron 调度引擎，支持标准 Cron 表达式和自然语言间隔，任务全生命周期管理。
 
 ### CLI 命令行界面
 
-![CLI 命令行界面](backend/src/docs/images/screenshotcli-interface.png)
+![CLI 命令行界面](docs/images/screenshot/cli-interface.png)
 
 > 极客友好的命令行体验，支持交互式对话、Agent 管理、定时任务等全部功能。
 
@@ -235,8 +235,38 @@ x-agent status
 
 ---
 
+## 其他产品图片
+
+![Screenshot 1](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.26.20.png)
+![Screenshot 2](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.26.36.png)
+![Screenshot 3](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.26.54.png)
+![Screenshot 4](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.27.12.png)
+![Screenshot 5](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.27.34.png)
+![Screenshot 6](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.28.27.png)
+![Screenshot 7](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.28.45.png)
+![Screenshot 8](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.28.57.png)
+![Screenshot 9](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.30.25.png)
+![Screenshot 10](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.30.32.png)
+![Screenshot 11](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.30.42.png)
+![Screenshot 12](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.31.26.png)
+![Screenshot 13](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.31.40.png)
+![Screenshot 14](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.31.44.png)
+![Screenshot 15](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.42.39.png)
+![Screenshot 16](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.48.52.png)
+![Screenshot 17](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.49.24.png)
+![Screenshot 18](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.50.57.png)
+![Screenshot 19](docs/images/screenshot/Screenshot%202026-03-11%20at%2012.51.06.png)
+![Screenshot 20](docs/images/screenshot/Screenshot%202026-03-11%20at%2013.19.21.png)
+![Screenshot 21](docs/images/screenshot/Screenshot%202026-03-11%20at%2013.19.43.png)
+![Screenshot 22](docs/images/screenshot/Screenshot%202026-03-11%20at%2013.29.27.png)
+![Screenshot 23](docs/images/screenshot/Screenshot%202026-03-11%20at%2013.32.10.png)
+![Screenshot 24](docs/images/screenshot/Screenshot%202026-03-11%20at%2014.35.17.png)
+
+
 ## 📞 联系我们
 
 - 📖 **文档**：[查看完整文档](README.md)
 - 🐛 **问题反馈**：提交 Issue
 - 💬 **社区讨论**：加入我们的讨论群
+
+
