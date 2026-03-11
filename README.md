@@ -4,7 +4,11 @@
 
 📖 **[查看完整产品介绍 →](product.md)** | 包含功能截图、核心能力详解、功能对比表
 
+**主对话界面：**
+![Web 对话界面](docs/images/screenshot/chat-ui.png)
 ---
+
+
 
 ## ✨ 为什么选择 X-Agent？
 
