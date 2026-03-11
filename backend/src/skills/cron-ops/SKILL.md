@@ -56,7 +56,6 @@ async def run_task():
         channel_type=ChannelType.WEB_CHAT,
         source=InvokeSource.CRON,
     )
-    )
     if result.error:
         return {"success": False, "error": result.error}
 
