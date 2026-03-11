@@ -26,6 +26,94 @@ from .agent_workspace import create_agent_workspace
 agent_app = typer.Typer()
 console = Console()
 
+def _add_agent_to_config(
+    agent_id: str,
+    agent_name: str,
+    persona: str,
+    workspace: str,
+) -> None:
+    """将新 Agent 配置添加到 backend/x-agent.yaml 文件。
+    
+    Args:
+        agent_id: Agent ID
+        agent_name: Agent 名称
+        persona: Agent 人设
+        workspace: 工作空间路径
+    """
+    import os
+    from pathlib import Path
+    
+    # 查找 x-agent.yaml 文件
+    config_paths = [
+        Path("backend/x-agent.yaml"),
+        Path("../backend/x-agent.yaml"),
+        Path(__file__).parent.parent.parent / "backend" / "x-agent.yaml",
+    ]
+    
+    config_file = None
+    for path in config_paths:
+        if path.exists():
+            config_file = path
+            break
+    
+    if not config_file:
+        raise FileNotFoundError("找不到 backend/x-agent.yaml 配置文件")
+    
+    # 读取现有配置
+    with open(config_file, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    # 检查 Agent 是否已存在
+    if f"id: {agent_id}" in content:
+        raise ValueError(f"Agent ID '{agent_id}' 已存在于配置文件中")
+    
+    # 构建新的 Agent 配置块
+    agent_config = f"""
+    - id: {agent_id}
+      name: "{agent_name}"
+      type: specialized
+      persona: "{persona}"
+      workspace: "{workspace}"
+      features: ""
+      model:
+        name: primary
+        temperature: 0.7
+      enable_memory: true
+      enable_plan: false
+"""
+    
+    # 在 agents 列表末尾添加新配置
+    # 查找 agents: 后的内容
+    lines = content.split("\n")
+    insert_index = -1
+    in_agents_section = False
+    indent_level = 0
+    
+    for i, line in enumerate(lines):
+        if line.strip() == "agents:":
+            in_agents_section = True
+            # 计算缩进级别
+            indent_level = len(line) - len(line.lstrip())
+            continue
+        
+        if in_agents_section:
+            # 如果遇到同级别或更少缩进的其他配置，说明 agents 列表结束
+            current_indent = len(line) - len(line.lstrip()) if line.strip() else indent_level + 4
+            if line.strip() and current_indent <= indent_level and not line.strip().startswith("-"):
+                insert_index = i
+                break
+    
+    # 如果没找到结束位置，就在文件末尾添加
+    if insert_index == -1:
+        insert_index = len(lines)
+    
+    # 插入新配置
+    lines.insert(insert_index, agent_config.rstrip())
+    
+    # 写回文件
+    with open(config_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
 
 @agent_app.command("create")
 def agent_create(
@@ -101,7 +189,20 @@ async def _create_agent(
             console.print(f"[green]✓ Agent 已在 Backend 注册成功[/green]")
 
     except httpx.ConnectError:
-        console.print(f"[yellow]⚠ 无法连接到 {config.server_url}，跳过 Backend 注册，仅初始化本地工作空间[/yellow]")
+        console.print(f"[red]无法连接到 {config.server_url}[/red]")
+
+    # ── 自动添加到 x-agent.yaml 配置文件 ─────────────────────────────────
+    try:
+        _add_agent_to_config(
+            agent_id=resolved_agent_id,
+            agent_name=resolved_name,
+            persona=resolved_persona,
+            workspace=resolved_workspace,
+        )
+        console.print(f"[green]✓ Agent 配置已添加到 x-agent.yaml[/green]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ 添加配置到 x-agent.yaml 失败: {e}[/yellow]")
+        console.print("[dim]请手动将 Agent 配置添加到 backend/x-agent.yaml[/dim]")
 
     # ── 初始化本地工作空间 ───────────────────────────────────────────────
     created_files = create_agent_workspace(

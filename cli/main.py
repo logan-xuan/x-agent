@@ -7,6 +7,7 @@
 - session: 会话管理
 - agent: Agent 管理
 - cron: 定时任务管理
+- restart: 服务重启
 - status: 系统状态
 
 用法::
@@ -15,6 +16,7 @@
     x-agent chat "你好"               # 单次对话
     x-agent config show               # 查看配置
     x-agent status                    # 系统状态
+    x-agent restart                   # 重启服务
     x-agent cron list                 # 查看定时任务
 """
 
@@ -29,6 +31,7 @@ app = typer.Typer(
 [bold]核心命令:[/bold]
   [green]chat[/green]     与 Agent 对话（支持单次/交互式）
   [green]agent[/green]    管理多智能体（创建/查看）
+  [green]restart[/green]  重启服务（后端/前端/全部）
   [green]cron[/green]     定时任务管理（创建/执行/暂停/恢复/删除）
 
 [bold]辅助命令:[/bold]
@@ -40,6 +43,7 @@ app = typer.Typer(
 [bold]快速开始:[/bold]
   x-agent chat "你好，请帮我写一段 Python 代码"
   x-agent agent create -n "代码助手"
+  x-agent restart
   x-agent cron create -n "备份" -s "0 2 * * *" -f "workspace:backup.py:run" -y
   x-agent status
 
@@ -59,12 +63,14 @@ def _register_commands() -> None:
     from .commands.agent import agent_app
     from .commands.status import status_app
     from .commands.cron import cron_app
+    from .commands.restart import restart_app
 
     app.add_typer(chat_app, name="chat", help="对话命令")
     app.add_typer(config_app, name="config", help="配置管理")
     app.add_typer(tools_app, name="tools", help="工具管理")
     app.add_typer(session_app, name="session", help="会话管理")
     app.add_typer(agent_app, name="agent", help="Agent 管理")
+    app.add_typer(restart_app, name="restart", help="服务重启")
     app.add_typer(status_app, name="status", help="系统状态")
     app.add_typer(cron_app, name="cron", help="定时任务管理")
 
