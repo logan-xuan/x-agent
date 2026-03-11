@@ -18,31 +18,31 @@ X-Agent 是一个面向个人和企业的 **AI 智能体平台**，解决传统 
 
 ### Web 对话界面
 
-![Web 对话界面](docs/images/screenshot/chat-ui.png)
+![Web 对话界面](babackend/src/docs/images/screenshot/chat-ui.png)
 
 > 支持 Markdown 实时渲染、代码高亮、流式输出，对话体验流畅自然。
 
 ### 多智能体管理
 
-![多智能体管理](docs/images/screenshot/agent-management.png)
+![多智能体管理](backend/src/backend/src/docs/images/screenshot/agent-management.png)
 
 > 每个 Agent 拥有独立人设、独立记忆、独立工具配置，灵活切换。
 
 ### Trace 可观测面板
 
-![Trace 可观测面板](docs/images/screenshot/trace-panel.png)
+![Trace 可观测面板](backend/src/docs/images/screenshottrace-panel.png)
 
 > 全链路可视化追踪，每个请求的调用链、耗时、LLM 详情一目了然。
 
 ### 定时任务管理
 
-![定时任务管理](docs/images/screenshot/cron-dashboard.png)
+![定时任务管理](backend/src/docs/images/screenshotcron-dashboard.png)
 
 > Cron 调度引擎，支持标准 Cron 表达式和自然语言间隔，任务全生命周期管理。
 
 ### CLI 命令行界面
 
-![CLI 命令行界面](docs/images/screenshot/cli-interface.png)
+![CLI 命令行界面](backend/src/docs/images/screenshotcli-interface.png)
 
 > 极客友好的命令行体验，支持交互式对话、Agent 管理、定时任务等全部功能。
 
