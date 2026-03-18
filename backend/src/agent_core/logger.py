@@ -8,7 +8,7 @@
 - 实时订阅（asyncio.Queue）
 
 验收条件:
-- 内存日志限制：1000 条通用日志，100 条 LLM 调用，500 条工具调用
+- 内存日志限制：1000 条通用日志，500 条 LLM 调用，500 条工具调用
 - 支持按 trace_id, category, level 查询
 - 支持实时订阅新日志
 - 文件持久化到 logs/agent-core.log
@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import threading
 import uuid
 from collections import deque
@@ -34,6 +35,14 @@ from .types import (
     LLMCallLog,
     ToolCallLog,
 )
+
+# 模块级 stderr logger，用于记录加载异常（不依赖 AgentLogger 自身）
+_stderr_logger = logging.getLogger("agent_core.logger.bootstrap")
+if not _stderr_logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
+    _stderr_logger.addHandler(_handler)
+    _stderr_logger.setLevel(logging.WARNING)
 
 
 # 延迟导入避免循环依赖
@@ -82,7 +91,7 @@ class AgentLogger:
     
     # 默认大小限制
     DEFAULT_MAX_LOGS = 1000
-    DEFAULT_MAX_LLM_CALLS = 100
+    DEFAULT_MAX_LLM_CALLS = 500
     DEFAULT_MAX_TOOL_CALLS = 500
     
     # 单例支持
@@ -281,9 +290,17 @@ class AgentLogger:
                                     call_id = entry.get('call_id')
                                     if call_id and call_id in tool_calls:
                                         tool_calls[call_id].update(entry)
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError as json_err:
+                                _stderr_logger.warning(
+                                    "Skipped malformed JSON line in %s: %s",
+                                    log_file.name, str(json_err)[:100],
+                                )
                                 continue
-                except Exception:
+                except Exception as file_err:
+                    _stderr_logger.warning(
+                        "Failed to read log file %s: %s",
+                        log_file, str(file_err)[:200],
+                    )
                     continue
             
             # 按时间排序，只保留最近的记录（受内存限制）
@@ -292,10 +309,12 @@ class AgentLogger:
             # 转换并添加到内存（使用 log() 方法会触发重复写文件，这里直接操作内存）
             with self._lock:
                 # 加载通用日志
+                skipped_log_count = 0
                 for entry_dict in log_entries[:self.DEFAULT_MAX_LOGS]:
                     try:
                         # 跳过没有必需字段的记录
                         if not entry_dict.get('timestamp'):
+                            skipped_log_count += 1
                             continue
                         
                         log_entry = LogEntry(
@@ -314,14 +333,27 @@ class AgentLogger:
                         
                         if log_entry.trace_id:
                             self._trace_log_index.setdefault(log_entry.trace_id, []).append(log_entry.id)
-                    except Exception:
+                    except Exception as log_err:
+                        _stderr_logger.warning(
+                            "Failed to parse log entry (id=%s): %s",
+                            entry_dict.get('id', '?'), str(log_err)[:200],
+                        )
                         continue
                 
+                if skipped_log_count:
+                    _stderr_logger.warning("Skipped %d log entries without timestamp", skipped_log_count)
+                
                 # 加载 LLM 调用
+                skipped_llm_count = 0
                 for call_id, llm_dict in list(llm_calls.items())[:self.DEFAULT_MAX_LLM_CALLS]:
                     try:
                         # 跳过没有必需字段的记录
                         if not llm_dict.get('timestamp'):
+                            skipped_llm_count += 1
+                            _stderr_logger.warning(
+                                "Skipped LLM call without timestamp: call_id=%s, trace_id=%s",
+                                call_id, llm_dict.get('trace_id', '?'),
+                            )
                             continue
                         
                         llm_log = LLMCallLog(
@@ -343,14 +375,23 @@ class AgentLogger:
                         
                         if llm_log.trace_id:
                             self._trace_llm_index.setdefault(llm_log.trace_id, []).append(call_id)
-                    except Exception:
+                    except Exception as llm_err:
+                        _stderr_logger.warning(
+                            "Failed to parse LLM call (call_id=%s, trace_id=%s): %s",
+                            call_id, llm_dict.get('trace_id', '?'), str(llm_err)[:200],
+                        )
                         continue
                 
+                if skipped_llm_count:
+                    _stderr_logger.warning("Skipped %d LLM calls without timestamp", skipped_llm_count)
+                
                 # 加载工具调用
+                skipped_tool_count = 0
                 for call_id, tool_dict in list(tool_calls.items())[:self.DEFAULT_MAX_TOOL_CALLS]:
                     try:
                         # 跳过没有必需字段的记录
                         if not tool_dict.get('timestamp'):
+                            skipped_tool_count += 1
                             continue
                         
                         tool_log = ToolCallLog(
@@ -376,11 +417,21 @@ class AgentLogger:
                         
                         if tool_log.llm_call_id:
                             self._llm_tool_index.setdefault(tool_log.llm_call_id, []).append(call_id)
-                    except Exception:
+                    except Exception as tool_err:
+                        _stderr_logger.warning(
+                            "Failed to parse tool call (call_id=%s): %s",
+                            call_id, str(tool_err)[:200],
+                        )
                         continue
+                
+                if skipped_tool_count:
+                    _stderr_logger.warning("Skipped %d tool calls without timestamp", skipped_tool_count)
         
-        except Exception:
-            pass  # 静默处理加载错误，不影响服务启动
+        except Exception as load_err:
+            _stderr_logger.error(
+                "Failed to load history from log files: %s", str(load_err)[:300],
+                exc_info=True,
+            )
     
     # ================================================================
     # LoggerPort 接口实现
@@ -396,6 +447,17 @@ class AgentLogger:
             entry.id = str(uuid.uuid4())[:12]
         
         with self._lock:
+            # 如果 deque 已满，淘汰最旧记录前先清理其索引
+            if len(self._logs) == self._logs.maxlen:
+                evicted = self._logs[0]
+                if evicted.trace_id and evicted.trace_id in self._trace_log_index:
+                    try:
+                        self._trace_log_index[evicted.trace_id].remove(evicted.id)
+                    except ValueError:
+                        pass
+                    if not self._trace_log_index[evicted.trace_id]:
+                        del self._trace_log_index[evicted.trace_id]
+            
             self._logs.append(entry)
             
             if entry.trace_id:
@@ -430,6 +492,18 @@ class AgentLogger:
         log.status = "pending"
         
         with self._lock:
+            # 如果 deque 已满，淘汰最旧记录前先清理其索引
+            if len(self._llm_calls) == self._llm_calls.maxlen:
+                evicted = self._llm_calls[0]
+                self._llm_call_map.pop(evicted.call_id, None)
+                if evicted.trace_id and evicted.trace_id in self._trace_llm_index:
+                    try:
+                        self._trace_llm_index[evicted.trace_id].remove(evicted.call_id)
+                    except ValueError:
+                        pass
+                    if not self._trace_llm_index[evicted.trace_id]:
+                        del self._trace_llm_index[evicted.trace_id]
+            
             self._llm_calls.append(log)
             self._llm_call_map[log.call_id] = log
             
@@ -551,6 +625,25 @@ class AgentLogger:
         log.status = "executing"
         
         with self._lock:
+            # 如果 deque 已满，淘汰最旧记录前先清理其索引
+            if len(self._tool_calls) == self._tool_calls.maxlen:
+                evicted = self._tool_calls[0]
+                self._tool_call_map.pop(evicted.call_id, None)
+                if evicted.trace_id and evicted.trace_id in self._trace_tool_index:
+                    try:
+                        self._trace_tool_index[evicted.trace_id].remove(evicted.call_id)
+                    except ValueError:
+                        pass
+                    if not self._trace_tool_index[evicted.trace_id]:
+                        del self._trace_tool_index[evicted.trace_id]
+                if evicted.llm_call_id and evicted.llm_call_id in self._llm_tool_index:
+                    try:
+                        self._llm_tool_index[evicted.llm_call_id].remove(evicted.call_id)
+                    except ValueError:
+                        pass
+                    if not self._llm_tool_index[evicted.llm_call_id]:
+                        del self._llm_tool_index[evicted.llm_call_id]
+            
             self._tool_calls.append(log)
             self._tool_call_map[log.call_id] = log
             

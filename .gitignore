@@ -86,3 +86,4 @@ quick_*.sh
 commit_*.sh
 restart-*.sh
 git_commit.py
+.gitnexus

@@ -48,41 +48,54 @@ class FetchWebContentTool(BaseTool):
         Args:
             workspace_path: Path to workspace directory. If None, loads from x-agent.yaml config.
         """
-        if workspace_path is None:
-            # Load workspace path from configuration
-            try:
-                import sys
-                from pathlib import Path as SysPath
-                
-                # Add backend/src to path temporarily for config loading
-                backend_src = str(SysPath(__file__).parent.parent.parent)
-                if backend_src not in sys.path:
-                    sys.path.insert(0, backend_src)
-                
-                from config.loader import load_config
-                from config.models import Config
-                
-                # Find and load x-agent.yaml
-                config_file = SysPath(__file__).parent.parent.parent.parent / "x-agent.yaml"
-                config = load_config(config_file)
-                
-                # Extract workspace path from config
-                if config.workspace and config.workspace.path:
-                    workspace_path = Path(config.workspace.path).expanduser().resolve()
-                else:
-                    workspace_path = Path.cwd() / "workspace"
-                
-                # Remove temporary path
-                if backend_src in sys.path:
-                    sys.path.remove(backend_src)
-                    
-            except Exception as e:
-                logger.warning(f"Failed to load workspace from config, using default: {e}")
-                workspace_path = Path.cwd() / "workspace"
+        resolved_path: Path | None = None
+
+        if workspace_path is not None:
+            resolved_path = Path(workspace_path)
         else:
-            workspace_path = Path(workspace_path)
-        
-        self.workspace_path = workspace_path
+            # 从当前请求上下文获取 agent 专属 workspace
+            try:
+                from ...conversation.context import get_current_context
+                context = get_current_context()
+                if context is not None and context.agent_id:
+                    try:
+                        from ...conversation.multi_agent_context_loader import get_multi_agent_context_loader
+                        loader = get_multi_agent_context_loader()
+                        if loader is not None:
+                            agent_ctx = loader.get_agent_context(context.agent_id)
+                            if agent_ctx is not None:
+                                resolved_path = Path(str(agent_ctx.workspace_path)).expanduser().resolve()
+                    except Exception:
+                        pass
+
+                    if resolved_path is None:
+                        try:
+                            from ...config.manager import get_config
+                            config = get_config()
+                            if hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents:
+                                for agent_config in config.multi_agent.agents:
+                                    if agent_config.id == context.agent_id and agent_config.workspace:
+                                        resolved_path = Path(agent_config.workspace).expanduser().resolve()
+                                        break
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # Fallback: 全局配置
+            if resolved_path is None:
+                try:
+                    from ...config.manager import ConfigManager
+                    config = ConfigManager().config
+                    if config.workspace and config.workspace.path:
+                        resolved_path = Path(config.workspace.path).expanduser().resolve()
+                    else:
+                        resolved_path = Path.cwd() / "workspace"
+                except Exception as e:
+                    logger.warning(f"Failed to load workspace from config, using default: {e}")
+                    resolved_path = Path.cwd() / "workspace"
+
+        self.workspace_path = resolved_path
         # Enable User-Agent rotation to avoid anti-bot detection
         self._http_client = HTTPClient(rotate_user_agent=True)
         self._html_parser = HTMLParser()

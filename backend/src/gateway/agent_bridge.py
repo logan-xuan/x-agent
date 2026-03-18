@@ -442,11 +442,14 @@ class AgentBridge:
         """解析 Agent 对应的 workspace 路径。
 
         多 Agent 场景下，每个 agent 有独立的 workspace 目录。
-        通过 app.state.multi_agent_context_loader 获取已初始化的 agent workspace。
-        单 Agent 场景或解析失败时返回 None，由调用方 fallback 到全局默认 workspace。
+
+        解析优先级：
+        1. MultiAgentContextLoader 中已初始化的 agent workspace（最可靠）
+        2. AgentInfo.workspace 字段（从配置加载，作为 fallback）
+        3. 返回 None，由调用方 fallback 到全局默认 workspace
 
         Args:
-            agent_info: Agent 信息，包含 agent_id。
+            agent_info: Agent 信息，包含 agent_id 和 workspace。
 
         Returns:
             agent 对应的 workspace 路径字符串，无法解析时返回 None。
@@ -457,50 +460,56 @@ class AgentBridge:
 
         logger.info(
             "[workspace-debug] _resolve_agent_workspace: start",
-            extra={"agent_id": agent_info.agent_id},
+            extra={
+                "agent_id": agent_info.agent_id,
+                "agent_info_workspace": agent_info.workspace,
+            },
         )
 
+        # 优先级 1: 从 MultiAgentContextLoader 获取（已初始化、路径已解析）
         try:
             from ..config.manager import get_config
             config = get_config()
 
             has_multi_agent = hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents
-            logger.info(
-                "[workspace-debug] multi_agent config check",
-                extra={
-                    "has_multi_agent": has_multi_agent,
-                    "multi_agent": str(config.multi_agent) if hasattr(config, 'multi_agent') else "N/A",
-                },
-            )
-            if not has_multi_agent:
-                return None
+            if has_multi_agent:
+                from ..conversation.multi_agent_context_loader import get_multi_agent_context_loader
+                multi_agent_context_loader = get_multi_agent_context_loader()
 
-            from ..conversation.multi_agent_context_loader import get_multi_agent_context_loader
-            multi_agent_context_loader = get_multi_agent_context_loader()
-            logger.info(
-                "[workspace-debug] multi_agent_context_loader lookup",
-                extra={
-                    "loader_found": multi_agent_context_loader is not None,
-                },
-            )
-            if multi_agent_context_loader is None:
-                return None
+                if multi_agent_context_loader is not None:
+                    agent_context = multi_agent_context_loader.get_agent_context(agent_info.agent_id)
 
-            agent_context = multi_agent_context_loader.get_agent_context(agent_info.agent_id)
-            logger.info(
-                "[workspace-debug] get_agent_context result",
-                extra={
-                    "agent_id": agent_info.agent_id,
-                    "agent_context_found": agent_context is not None,
-                    "available_agent_ids": str(list(multi_agent_context_loader.agent_contexts.keys())),
-                },
-            )
-            if agent_context is None:
-                return None
+                    if agent_context is not None:
+                        workspace_path = str(agent_context.workspace_path)
+                        logger.info(
+                            "[workspace-debug] Resolved from MultiAgentContextLoader",
+                            extra={
+                                "agent_id": agent_info.agent_id,
+                                "workspace_path": workspace_path,
+                            },
+                        )
+                        return workspace_path
 
-            workspace_path = str(agent_context.workspace_path)
+                    logger.info(
+                        "[workspace-debug] Agent not found in MultiAgentContextLoader",
+                        extra={
+                            "agent_id": agent_info.agent_id,
+                            "available_agent_ids": str(list(multi_agent_context_loader.agent_contexts.keys())),
+                        },
+                    )
+
+        except Exception as exc:
+            logger.warning(
+                "[workspace-debug] MultiAgentContextLoader lookup failed",
+                extra={"agent_id": agent_info.agent_id, "error": str(exc)},
+            )
+
+        # 优先级 2: 使用 AgentInfo 自身携带的 workspace 字段（从配置加载）
+        if agent_info.workspace:
+            from pathlib import Path
+            workspace_path = str(Path(agent_info.workspace).expanduser())
             logger.info(
-                "[workspace-debug] Resolved agent-specific workspace SUCCESS",
+                "[workspace-debug] Fallback to AgentInfo.workspace",
                 extra={
                     "agent_id": agent_info.agent_id,
                     "workspace_path": workspace_path,
@@ -508,12 +517,11 @@ class AgentBridge:
             )
             return workspace_path
 
-        except Exception as exc:
-            logger.warning(
-                "[workspace-debug] Failed to resolve agent workspace, will use default",
-                extra={"error": str(exc)},
-            )
-            return None
+        logger.info(
+            "[workspace-debug] No workspace resolved, will use global default",
+            extra={"agent_id": agent_info.agent_id},
+        )
+        return None
 
     def _create_context_adapter(
         self,

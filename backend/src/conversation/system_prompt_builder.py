@@ -296,7 +296,13 @@ class SystemPromptBuilder:
     def _is_agent_born(self) -> bool:
         """判断 Agent 是否已完成初始化（"出生"）.
 
-        标准：IDENTITY.md 存在且有实际内容（非空白）。
+        标准：IDENTITY.md 存在且包含真正填写过的身份信息。
+        仅文件存在或包含模板占位符（Name 字段为空）不算已出生。
+
+        检测逻辑：
+        1. IDENTITY.md 必须存在
+        2. 文件中必须包含 **Name:** 字段且其值非空
+           （模板初始状态下 Name 字段为空，表示 agent 尚未完成身份设定）
 
         Returns:
             True 表示 Agent 已出生，不再需要 BOOTSTRAP.md
@@ -306,7 +312,15 @@ class SystemPromptBuilder:
             return False
         try:
             content = identity_path.read_text(encoding="utf-8").strip()
-            return len(content) > 0
+            if not content:
+                return False
+
+            # 检查是否有真正填写过的 Name/姓名 字段
+            name_value = _extract_field(content, "Name")
+            if not name_value and "姓名" in content:
+                return True
+            return bool(name_value)
+
         except Exception:
             return False
 
@@ -454,6 +468,8 @@ class SystemPromptBuilder:
             "",
             "你尚未完成初始化。以下是你的出生引导，你必须严格遵循这些指引，"
             "与用户对话来完成初始化。不要像普通助手一样回复，不要说「有什么可以帮你的」。",
+            "",
+            f"## {bootstrap_path}",
             "",
             bootstrap_content,
             "",
@@ -629,14 +645,29 @@ def _truncate_content(
 
 
 def _extract_field(content: str, field_name: str) -> str:
-    """从 Markdown 内容中提取 **FieldName:** value 格式的字段.
+    """从 Markdown 内容中提取身份字段值.
+
+    支持多种常见 Markdown 格式：
+    - ``**Name:** value``  （冒号在加粗标记内）
+    - ``**Name**: value``  （冒号在加粗标记外）
+    - ``- **Name:** value`` （列表项格式）
+    - ``- **Name**: value`` （列表项 + 冒号在外）
 
     Args:
         content: Markdown 文件内容
-        field_name: 字段名（如 Name、Creature、Vibe、Emoji）
+        field_name: 字段名（如 Name、姓名、Creature、Vibe、Emoji）
 
     Returns:
         字段值，未找到时返回空字符串
     """
+    # 模式1: **FieldName:** value（冒号在加粗标记内）
     match = re.search(rf"\*\*{field_name}:\*\*\s*(.+)", content)
-    return match.group(1).strip() if match else ""
+    if match:
+        return match.group(1).strip()
+
+    # 模式2: **FieldName**: value（冒号在加粗标记外）
+    match = re.search(rf"\*\*{field_name}\*\*:\s*(.+)", content)
+    if match:
+        return match.group(1).strip()
+
+    return ""

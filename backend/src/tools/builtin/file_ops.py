@@ -79,11 +79,55 @@ def _is_protected_file(file_path: Path) -> bool:
 
 
 def _get_workspace_path() -> Path:
-    """获取配置的 workspace 路径.
-    
+    """获取当前 agent 的 workspace 路径.
+
+    解析优先级：
+    1. 从当前请求上下文获取 agent_id，查找对应的 agent workspace
+    2. 全局配置的 workspace.path（fallback）
+
     Returns:
         workspace 路径，如果配置加载失败则返回默认路径
     """
+    # 优先级 1: 从当前请求上下文获取 agent 专属 workspace
+    try:
+        from ...conversation.context import get_current_context
+        context = get_current_context()
+        if context is not None and context.agent_id:
+            # 尝试从 MultiAgentContextLoader 获取
+            try:
+                from ...conversation.multi_agent_context_loader import get_multi_agent_context_loader
+                loader = get_multi_agent_context_loader()
+                if loader is not None:
+                    agent_context = loader.get_agent_context(context.agent_id)
+                    if agent_context is not None:
+                        resolved = Path(str(agent_context.workspace_path)).expanduser().resolve()
+                        logger.debug(
+                            "Resolved agent workspace for file ops",
+                            extra={"agent_id": context.agent_id, "workspace": str(resolved)},
+                        )
+                        return resolved
+            except Exception:
+                pass
+
+            # 尝试从配置中直接查找 agent workspace
+            try:
+                from ...config.manager import get_config
+                config = get_config()
+                if hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents:
+                    for agent_config in config.multi_agent.agents:
+                        if agent_config.id == context.agent_id and agent_config.workspace:
+                            resolved = Path(agent_config.workspace).expanduser().resolve()
+                            logger.debug(
+                                "Resolved agent workspace from config for file ops",
+                                extra={"agent_id": context.agent_id, "workspace": str(resolved)},
+                            )
+                            return resolved
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 优先级 2: 全局配置的 workspace.path
     try:
         from ...config.manager import ConfigManager
         workspace_path = ConfigManager().config.workspace.path

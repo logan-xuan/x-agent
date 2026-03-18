@@ -40,19 +40,50 @@ def _get_tools_config():
 
 
 def _get_workspace_path() -> str:
-    """Get workspace path from config manager.
-    
+    """获取当前 agent 的 workspace 路径.
+
+    解析优先级：
+    1. 从当前请求上下文获取 agent_id，查找对应的 agent workspace
+    2. 全局配置的 workspace.path（fallback）
+
     Returns:
         Workspace path string, defaults to ~/.x-agent/workspace
     """
+    from pathlib import Path
+
+    # 优先级 1: 从当前请求上下文获取 agent 专属 workspace
+    try:
+        from ...conversation.context import get_current_context
+        context = get_current_context()
+        if context is not None and context.agent_id:
+            try:
+                from ...conversation.multi_agent_context_loader import get_multi_agent_context_loader
+                loader = get_multi_agent_context_loader()
+                if loader is not None:
+                    agent_context = loader.get_agent_context(context.agent_id)
+                    if agent_context is not None:
+                        return str(Path(str(agent_context.workspace_path)).expanduser().resolve())
+            except Exception:
+                pass
+
+            try:
+                from ...config.manager import get_config
+                config = get_config()
+                if hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents:
+                    for agent_config in config.multi_agent.agents:
+                        if agent_config.id == context.agent_id and agent_config.workspace:
+                            return str(Path(agent_config.workspace).expanduser().resolve())
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 优先级 2: 全局配置
     try:
         from ...config.manager import ConfigManager
         workspace_path = ConfigManager().config.workspace.path
-        # Expand ~ to user home directory
-        from pathlib import Path
         return str(Path(workspace_path).expanduser().resolve())
     except Exception:
-        from pathlib import Path
         return str(Path("~/.x-agent/workspace").expanduser().resolve())
 
 
