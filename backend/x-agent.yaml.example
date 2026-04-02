@@ -177,6 +177,24 @@ multi_agent:
           "-4839648923": { "enabled": true }
           "-5256168581": { "enabled": true }
           "-5181512010": { "enabled": true }
+    
+    # 钉钉渠道（Stream 长连接模式）
+    - id: dingtalk_channel
+      type: dingtalk
+      protocol: stream
+      enabled: false
+      config:
+        app_key: "your-dingtalk-app-key"
+        app_secret: "your-dingtalk-app-secret"
+    
+    # 飞书渠道（WebSocket 长连接模式）
+    - id: feishu_channel
+      type: feishu
+      protocol: stream
+      enabled: false
+      config:
+        app_id: "your-feishu-app-id"
+        app_secret: "your-feishu-app-secret"
   
   # Agent 绑定规则（channel + peer -> agent）
   bindings:
@@ -203,3 +221,19 @@ multi_agent:
         peer:
           kind: group
           id: "-5181512010"
+    
+    # 钉钉渠道：所有用户绑定到 main-agent
+    - agent_id: main-agent
+      match:
+        channel: dingtalk_channel
+        peer:
+          kind: group
+          id: "*"
+    
+    # 飞书渠道：所有用户绑定到 main-agent
+    - agent_id: main-agent
+      match:
+        channel: feishu_channel
+        peer:
+          kind: group
+          id: "*"

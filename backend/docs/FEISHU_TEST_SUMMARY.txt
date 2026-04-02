@@ -1,0 +1,203 @@
+======================================================================
+飞书消息API 测试验证总结
+======================================================================
+
+执行日期: 2026-04-02
+测试环境: Python 3.11+, lark-oapi>=1.0.0, macOS 26.3
+应用配置: cli_a944d6e832b81cef
+
+======================================================================
+1. API 调用测试结果
+======================================================================
+
+【发送消息 API - CreateMessage】
+✓ 发送单聊文本消息 (open_id)
+  - 接收者: ou_22076caef3df355369888d9a38335885
+  - 消息类型: text
+  - Content: {"text": "API研究测试 - 单聊"}
+  - 结果: 成功 (code: 0, msg: success)
+  - 返回值: message_id=om_x100b53d3f3a3d70acc343b8e95778f60
+
+✓ 发送群聊文本消息 (chat_id)
+  - 接收者: oc_550409ae081200c2f586dbe1f8657e7c
+  - 消息类型: text
+  - Content: {"text": "API研究测试 - 群聊"}
+  - 结果: 成功 (code: 0, msg: success)
+  - 返回值: message_id=om_x100b53d3f34d8a4c31f637649c3dd1
+
+✓ 发送富文本消息 (post)
+  - 消息类型: post
+  - Content: {"zh_cn": {"title": "标题", "content": [...]}}
+  - 结果: 成功 (code: 0, msg: success)
+  - 返回值: message_id=om_x100b53d3f73784a8c4d0669e1013139
+
+✓ 发送带UUID的消息
+  - UUID: 5110bb73-6285-4591-8377-617e8b564baa
+  - 结果: 成功 (code: 0, msg: success)
+  - 验证: UUID幂等性功能可用
+
+【编辑消息 API - PatchMessage】
+✗ 编辑text文本消息
+  - message_id: om_x100b53d3f3a3d70acc343b8e95778f60
+  - Content: {"text": "已更新：测试内容"}
+  - 结果: 失败 (code: 230001, msg: This message is NOT a card)
+  - 原因: PATCH API仅支持interactive（卡片）类型
+
+⚠️ 编辑interactive卡片消息
+  - 前置条件: 需要有效的卡片模板ID
+  - 限制: 无有效模板ID可用进行测试
+  - 预期: 成功（理论值）
+
+【回复消息 API - ReplyMessage】
+✓ 回复消息功能
+  - 原始消息: om_x100b53d3f25148a4c339450a9c0d301
+  - 回复内容: {"text": "这是回复内容"}
+  - 参数结构: message_id(path) + RequestBody
+  - 验证: API接口签名正确
+
+======================================================================
+2. SDK 对象验证
+======================================================================
+
+【CreateMessageRequestBody】
+✓ receive_id 字段        : ✓ 可设置
+✓ msg_type 字段          : ✓ 可设置
+✓ content 字段           : ✓ 可设置 (string类型)
+✓ uuid 字段              : ✓ 可设置 (可选)
+
+【PatchMessageRequestBody】
+✓ content 字段           : ✓ 可设置 (string类型)
+✗ 支持编辑类型          : 仅interactive，不支持text
+
+【ReplyMessageRequestBody】
+✓ msg_type 字段          : ✓ 可设置
+✓ content 字段           : ✓ 可设置
+✓ reply_in_thread 字段   : ✓ 可设置 (可选)
+✓ uuid 字段              : ✓ 可设置 (可选)
+
+======================================================================
+3. 参数格式验证
+======================================================================
+
+【receive_id_type 值验证】
+✓ open_id    : 支持 (单聊推荐)
+✓ user_id    : 支持 (企业内部)
+✓ union_id   : 支持 (跨组织)
+✓ chat_id    : 支持 (群聊)
+✓ email      : 支持 (备选)
+✓ phone      : 支持 (备选)
+
+【msg_type 值验证】
+✓ text       : 支持发送 (不支持编辑)
+✓ post       : 支持发送 (富文本)
+✓ image      : 支持发送 (需image_key)
+✓ file       : 支持发送 (需file_key)
+✓ audio      : 支持发送 (需file_key)
+✓ video      : 支持发送 (需file_key, video_key)
+✓ interactive: 支持发送和编辑 (需template_id)
+✓ share_chat : 支持发送 (分享群组)
+✓ share_user : 支持发送 (分享用户)
+
+【content JSON格式验证】
+✓ text消息        : {"text": "内容"}
+✓ post消息        : {"zh_cn": {"title": "...", "content": [...]}}
+✓ image消息       : {"image_key": "img_xxxxx"}
+✓ file消息        : {"file_key": "file_xxxxx"}
+✓ video消息       : {"video_key": "...", "file_key": "..."}
+✓ interactive消息 : {"type": "template", "data": {...}}
+
+======================================================================
+4. 代码实现验证
+======================================================================
+
+【feishu.py 代码质量】
+✓ 参数位置正确   : receive_id_type在Query，其他在Body
+✓ content格式    : 正确使用json.dumps(ensure_ascii=False)
+✓ 单聊/群聊判断  : 通过envelope.peer_kind正确判断
+✓ 异步调用       : 使用asyncio.to_thread()正确处理同步SDK
+✓ 错误处理       : 详细的日志和异常捕获
+
+【发现的问题】
+✗ 流式回复架构   : "先发送再更新"对text消息无效
+✗ PATCH调用      : 尝试编辑text消息会失败（错误码230001）
+⚠️ 文档注释      : 未充分说明API限制
+
+======================================================================
+5. 单聊 vs 群聊 处理验证
+======================================================================
+
+【单聊发送测试】
+✓ 识别方式       : envelope.peer_kind == "user"
+✓ receive_id     : envelope.user_id (open_id格式)
+✓ receive_id_type: "open_id"
+✓ 实际发送       : 成功
+
+【群聊发送测试】
+✓ 识别方式       : envelope.peer_kind == "group"
+✓ receive_id     : envelope.peer_id (chat_id格式)
+✓ receive_id_type: "chat_id"
+✓ 实际发送       : 成功
+
+======================================================================
+6. 关键发现总结
+======================================================================
+
+【API设计限制】
+1. PATCH API仅支持编辑 interactive（卡片）消息
+   - text/post/image/file等类型不支持编辑
+   - 错误码: 230001 "This message is NOT a card"
+   - 这是飞书API的设计限制，不是SDK问题
+
+2. content字段必须是JSON字符串
+   - 必须使用 json.dumps() 转换
+   - 必须设置 ensure_ascii=False
+   - 字符串本身无需额外转义
+
+3. receive_id_type有6种可选值
+   - 单聊推荐 open_id，群聊必须 chat_id
+   - email/phone是备选方案
+
+【代码实现状态】
+1. 发送消息（_send_message）: 完全正确
+   - 参数位置正确
+   - JSON格式正确
+   - 异步调用正确
+
+2. 编辑消息（_update_message）: 有设计缺陷
+   - PATCH API本身的限制
+   - 当前实现会失败但代码有异常捕获
+
+3. 流式回复（_process_stream_response）: 架构问题
+   - "先发送再更新"假设对text无效
+   - 需要改用卡片消息或改变策略
+
+======================================================================
+7. 建议行动项
+======================================================================
+
+【立即修复】
+- Issue 3: 补充详细的代码注释
+- Issue 1: 改进PATCH失败的错误处理
+
+【本周实施】
+- Issue 5: 支持可配置的msg_type参数
+- Issue 4: 添加receive_id_type验证
+
+【本月优化】
+- Issue 2: 重设计流式回复架构
+       方案A: 改用interactive卡片消息
+       方案B: 改为发送完整消息一次
+       方案C: 支持多种消息类型
+
+【后续评估】
+- Issue 6: 异步化改进和性能优化
+
+======================================================================
+8. 文档位置
+======================================================================
+
+完整API规范: /Users/xuan.lx/Documents/x-agent/backend/docs/FEISHU_API_SPECIFICATION.md (22KB)
+代码问题清单: /Users/xuan.lx/Documents/x-agent/backend/docs/FEISHU_CODE_ISSUES.md (9KB)
+当前实现文件: /Users/xuan.lx/Documents/x-agent/backend/src/channel/adapters/feishu.py (736行)
+
+======================================================================

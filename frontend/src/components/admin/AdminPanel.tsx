@@ -547,6 +547,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                     columns={[
                       { key: 'session_id', label: 'ID', render: (value) => <code className="text-xs">{String(value).slice(0, 12)}...</code> },
                       { key: 'session_name', label: '名称', render: (value) => String(value || '未命名') },
+                      { key: 'agent_id', label: 'Agent ID', render: (value) => <code className="text-xs">{String(value || '-').slice(0, 12)}...</code> },
                       { key: 'status', label: '状态', render: (value) => statusBadge(String(value)) },
                       { key: 'updated_at', label: '最后活跃', render: (value) => formatTime(value as string | null) },
                       { key: 'create_time', label: '创建时间', render: (value) => formatTime(value as string | null) },

@@ -84,9 +84,12 @@ async def create_session(request: CreateSessionRequest) -> dict:
         Created session data
     """
     session_manager = _get_session_manager()
+    # 确保 session 始终绑定到 agent，使用默认值防止 null
+    from ...conversation.dao.bootstrap import DEFAULT_AGENT_ID
+    agent_id = request.agent_id or DEFAULT_AGENT_ID
     session = await session_manager.create_session(
         title=request.title,
-        agent_id=request.agent_id,
+        agent_id=agent_id,
         close_existing=request.close_existing,
     )
 

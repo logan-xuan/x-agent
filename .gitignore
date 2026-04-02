@@ -80,6 +80,7 @@ htmlcov/
 debug_*.py
 diagnose_*.py
 test_*.py
+!backend/tests/unit/test_channel_adapters.py
 verify_*.py
 validate_*.py
 quick_*.sh

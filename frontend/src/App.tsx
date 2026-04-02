@@ -10,6 +10,9 @@ import { AgentInfo, createSession as createSessionApi, getActiveSessionByAgent }
 
 type View = 'agent' | 'settings' | 'admin';
 
+/** 默认 Agent ID - 确保新用户首次访问时也有正确的 agent_id */
+const DEFAULT_AGENT_ID = 'main-agent';
+
 /** 全局当前 session key（兼容旧数据） */
 const AGENT_SESSION_STORAGE_KEY = 'x-agent-agent-session-id';
 
@@ -44,7 +47,8 @@ function App() {
     return localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
   });
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(() => {
-    return localStorage.getItem('x-agent-current-agent-id');
+    // 如果没有保存的 agent_id，使用默认值
+    return localStorage.getItem('x-agent-current-agent-id') || DEFAULT_AGENT_ID;
   });
   const [isAgentInitialized, setIsAgentInitialized] = useState(false);
   const initializingRef = useRef(false);
@@ -68,51 +72,49 @@ function App() {
   useEffect(() => {
     const initAgentSession = async () => {
       try {
-        const savedAgentId = localStorage.getItem('x-agent-current-agent-id');
+        // 使用默认 agent_id 确保 session 始终绑定到正确的 agent
+        const savedAgentId = localStorage.getItem('x-agent-current-agent-id') || DEFAULT_AGENT_ID;
 
         // 1. 优先从按 agent_id 存储的 key 里恢复 session
-        const savedSessionId = savedAgentId
-          ? getStoredSessionId(savedAgentId)
-          : localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
+        const savedSessionId = getStoredSessionId(savedAgentId)
+          || localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
 
         if (savedSessionId) {
           try {
             await agentLoadHistory(savedSessionId);
             setAgentSessionId(savedSessionId);
+            // 确保 localStorage 中有 agent_id
+            localStorage.setItem('x-agent-current-agent-id', savedAgentId);
             setIsAgentInitialized(true);
             return;
           } catch (error) {
             console.warn('Failed to load saved agent session, will try active session lookup:', error);
-            if (savedAgentId) {
-              localStorage.removeItem(agentSessionKey(savedAgentId));
-            }
+            localStorage.removeItem(agentSessionKey(savedAgentId));
             localStorage.removeItem(AGENT_SESSION_STORAGE_KEY);
           }
         }
 
         // 2. 尝试查找当前 agent 已有的 active session（避免创建重复 session）
-        if (savedAgentId) {
-          try {
-            const existingSession = await getActiveSessionByAgent(savedAgentId);
-            if (existingSession) {
-              await agentLoadHistory(existingSession.id);
-              storeSessionId(savedAgentId, existingSession.id);
-              setAgentSessionId(existingSession.id);
-              setIsAgentInitialized(true);
-              return;
-            }
-          } catch (error) {
-            console.warn('Failed to find active session for agent, creating new one:', error);
+        try {
+          const existingSession = await getActiveSessionByAgent(savedAgentId);
+          if (existingSession) {
+            await agentLoadHistory(existingSession.id);
+            storeSessionId(savedAgentId, existingSession.id);
+            setAgentSessionId(existingSession.id);
+            // 确保 localStorage 中有 agent_id
+            localStorage.setItem('x-agent-current-agent-id', savedAgentId);
+            setIsAgentInitialized(true);
+            return;
           }
+        } catch (error) {
+          console.warn('Failed to find active session for agent, creating new one:', error);
         }
 
-        // 3. 没有可复用的 session，创建新 session（带 agent_id 确保后续能按 agent 查找）
-        const session = await agentCreateSession('Agent 对话', savedAgentId ?? undefined);
-        if (savedAgentId) {
-          storeSessionId(savedAgentId, session.id);
-        } else {
-          localStorage.setItem(AGENT_SESSION_STORAGE_KEY, session.id);
-        }
+        // 3. 没有可复用的 session，创建新 session（始终带 agent_id）
+        const session = await agentCreateSession('Agent 对话', savedAgentId);
+        storeSessionId(savedAgentId, session.id);
+        // 确保 localStorage 中有 agent_id
+        localStorage.setItem('x-agent-current-agent-id', savedAgentId);
         setAgentSessionId(session.id);
         setIsAgentInitialized(true);
       } catch (error) {

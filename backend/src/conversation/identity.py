@@ -35,6 +35,7 @@ class ChannelType(str, Enum):
     WEB_CHAT = "web_chat"
     CLI = "cli"
     DINGTALK = "dingtalk"
+    FEISHU = "feishu"
     WECHAT = "wechat"
     TELEGRAM = "telegram"
     SLACK = "slack"
@@ -45,6 +46,7 @@ class ChannelProtocol(str, Enum):
     WEBSOCKET = "websocket"
     REST_API = "rest_api"
     SSE = "sse"
+    STREAM = "stream"  # Stream 长连接协议（钉钉/飞书 Stream 模式）
     INTERNAL = "internal"  # 内部触发（cron/webhook/agent-to-agent）
 
 

@@ -386,7 +386,7 @@ class ChannelConfig(BaseModel):
     
     id: str = Field(..., description="Unique channel identifier")
     type: str = Field(..., description="Channel type (web, slack, email, etc.)")
-    protocol: Literal["websocket", "webhook", "smtp", "http"] = Field(default="websocket", description="Communication protocol")
+    protocol: Literal["websocket", "webhook", "smtp", "http", "stream"] = Field(default="websocket", description="Communication protocol")
     agent_id: str | None = Field(default=None, description="Associated agent ID (for backward compatibility)")
     default_user: str = Field(default="admin", description="Default user for this channel")
     enabled: bool = Field(default=True, description="Whether this channel is enabled")
