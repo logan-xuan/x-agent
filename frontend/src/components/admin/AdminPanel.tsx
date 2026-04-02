@@ -270,6 +270,9 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editingSession, setEditingSession] = useState<Session | null>(null);
 
+  // 删除确认弹窗状态
+  const [deleteConfirm, setDeleteConfirm] = useState<{tab: TabKey; entityId: string; name: string} | null>(null);
+
   const showSuccess = (message: string) => {
     setSuccess(message);
     setTimeout(() => setSuccess(null), 2000);
@@ -306,11 +309,21 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   }, [token, activeTab, fetchTabData]);
 
   // 删除操作
-  const handleDelete = async (tab: TabKey, entityId: string) => {
-    if (!confirm('确定要删除吗？此操作不可恢复。')) return;
+  const handleDelete = async (tab: TabKey, entityId: string, name?: string) => {
+    setDeleteConfirm({ tab, entityId, name: name || entityId.slice(0, 12) });
+  };
+
+  // 确认删除
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const { tab, entityId } = deleteConfirm;
+    setDeleteConfirm(null);
     try {
       const response = await adminFetch(`/admin/${tab}/${entityId}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error('删除失败');
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || '删除失败');
+      }
       showSuccess('删除成功');
       fetchTabData(activeTab);
     } catch (err) {
@@ -484,7 +497,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                     actions={(row) => (
                       <div className="flex gap-1">
                         <Button variant="ghost" size="sm" onClick={() => setEditingUser(row)}>编辑</Button>
-                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('users', row.user_id)}>删除</Button>
+                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('users', row.user_id, row.name)}>删除</Button>
                       </div>
                     )}
                   />
@@ -504,7 +517,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                     actions={(row) => (
                       <div className="flex gap-1">
                         <Button variant="ghost" size="sm" onClick={() => setEditingAgent(row)}>编辑</Button>
-                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('agents', row.agent_id)}>删除</Button>
+                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('agents', row.agent_id, row.agent_name)}>删除</Button>
                       </div>
                     )}
                   />
@@ -522,7 +535,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                     data={channels}
                     actions={(row) => (
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('channels', row.channel_id)}>删除</Button>
+                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('channels', row.channel_id, row.channel_id.slice(0, 12))}>删除</Button>
                       </div>
                     )}
                   />
@@ -542,7 +555,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                     actions={(row) => (
                       <div className="flex gap-1">
                         <Button variant="ghost" size="sm" onClick={() => setEditingSession(row)}>状态</Button>
-                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('sessions', row.session_id)}>删除</Button>
+                        <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDelete('sessions', row.session_id, row.session_name)}>删除</Button>
                       </div>
                     )}
                   />
@@ -552,6 +565,26 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
           )}
         </div>
       </div>
+
+      {/* 删除确认弹窗 */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <Card className="w-full max-w-sm">
+            <CardHeader>
+              <CardTitle>确认删除</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                确定要删除 <strong>{deleteConfirm.name}</strong> 吗？此操作不可恢复。
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>取消</Button>
+                <Button variant="destructive" size="sm" onClick={confirmDelete}>确认删除</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Edit Modals */}
       {editingUser && (

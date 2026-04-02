@@ -499,14 +499,25 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
                     },
                 )
 
-        # 关闭 Session
-        try:
-            await dispatcher.close_session(session_id)
-        except Exception as close_error:
-            logger.error(
-                "Failed to close session",
-                extra={
-                    "session_id": session_id,
-                    "error": str(close_error),
-                },
-            )
+        # 不再自动关闭 Session — 让 session 保持 active 状态
+        # 这样用户切换 agent 后可以恢复之前的会话
+        # Session 只在以下情况下关闭：
+        # 1. 用户点击"新建会话"按钮（前端调用 createSession with closeExisting=true）
+        # 2. 用户在 admin panel 手动关闭或删除 session
+        # 3. Session 超时清理（如果有配置）
+        #
+        # 之前的逻辑：WebSocket 断开就关闭 session，导致切换 agent 时 session 被意外关闭
+        # try:
+        #     await dispatcher.close_session(session_id)
+        # except Exception as close_error:
+        #     logger.error(
+        #         "Failed to close session",
+        #         extra={
+        #             "session_id": session_id,
+        #             "error": str(close_error),
+        #         },
+        #     )
+        logger.info(
+            "WebSocket disconnected, session remains active",
+            extra={"session_id": session_id},
+        )

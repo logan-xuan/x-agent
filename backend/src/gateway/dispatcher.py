@@ -198,9 +198,13 @@ class GatewayDispatcher:
         # 确保 sessions 表中存在
         existing = await session_manager.get_session(session_id)
         if existing is None:
+            # 使用 Agent 名称作为会话标题
+            from ..conversation.dao.models import Agent
+            agent = Agent.from_config(agent_info.agent_id)
+            title = f"{agent.agent_name} 对话" if agent else "Agent 对话"
             await session_manager.ensure_session(
                 session_id,
-                title="Agent 对话",
+                title=title,
                 agent_id=agent_info.agent_id,
             )
             logger.info(

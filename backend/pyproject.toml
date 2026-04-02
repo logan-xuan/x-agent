@@ -40,8 +40,8 @@ dependencies = [
     "openai>=1.10.0",
     "httpx>=0.26.0",
     "tiktoken>=0.6.0",
-    # Memory System (ONNX-only, PyTorch-free)
-    "onnxruntime>=1.16.0",
+    # Memory System (ONNX-only, PyTorch-free) - disabled for macOS 26 compatibility
+    # "onnxruntime>=1.16.0",
     "transformers>=4.30.0", # For tokenizer only (no PyTorch)
     "numpy>=1.24.0",
     "python-frontmatter>=1.0.0",
@@ -60,7 +60,7 @@ dependencies = [
     "html2text>=2025.4.15",
     # Skill System
     "jsonschema>=4.20.0",
-    "sentence-transformers>=2.2.0",  # For M3E-small embeddings
+    # "sentence-transformers>=2.2.0",  # Disabled: requires PyTorch (not compatible with macOS 26 / Python 3.13)
 ]
 
 [project.optional-dependencies]

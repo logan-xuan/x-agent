@@ -56,8 +56,10 @@ fi
 
 echo "🔧 使用 Python 启动后端服务..."
 PYTHON_PATH=""
-# 尝试使用虚拟环境中的 Python
-if [ -f ".venv/bin/python" ]; then
+# 优先使用 miniconda 环境 (已有完整依赖)
+if [ -f "/Users/xuan.lx/miniconda3/bin/python" ]; then
+    PYTHON_PATH="/Users/xuan.lx/miniconda3/bin/python"
+elif [ -f ".venv/bin/python" ]; then
     PYTHON_PATH=".venv/bin/python"
 elif [ -f "venv/bin/python" ]; then
     PYTHON_PATH="venv/bin/python"

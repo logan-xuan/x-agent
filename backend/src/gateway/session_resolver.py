@@ -122,8 +122,12 @@ class ActiveSessionResolver:
             raise NoActiveSessionError(agent_id, channel_type)
 
         # 3. 自动创建新 session（新系统 sessions 表）
+        # 使用 Agent 名称作为会话标题
+        from ..conversation.dao.models import Agent
+        agent = Agent.from_config(agent_id)
+        title = f"{agent.agent_name} 对话" if agent else f"Auto-created for {channel_type.value}"
         new_session = await session_manager.create_session(
-            title=f"Auto-created for {channel_type.value}",
+            title=title,
             agent_id=agent_id,
         )
 
