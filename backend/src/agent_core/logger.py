@@ -23,16 +23,15 @@ import sys
 import threading
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .types import (
-    LogLevel,
+    LLMCallLog,
     LogCategory,
     LogEntry,
-    LLMCallLog,
+    LogLevel,
     ToolCallLog,
 )
 
@@ -88,22 +87,22 @@ class AgentLogger:
         使用 TimedSizeRotatingFileHandler，支持时间和大小双维度滚动。
         日志格式为 JSON，每行一条记录。
     """
-    
+
     # 默认大小限制
     DEFAULT_MAX_LOGS = 1000
     DEFAULT_MAX_LLM_CALLS = 500
     DEFAULT_MAX_TOOL_CALLS = 500
-    
+
     # 单例支持
-    _instance: "AgentLogger | None" = None
-    
-    def __new__(cls, *args, **kwargs) -> "AgentLogger":
+    _instance: AgentLogger | None = None
+
+    def __new__(cls, *args, **kwargs) -> AgentLogger:
         """单例模式，确保全局只有一个实例."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(
         self,
         max_logs: int = DEFAULT_MAX_LOGS,
@@ -120,38 +119,38 @@ class AgentLogger:
         # 避免重复初始化
         if getattr(self, '_initialized', False):
             return
-        
+
         # 内存缓存
         self._logs: deque[LogEntry] = deque(maxlen=max_logs)
         self._llm_calls: deque[LLMCallLog] = deque(maxlen=max_llm_calls)
         self._tool_calls: deque[ToolCallLog] = deque(maxlen=max_tool_calls)
-        
+
         # 索引（trace_id -> list of ids）
         self._trace_log_index: dict[str, list[str]] = {}
         self._trace_llm_index: dict[str, list[str]] = {}
         self._trace_tool_index: dict[str, list[str]] = {}
-        
+
         # LLM call -> tool calls 索引
         self._llm_tool_index: dict[str, list[str]] = {}
-        
+
         # 快速查找
         self._llm_call_map: dict[str, LLMCallLog] = {}
         self._tool_call_map: dict[str, ToolCallLog] = {}
-        
+
         # 线程安全
         self._lock = threading.Lock()
-        
+
         # 实时订阅
         self._subscribers: list[asyncio.Queue[LogEntry]] = []
         self._subscriber_lock = threading.Lock()
-        
+
         # 文件持久化（延迟初始化）
         self._file_handler: Any = None
         self._log_file: Path | None = None
         self._file_persistence_enabled = False
-        
+
         self._initialized = True
-    
+
     def initialize_file_persistence(
         self,
         log_file: str = "logs/agent-core.log",
@@ -173,10 +172,10 @@ class AgentLogger:
         """
         if self._file_persistence_enabled:
             return
-        
+
         self._log_file = Path(log_file)
         self._log_file.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # 解析 max_size
         max_size_str = max_size.upper()
         if max_size_str.endswith('MB'):
@@ -190,7 +189,7 @@ class AgentLogger:
                 max_bytes = int(max_size_str)
             except ValueError:
                 max_bytes = 20 * 1024 * 1024  # 默认 20MB
-        
+
         # 创建滚动文件处理器
         TimedSizeRotatingFileHandler = _get_rotating_handler()
         self._file_handler = TimedSizeRotatingFileHandler(
@@ -201,13 +200,13 @@ class AgentLogger:
             backup_count=backup_count,
             encoding='utf-8'
         )
-        
+
         self._file_persistence_enabled = True
-        
+
         # 加载历史日志
         if load_history:
             self._load_history_from_file()
-    
+
     def _write_to_file(self, entry: dict[str, Any]) -> None:
         """写入日志到文件.
         
@@ -216,7 +215,7 @@ class AgentLogger:
         """
         if not self._file_persistence_enabled or self._file_handler is None:
             return
-        
+
         try:
             log_record = logging.LogRecord(
                 name='agent_logger',
@@ -230,7 +229,7 @@ class AgentLogger:
             self._file_handler.emit(log_record)
         except Exception:
             pass  # 静默处理文件写入错误，不影响内存日志
-    
+
     def _load_history_from_file(self) -> None:
         """从日志文件加载历史数据到内存.
         
@@ -238,40 +237,40 @@ class AgentLogger:
         """
         if not self._log_file or not self._log_file.exists():
             return
-        
+
         try:
             # 读取日志文件（包括当前文件和最近的备份文件）
             files_to_load = [self._log_file]
-            
+
             # 查找备份文件（按时间倒序）
             backup_files = sorted(
                 self._log_file.parent.glob(f"{self._log_file.name}*"),
                 key=lambda p: p.stat().st_mtime,
                 reverse=True
             )
-            
+
             # 限制只加载最近的几个文件
             for backup_file in backup_files[:3]:  # 最多加载3个文件
                 if backup_file != self._log_file:
                     files_to_load.append(backup_file)
-            
+
             # 按时间倒序加载日志
             log_entries = []
             llm_calls = {}
             tool_calls = {}
-            
+
             for log_file in files_to_load:
                 try:
-                    with open(log_file, 'r', encoding='utf-8') as f:
+                    with open(log_file, encoding='utf-8') as f:
                         for line in f:
                             line = line.strip()
                             if not line:
                                 continue
-                            
+
                             try:
                                 entry = json.loads(line)
                                 log_type = entry.get('type')
-                                
+
                                 if log_type == 'log_entry':
                                     log_entries.append(entry)
                                 elif log_type == 'llm_call_start':
@@ -302,10 +301,10 @@ class AgentLogger:
                         log_file, str(file_err)[:200],
                     )
                     continue
-            
+
             # 按时间排序，只保留最近的记录（受内存限制）
             log_entries.sort(key=lambda e: e.get('timestamp', ''), reverse=True)
-            
+
             # 转换并添加到内存（使用 log() 方法会触发重复写文件，这里直接操作内存）
             with self._lock:
                 # 加载通用日志
@@ -316,7 +315,7 @@ class AgentLogger:
                         if not entry_dict.get('timestamp'):
                             skipped_log_count += 1
                             continue
-                        
+
                         log_entry = LogEntry(
                             id=entry_dict.get('id', ''),
                             trace_id=entry_dict.get('trace_id', ''),
@@ -330,7 +329,7 @@ class AgentLogger:
                             error=entry_dict.get('error'),
                         )
                         self._logs.append(log_entry)
-                        
+
                         if log_entry.trace_id:
                             self._trace_log_index.setdefault(log_entry.trace_id, []).append(log_entry.id)
                     except Exception as log_err:
@@ -339,10 +338,10 @@ class AgentLogger:
                             entry_dict.get('id', '?'), str(log_err)[:200],
                         )
                         continue
-                
+
                 if skipped_log_count:
                     _stderr_logger.warning("Skipped %d log entries without timestamp", skipped_log_count)
-                
+
                 # 加载 LLM 调用
                 skipped_llm_count = 0
                 for call_id, llm_dict in list(llm_calls.items())[:self.DEFAULT_MAX_LLM_CALLS]:
@@ -355,7 +354,7 @@ class AgentLogger:
                                 call_id, llm_dict.get('trace_id', '?'),
                             )
                             continue
-                        
+
                         llm_log = LLMCallLog(
                             call_id=call_id,
                             trace_id=llm_dict.get('trace_id', ''),
@@ -372,7 +371,7 @@ class AgentLogger:
                         )
                         self._llm_calls.append(llm_log)
                         self._llm_call_map[call_id] = llm_log
-                        
+
                         if llm_log.trace_id:
                             self._trace_llm_index.setdefault(llm_log.trace_id, []).append(call_id)
                     except Exception as llm_err:
@@ -381,10 +380,10 @@ class AgentLogger:
                             call_id, llm_dict.get('trace_id', '?'), str(llm_err)[:200],
                         )
                         continue
-                
+
                 if skipped_llm_count:
                     _stderr_logger.warning("Skipped %d LLM calls without timestamp", skipped_llm_count)
-                
+
                 # 加载工具调用
                 skipped_tool_count = 0
                 for call_id, tool_dict in list(tool_calls.items())[:self.DEFAULT_MAX_TOOL_CALLS]:
@@ -393,7 +392,7 @@ class AgentLogger:
                         if not tool_dict.get('timestamp'):
                             skipped_tool_count += 1
                             continue
-                        
+
                         tool_log = ToolCallLog(
                             call_id=call_id,
                             trace_id=tool_dict.get('trace_id', ''),
@@ -411,10 +410,10 @@ class AgentLogger:
                         )
                         self._tool_calls.append(tool_log)
                         self._tool_call_map[call_id] = tool_log
-                        
+
                         if tool_log.trace_id:
                             self._trace_tool_index.setdefault(tool_log.trace_id, []).append(call_id)
-                        
+
                         if tool_log.llm_call_id:
                             self._llm_tool_index.setdefault(tool_log.llm_call_id, []).append(call_id)
                     except Exception as tool_err:
@@ -423,20 +422,20 @@ class AgentLogger:
                             call_id, str(tool_err)[:200],
                         )
                         continue
-                
+
                 if skipped_tool_count:
                     _stderr_logger.warning("Skipped %d tool calls without timestamp", skipped_tool_count)
-        
+
         except Exception as load_err:
             _stderr_logger.error(
                 "Failed to load history from log files: %s", str(load_err)[:300],
                 exc_info=True,
             )
-    
+
     # ================================================================
     # LoggerPort 接口实现
     # ================================================================
-    
+
     def log(self, entry: LogEntry) -> None:
         """记录通用日志.
         
@@ -445,7 +444,7 @@ class AgentLogger:
         """
         if not entry.id:
             entry.id = str(uuid.uuid4())[:12]
-        
+
         with self._lock:
             # 如果 deque 已满，淘汰最旧记录前先清理其索引
             if len(self._logs) == self._logs.maxlen:
@@ -457,12 +456,12 @@ class AgentLogger:
                         pass
                     if not self._trace_log_index[evicted.trace_id]:
                         del self._trace_log_index[evicted.trace_id]
-            
+
             self._logs.append(entry)
-            
+
             if entry.trace_id:
                 self._trace_log_index.setdefault(entry.trace_id, []).append(entry.id)
-        
+
         # 写入文件
         self._write_to_file({
             "type": "log_entry",
@@ -477,9 +476,9 @@ class AgentLogger:
             "duration_ms": entry.duration_ms,
             "error": entry.error,
         })
-        
+
         self._broadcast(entry)
-    
+
     def log_llm_call_start(self, log: LLMCallLog) -> None:
         """记录 LLM 调用开始.
         
@@ -488,9 +487,9 @@ class AgentLogger:
         """
         if not log.call_id:
             log.call_id = str(uuid.uuid4())[:8]
-        
+
         log.status = "pending"
-        
+
         with self._lock:
             # 如果 deque 已满，淘汰最旧记录前先清理其索引
             if len(self._llm_calls) == self._llm_calls.maxlen:
@@ -503,13 +502,13 @@ class AgentLogger:
                         pass
                     if not self._trace_llm_index[evicted.trace_id]:
                         del self._trace_llm_index[evicted.trace_id]
-            
+
             self._llm_calls.append(log)
             self._llm_call_map[log.call_id] = log
-            
+
             if log.trace_id:
                 self._trace_llm_index.setdefault(log.trace_id, []).append(log.call_id)
-        
+
         # 写入 LLM 调用日志文件（传给 LLM 什么就记录什么，不能有遗漏）
         self._write_to_file({
             "type": "llm_call_start",
@@ -527,7 +526,7 @@ class AgentLogger:
             "max_tokens": log.max_tokens,
             "thinking_level": log.thinking_level,
         })
-        
+
         # 同时写入通用日志
         self.log(LogEntry(
             trace_id=log.trace_id,
@@ -543,7 +542,7 @@ class AgentLogger:
                 "estimated_tokens": log.estimated_tokens,
             },
         ))
-    
+
     def log_llm_call_end(
         self,
         call_id: str,
@@ -565,19 +564,19 @@ class AgentLogger:
             log = self._llm_call_map.get(call_id)
             if log is None:
                 return
-            
+
             log.end_time = datetime.now()
             log.duration_ms = duration_ms
             log.usage = usage
             log.response_content = response.get("content") if isinstance(response, dict) else None
             log.stop_reason = response.get("stop_reason") if isinstance(response, dict) else None
-            
+
             if error:
                 log.status = "error"
                 log.error = error
             else:
                 log.status = "completed"
-        
+
         # 写入 LLM 调用结束日志文件
         self._write_to_file({
             "type": "llm_call_end",
@@ -592,10 +591,10 @@ class AgentLogger:
             "status": log.status,
             "error": error,
         })
-        
+
         level = LogLevel.ERROR if error else LogLevel.INFO
         event_name = "llm_call_error" if error else "llm_call_end"
-        
+
         self.log(LogEntry(
             trace_id=log.trace_id,
             level=level,
@@ -612,7 +611,7 @@ class AgentLogger:
             duration_ms=duration_ms,
             error=error,
         ))
-    
+
     def log_tool_call_start(self, log: ToolCallLog) -> None:
         """记录工具调用开始.
         
@@ -621,9 +620,9 @@ class AgentLogger:
         """
         if not log.call_id:
             log.call_id = str(uuid.uuid4())[:8]
-        
+
         log.status = "executing"
-        
+
         with self._lock:
             # 如果 deque 已满，淘汰最旧记录前先清理其索引
             if len(self._tool_calls) == self._tool_calls.maxlen:
@@ -643,16 +642,16 @@ class AgentLogger:
                         pass
                     if not self._llm_tool_index[evicted.llm_call_id]:
                         del self._llm_tool_index[evicted.llm_call_id]
-            
+
             self._tool_calls.append(log)
             self._tool_call_map[log.call_id] = log
-            
+
             if log.trace_id:
                 self._trace_tool_index.setdefault(log.trace_id, []).append(log.call_id)
-            
+
             if log.llm_call_id:
                 self._llm_tool_index.setdefault(log.llm_call_id, []).append(log.call_id)
-        
+
         # 写入工具调用日志文件
         self._write_to_file({
             "type": "tool_call_start",
@@ -663,7 +662,7 @@ class AgentLogger:
             "tool_name": log.tool_name,
             "arguments": log.arguments,
         })
-        
+
         self.log(LogEntry(
             trace_id=log.trace_id,
             level=LogLevel.INFO,
@@ -677,7 +676,7 @@ class AgentLogger:
                 "arguments": log.arguments,
             },
         ))
-    
+
     def log_tool_call_end(
         self,
         call_id: str,
@@ -699,18 +698,18 @@ class AgentLogger:
             log = self._tool_call_map.get(call_id)
             if log is None:
                 return
-            
+
             log.end_time = datetime.now()
             log.duration_ms = duration_ms
             log.is_error = is_error
             log.result = result
-            
+
             if error:
                 log.status = "error"
                 log.error = error
             else:
                 log.status = "completed"
-        
+
         # 写入工具调用结束日志文件
         self._write_to_file({
             "type": "tool_call_end",
@@ -724,10 +723,10 @@ class AgentLogger:
             "error": error,
             "result": str(result)[:1000] if result else None,  # 限制结果长度
         })
-        
+
         level = LogLevel.ERROR if is_error else LogLevel.INFO
         event_name = "tool_call_error" if is_error else "tool_call_end"
-        
+
         self.log(LogEntry(
             trace_id=log.trace_id,
             level=level,
@@ -744,11 +743,11 @@ class AgentLogger:
             duration_ms=duration_ms,
             error=error if is_error else None,
         ))
-    
+
     # ================================================================
     # 查询方法
     # ================================================================
-    
+
     def get_logs(
         self,
         trace_id: str | None = None,
@@ -771,7 +770,7 @@ class AgentLogger:
         """
         with self._lock:
             result = list(self._logs)
-        
+
         # 按条件过滤
         if trace_id:
             result = [e for e in result if e.trace_id == trace_id]
@@ -782,13 +781,13 @@ class AgentLogger:
             level_order = {LogLevel.DEBUG: 0, LogLevel.INFO: 1, LogLevel.WARN: 2, LogLevel.ERROR: 3}
             min_level = level_order.get(level, 0)
             result = [e for e in result if level_order.get(e.level, 0) >= min_level]
-        
+
         # 按时间倒序
         result.sort(key=lambda e: e.timestamp, reverse=True)
-        
+
         # 分页
         return result[offset:offset + limit]
-    
+
     def get_llm_call(self, call_id: str) -> LLMCallLog | None:
         """获取 LLM 调用详情.
         
@@ -800,7 +799,7 @@ class AgentLogger:
         """
         with self._lock:
             return self._llm_call_map.get(call_id)
-    
+
     def get_llm_calls_by_trace(self, trace_id: str) -> list[LLMCallLog]:
         """获取指定 trace 的所有 LLM 调用.
         
@@ -813,7 +812,7 @@ class AgentLogger:
         with self._lock:
             call_ids = self._trace_llm_index.get(trace_id, [])
             return [self._llm_call_map[cid] for cid in call_ids if cid in self._llm_call_map]
-    
+
     def get_tool_call(self, call_id: str) -> ToolCallLog | None:
         """获取工具调用详情.
         
@@ -825,7 +824,7 @@ class AgentLogger:
         """
         with self._lock:
             return self._tool_call_map.get(call_id)
-    
+
     def get_tool_calls_by_trace(self, trace_id: str) -> list[ToolCallLog]:
         """获取指定 trace 的所有工具调用.
         
@@ -838,7 +837,7 @@ class AgentLogger:
         with self._lock:
             call_ids = self._trace_tool_index.get(trace_id, [])
             return [self._tool_call_map[cid] for cid in call_ids if cid in self._tool_call_map]
-    
+
     def get_tool_calls_by_llm(self, llm_call_id: str) -> list[ToolCallLog]:
         """获取指定 LLM 调用触发的所有工具调用.
         
@@ -851,11 +850,11 @@ class AgentLogger:
         with self._lock:
             call_ids = self._llm_tool_index.get(llm_call_id, [])
             return [self._tool_call_map[cid] for cid in call_ids if cid in self._tool_call_map]
-    
+
     # ================================================================
     # 实时订阅
     # ================================================================
-    
+
     def subscribe(self, max_queue_size: int = 100) -> asyncio.Queue[LogEntry]:
         """订阅实时日志.
         
@@ -869,7 +868,7 @@ class AgentLogger:
         with self._subscriber_lock:
             self._subscribers.append(queue)
         return queue
-    
+
     def unsubscribe(self, queue: asyncio.Queue[LogEntry]) -> None:
         """取消订阅.
         
@@ -879,7 +878,7 @@ class AgentLogger:
         with self._subscriber_lock:
             if queue in self._subscribers:
                 self._subscribers.remove(queue)
-    
+
     def _broadcast(self, entry: LogEntry) -> None:
         """广播日志到所有订阅者.
         
@@ -897,14 +896,14 @@ class AgentLogger:
                     pass
                 except Exception:
                     dead_queues.append(queue)
-            
+
             for q in dead_queues:
                 self._subscribers.remove(q)
-    
+
     # ================================================================
     # 工具方法
     # ================================================================
-    
+
     def clear(self) -> None:
         """清空所有日志."""
         with self._lock:
@@ -917,22 +916,22 @@ class AgentLogger:
             self._llm_tool_index.clear()
             self._llm_call_map.clear()
             self._tool_call_map.clear()
-    
+
     @property
     def log_count(self) -> int:
         """通用日志条数."""
         return len(self._logs)
-    
+
     @property
     def llm_call_count(self) -> int:
         """LLM 调用日志条数."""
         return len(self._llm_calls)
-    
+
     @property
     def tool_call_count(self) -> int:
         """工具调用日志条数."""
         return len(self._tool_calls)
-    
+
     def create_log_entry(
         self,
         trace_id: str,

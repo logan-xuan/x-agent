@@ -211,15 +211,16 @@ class WebChatNotificationChannel:
         from .message_bus import MessageBus, OutboundMessage, get_message_bus
 
         try:
-            # 1. 解析 session_id（不自动创建）
+            # 1. 解析 session_id（当指定了 agent_id 时自动创建 session）
             session_id = target.session_id
             if not session_id and target.agent_id:
                 resolver = ActiveSessionResolver()
                 try:
+                    # 配置中的 Agent 应始终在线，auto_create=True 确保能正常发送消息
                     session_id = await resolver.resolve(
                         agent_id=target.agent_id,
                         channel_type=ChannelType.WEB_CHAT,
-                        auto_create=False,  # 不自动创建 session
+                        auto_create=True,  # 自动创建 session，避免返回 "queued" 状态
                     )
                 except Exception:
                     # 没有活跃 session，使用 agent_id 作为暂存标识

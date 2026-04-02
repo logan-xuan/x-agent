@@ -33,7 +33,7 @@ class XAgentSystemPromptAdapter:
         _builder: 实际的系统提示词构建器实例
     """
 
-    def __init__(self, builder: "SystemPromptPort") -> None:
+    def __init__(self, builder: SystemPromptPort) -> None:
         """初始化适配器.
 
         Args:

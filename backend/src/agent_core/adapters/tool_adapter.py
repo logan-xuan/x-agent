@@ -12,13 +12,17 @@ agent_core 的 ToolPort Protocol。
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from ..types import (
     AgentTool,
+)
+from ..types import (
     ToolParameter as ACToolParameter,
+)
+from ..types import (
     ToolResult as ACToolResult,
-    TextContent,
 )
 
 if TYPE_CHECKING:
@@ -36,7 +40,7 @@ class XAgentToolAdapter:
         
         config = AgentCoreConfig(tools=adapter)
     """
-    
+
     def __init__(self, manager: Any) -> None:
         """初始化适配器.
         
@@ -44,7 +48,7 @@ class XAgentToolAdapter:
             manager: X-Agent ToolManager 实例
         """
         self._manager = manager
-    
+
     async def execute(
         self,
         tool_name: str,
@@ -71,7 +75,7 @@ class XAgentToolAdapter:
                 str(e),
                 details={"error_type": type(e).__name__},
             )
-    
+
     def get_tools(self) -> list[AgentTool]:
         """获取所有可用工具.
         
@@ -92,7 +96,7 @@ def _convert_tool_result(result: Any) -> ACToolResult:
         agent_core ToolResult
     """
     metadata = result.metadata if hasattr(result, 'metadata') else {}
-    
+
     if hasattr(result, 'success') and result.success:
         output = result.output if hasattr(result, 'output') else ""
         return ACToolResult.from_text(output, details=metadata)
@@ -118,7 +122,7 @@ def _convert_base_tool(tool: Any) -> AgentTool:
     if hasattr(tool, 'parameters'):
         for param in tool.parameters:
             parameters.append(_convert_tool_parameter(param))
-    
+
     return AgentTool(
         name=tool.name,
         label=tool.name,  # 使用 name 作为 label
@@ -138,7 +142,7 @@ def _convert_tool_parameter(param: Any) -> ACToolParameter:
     """
     # ToolParameterType 是 str enum，.value 得到 "string" 等
     param_type = param.type.value if hasattr(param.type, 'value') else str(param.type)
-    
+
     return ACToolParameter(
         name=param.name,
         type=param_type,

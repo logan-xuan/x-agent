@@ -12,33 +12,38 @@ Port 接口:
 - SkillPort: 技能系统接口
 """
 
-from .llm_port import LLMPort
-from .tool_port import ToolPort
-from .memory_port import MemoryPort
-from .logger_port import LoggerPort
-from .plan_port import (
-    PlanPort,
-    Plan,
-    PlanStep,
-    PlanStatus,
-    StepStatus,
-)
 from .context_port import (
     ContextPort,
     PreparedContext,
 )
-from .system_prompt_port import (
-    SystemPromptPort,
-    IdentityInfo,
+from .delegate_port import (
+    DelegatePort,
+    DelegateResult,
+    DelegateTask,
+)
+from .llm_port import LLMPort
+from .logger_port import LoggerPort
+from .memory_port import MemoryPort
+from .plan_port import (
+    Plan,
+    PlanPort,
+    PlanStatus,
+    PlanStep,
+    StepStatus,
 )
 from .skill_port import (
-    SkillPort,
-    SkillMetadata,
-    SkillContext,
-    SkillResult,
     SkillCategory,
+    SkillContext,
+    SkillMetadata,
+    SkillPort,
+    SkillResult,
     SkillStatus,
 )
+from .system_prompt_port import (
+    IdentityInfo,
+    SystemPromptPort,
+)
+from .tool_port import ToolPort
 
 __all__ = [
     # 核心 Ports
@@ -50,6 +55,7 @@ __all__ = [
     "PlanPort",
     "ContextPort",
     "SkillPort",
+    "DelegatePort",
     # Plan 相关类型
     "Plan",
     "PlanStep",
@@ -66,4 +72,7 @@ __all__ = [
     "SkillResult",
     "SkillCategory",
     "SkillStatus",
+    # Delegate 相关类型
+    "DelegateTask",
+    "DelegateResult",
 ]

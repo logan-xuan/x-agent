@@ -12,18 +12,18 @@ SkillPort 定义了 agent_core 与技能系统交互的接口。
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, Any, Callable, Awaitable
-from enum import Enum
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from collections.abc import AsyncIterator
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from ..types import AgentTool, ToolResult
+    from ..types import AgentTool
 
 
 class SkillCategory(Enum):
     """技能分类."""
-    
+
     DOCUMENT = "document"      # 文档处理
     SEARCH = "search"          # 搜索相关
     CODE = "code"              # 代码相关
@@ -36,7 +36,7 @@ class SkillCategory(Enum):
 
 class SkillStatus(Enum):
     """技能状态."""
-    
+
     REGISTERED = "registered"  # 已注册
     LOADED = "loaded"          # 已加载
     ACTIVE = "active"          # 活跃中
@@ -60,7 +60,7 @@ class SkillMetadata:
         provides_tools: 提供的工具列表
         config_schema: 配置项 schema
     """
-    
+
     skill_id: str = ""
     name: str = ""
     description: str = ""
@@ -84,7 +84,7 @@ class SkillContext:
         state: 状态数据
         config: 配置项
     """
-    
+
     session_id: str = ""
     user_input: str = ""
     parameters: dict[str, Any] = field(default_factory=dict)
@@ -103,7 +103,7 @@ class SkillResult:
         next_action: 下一步动作提示（可选）
         error: 错误信息
     """
-    
+
     success: bool = True
     output: str = ""
     artifacts: list[dict[str, Any]] = field(default_factory=list)
@@ -134,7 +134,7 @@ class SkillPort(Protocol):
                     return await skill["executor"](context)
                 return SkillResult(success=False, error="Skill not found")
     """
-    
+
     async def register(
         self,
         metadata: SkillMetadata,
@@ -150,7 +150,7 @@ class SkillPort(Protocol):
             bool: 是否注册成功
         """
         ...
-    
+
     async def unregister(self, skill_id: str) -> bool:
         """注销技能.
         
@@ -161,7 +161,7 @@ class SkillPort(Protocol):
             bool: 是否注销成功
         """
         ...
-    
+
     async def discover(
         self,
         category: SkillCategory | None = None,
@@ -179,7 +179,7 @@ class SkillPort(Protocol):
             list[SkillMetadata]: 匹配的技能列表
         """
         ...
-    
+
     async def execute(
         self,
         skill_id: str,
@@ -198,8 +198,8 @@ class SkillPort(Protocol):
             Exception: 执行失败时抛出异常
         """
         ...
-    
-    async def get_tools(self, skill_id: str) -> list["AgentTool"]:
+
+    async def get_tools(self, skill_id: str) -> list[AgentTool]:
         """获取技能提供的工具.
         
         Args:
@@ -209,7 +209,7 @@ class SkillPort(Protocol):
             list[AgentTool]: 工具列表
         """
         ...
-    
+
     async def get_status(self, skill_id: str) -> SkillStatus:
         """获取技能状态.
         

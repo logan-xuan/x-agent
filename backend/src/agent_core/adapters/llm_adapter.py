@@ -15,7 +15,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from ..types import StreamChunk, AgentTool
+from ..types import AgentTool, StreamChunk
 
 if TYPE_CHECKING:
     pass
@@ -48,7 +48,7 @@ class XAgentLLMAdapter:
         
         config = AgentCoreConfig(llm=adapter)
     """
-    
+
     def __init__(self, router: Any) -> None:
         """初始化适配器.
         
@@ -56,7 +56,7 @@ class XAgentLLMAdapter:
             router: X-Agent LLMRouter 实例
         """
         self._router = router
-    
+
     async def stream(
         self,
         system_prompt: str,
@@ -78,12 +78,12 @@ class XAgentLLMAdapter:
         if system_prompt:
             full_messages.append({"role": "system", "content": system_prompt})
         full_messages.extend(messages)
-        
+
         # 转换工具为 OpenAI 格式
         openai_tools = None
         if tools:
             openai_tools = [t.to_llm_tool() for t in tools]
-        
+
         try:
             if openai_tools:
                 # === 有工具: 非流式路径 ===
@@ -95,10 +95,10 @@ class XAgentLLMAdapter:
                 # === 无工具: 流式路径 ===
                 async for chunk in self._streaming_text(full_messages):
                     yield chunk
-                    
+
         except Exception as e:
             yield StreamChunk.err(str(e))
-    
+
     async def _streaming_text(
         self, messages: list[dict]
     ) -> AsyncIterator[StreamChunk]:
@@ -111,7 +111,7 @@ class XAgentLLMAdapter:
             StreamChunk
         """
         result = await self._router.chat(messages, stream=True)
-        
+
         last_usage = None
         async for chunk in result:
             if chunk.content:
@@ -121,10 +121,10 @@ class XAgentLLMAdapter:
             if chunk.is_finished:
                 yield StreamChunk.done("end_turn", last_usage or chunk.usage)
                 return
-        
+
         # 如果没有收到 is_finished，也发送 done
         yield StreamChunk.done("end_turn", last_usage)
-    
+
     async def _non_streaming_with_tools(
         self, messages: list[dict], openai_tools: list[dict]
     ) -> AsyncIterator[StreamChunk]:
@@ -140,18 +140,18 @@ class XAgentLLMAdapter:
         response = await self._router.chat(
             messages, stream=False, tools=openai_tools
         )
-        
+
         # 输出文本内容
         if response.content:
             yield StreamChunk.text(response.content)
-        
+
         # 输出工具调用
         if response.tool_calls:
             for tc in response.tool_calls:
                 tool_call_id = tc.get("id", "")
                 function = tc.get("function", {})
                 name = function.get("name", "")
-                
+
                 # arguments 可能是 JSON 字符串或 dict
                 arguments = function.get("arguments", {})
                 if isinstance(arguments, str):
@@ -159,9 +159,9 @@ class XAgentLLMAdapter:
                         arguments = json.loads(arguments)
                     except (json.JSONDecodeError, TypeError):
                         arguments = {"raw": arguments}
-                
+
                 yield StreamChunk.tool(tool_call_id, name, arguments)
-        
+
         # 输出完成
         stop_reason = _map_finish_reason(response.finish_reason)
         yield StreamChunk.done(stop_reason, response.usage)

@@ -31,18 +31,17 @@ Example:
 
 from __future__ import annotations
 
-from typing import (
-    TYPE_CHECKING,
-    Generic,
-    TypeVar,
-    Callable,
-    Awaitable,
-    Any,
-)
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-import logging
-import asyncio
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    TypeVar,
+)
 
 if TYPE_CHECKING:
     from .types import AgentTool
@@ -55,7 +54,7 @@ T = TypeVar("T")
 
 class ComponentStatus(Enum):
     """组件状态."""
-    
+
     REGISTERED = "registered"    # 已注册
     INITIALIZED = "initialized"  # 已初始化
     ACTIVE = "active"            # 活跃
@@ -77,7 +76,7 @@ class ComponentEntry(Generic[T]):
         status: 当前状态
         error: 错误信息
     """
-    
+
     name: str
     item: T | None = None
     factory: Any = None  # Callable[[], T] | Callable[[], Awaitable[T]] | None
@@ -100,7 +99,7 @@ class ComponentRegistry(Generic[T]):
         # 技能注册中心
         skill_registry = ComponentRegistry[Skill]()
     """
-    
+
     def __init__(self, name: str = "ComponentRegistry"):
         """初始化注册中心.
         
@@ -111,7 +110,7 @@ class ComponentRegistry(Generic[T]):
         self._entries: dict[str, ComponentEntry[T]] = {}
         self._categories: dict[str, set[str]] = {"default": set()}
         self._lock = asyncio.Lock()
-    
+
     def register(
         self,
         name: str,
@@ -144,10 +143,10 @@ class ComponentRegistry(Generic[T]):
                 f"[{self._name}] Component '{name}' already registered, overwriting",
                 extra={"registry": self._name, "component": name}
             )
-        
+
         # 判断是实例还是工厂
         is_factory = callable(item) and not hasattr(item, '__dataclass_fields__')
-        
+
         entry = ComponentEntry[T](
             name=name,
             item=item if not is_factory else None,
@@ -156,14 +155,14 @@ class ComponentRegistry(Generic[T]):
             dependencies=dependencies or [],
             metadata=metadata or {},
         )
-        
+
         self._entries[name] = entry
-        
+
         # 更新分类索引
         if category not in self._categories:
             self._categories[category] = set()
         self._categories[category].add(name)
-        
+
         logger.debug(
             f"[{self._name}] Component '{name}' registered",
             extra={
@@ -173,9 +172,9 @@ class ComponentRegistry(Generic[T]):
                 "is_factory": is_factory,
             }
         )
-        
+
         return True
-    
+
     def unregister(self, name: str) -> bool:
         """注销组件.
         
@@ -187,20 +186,20 @@ class ComponentRegistry(Generic[T]):
         """
         if name not in self._entries:
             return False
-        
+
         entry = self._entries.pop(name)
-        
+
         # 从分类中移除
         if entry.category in self._categories:
             self._categories[entry.category].discard(name)
-        
+
         logger.debug(
             f"[{self._name}] Component '{name}' unregistered",
             extra={"registry": self._name, "component": name}
         )
-        
+
         return True
-    
+
     def get(self, name: str) -> T | None:
         """获取组件.
         
@@ -215,7 +214,7 @@ class ComponentRegistry(Generic[T]):
         entry = self._entries.get(name)
         if entry is None:
             return None
-        
+
         # 延迟初始化
         if entry.item is None and entry.factory is not None:
             try:
@@ -229,10 +228,10 @@ class ComponentRegistry(Generic[T]):
                         extra={"registry": self._name, "component": name}
                     )
                     return None
-                
+
                 entry.item = result  # type: ignore
                 entry.status = ComponentStatus.INITIALIZED
-                
+
             except Exception as e:
                 entry.status = ComponentStatus.ERROR
                 entry.error = str(e)
@@ -241,9 +240,9 @@ class ComponentRegistry(Generic[T]):
                     extra={"registry": self._name, "component": name, "error": str(e)}
                 )
                 return None
-        
+
         return entry.item
-    
+
     async def get_async(self, name: str) -> T | None:
         """异步获取组件.
         
@@ -258,20 +257,20 @@ class ComponentRegistry(Generic[T]):
         entry = self._entries.get(name)
         if entry is None:
             return None
-        
+
         # 延迟初始化
         if entry.item is None and entry.factory is not None:
             try:
                 result = entry.factory()
-                
+
                 # 处理异步工厂
                 if asyncio.iscoroutine(result):
                     entry.item = await result  # type: ignore
                 else:
                     entry.item = result  # type: ignore
-                
+
                 entry.status = ComponentStatus.INITIALIZED
-                
+
             except Exception as e:
                 entry.status = ComponentStatus.ERROR
                 entry.error = str(e)
@@ -280,9 +279,9 @@ class ComponentRegistry(Generic[T]):
                     extra={"registry": self._name, "component": name, "error": str(e)}
                 )
                 return None
-        
+
         return entry.item
-    
+
     def has(self, name: str) -> bool:
         """检查组件是否存在.
         
@@ -293,7 +292,7 @@ class ComponentRegistry(Generic[T]):
             bool: 是否存在
         """
         return name in self._entries
-    
+
     def list_all(self) -> list[str]:
         """列出所有组件.
         
@@ -301,7 +300,7 @@ class ComponentRegistry(Generic[T]):
             list[str]: 组件名称列表
         """
         return list(self._entries.keys())
-    
+
     def list_by_category(self, category: str) -> list[str]:
         """按类别列出组件.
         
@@ -312,7 +311,7 @@ class ComponentRegistry(Generic[T]):
             list[str]: 组件名称列表
         """
         return list(self._categories.get(category, set()))
-    
+
     def list_categories(self) -> list[str]:
         """列出所有分类.
         
@@ -320,7 +319,7 @@ class ComponentRegistry(Generic[T]):
             list[str]: 分类名称列表
         """
         return list(self._categories.keys())
-    
+
     def get_metadata(self, name: str) -> dict[str, Any] | None:
         """获取组件元数据.
         
@@ -332,7 +331,7 @@ class ComponentRegistry(Generic[T]):
         """
         entry = self._entries.get(name)
         return entry.metadata if entry else None
-    
+
     def get_status(self, name: str) -> ComponentStatus | None:
         """获取组件状态.
         
@@ -344,7 +343,7 @@ class ComponentRegistry(Generic[T]):
         """
         entry = self._entries.get(name)
         return entry.status if entry else None
-    
+
     def check_dependencies(self, name: str) -> tuple[bool, list[str]]:
         """检查组件依赖.
         
@@ -357,14 +356,14 @@ class ComponentRegistry(Generic[T]):
         entry = self._entries.get(name)
         if entry is None:
             return False, [f"Component '{name}' not found"]
-        
+
         missing = []
         for dep in entry.dependencies:
             if dep not in self._entries:
                 missing.append(dep)
-        
+
         return len(missing) == 0, missing
-    
+
     def enable(self, name: str) -> bool:
         """启用组件.
         
@@ -377,16 +376,16 @@ class ComponentRegistry(Generic[T]):
         entry = self._entries.get(name)
         if entry is None:
             return False
-        
+
         if entry.status == ComponentStatus.DISABLED:
             entry.status = ComponentStatus.REGISTERED
             logger.debug(
                 f"[{self._name}] Component '{name}' enabled",
                 extra={"registry": self._name, "component": name}
             )
-        
+
         return True
-    
+
     def disable(self, name: str) -> bool:
         """禁用组件.
         
@@ -399,29 +398,29 @@ class ComponentRegistry(Generic[T]):
         entry = self._entries.get(name)
         if entry is None:
             return False
-        
+
         entry.status = ComponentStatus.DISABLED
         logger.debug(
             f"[{self._name}] Component '{name}' disabled",
             extra={"registry": self._name, "component": name}
         )
-        
+
         return True
-    
+
     def clear(self) -> None:
         """清空所有组件."""
         self._entries.clear()
         self._categories = {"default": set()}
-        
+
         logger.debug(
             f"[{self._name}] All components cleared",
             extra={"registry": self._name}
         )
-    
+
     def __len__(self) -> int:
         """返回组件数量."""
         return len(self._entries)
-    
+
     def __contains__(self, name: str) -> bool:
         """支持 `in` 操作符."""
         return name in self._entries
@@ -432,10 +431,10 @@ class ComponentRegistry(Generic[T]):
 # ============================================================
 
 # 工具注册中心
-_tool_registry: ComponentRegistry["AgentTool"] | None = None
+_tool_registry: ComponentRegistry[AgentTool] | None = None
 
 
-def get_tool_registry() -> ComponentRegistry["AgentTool"]:
+def get_tool_registry() -> ComponentRegistry[AgentTool]:
     """获取全局工具注册中心.
     
     Returns:

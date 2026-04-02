@@ -79,6 +79,10 @@ class Identity:
     agent_type: AgentType = AgentType.MAIN
     parent_trace_id: Optional[str] = None
     metadata: tuple[tuple[str, Any], ...] = ()
+    
+    # 多 Agent 协同相关
+    delegation_chain: tuple[str, ...] = ()      # 委派链路记录
+    shared_context_id: Optional[str] = None     # 关联的共享上下文 ID
 
     # ---- 便捷方法 ------------------------------------------------
 
@@ -119,6 +123,8 @@ class Identity:
             "agent_type": self.agent_type,
             "parent_trace_id": self.trace_id,
             "metadata": self.metadata,
+            "delegation_chain": self.delegation_chain,
+            "shared_context_id": self.shared_context_id,
         }
         base.update(overrides)
         return Identity(**base)

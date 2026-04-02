@@ -126,7 +126,7 @@ class ExperienceLearner:
 
     def __init__(
         self,
-        memory: "MemoryPort | None" = None,
+        memory: MemoryPort | None = None,
         search_timeout_ms: int = _DEFAULT_SEARCH_TIMEOUT_MS,
     ):
         self._memory = memory
@@ -165,7 +165,7 @@ class ExperienceLearner:
                 timeout=self._search_timeout_s,
             )
             return results
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Experience search timed out (%.0fms)", self._search_timeout_s * 1000)
             return []
         except Exception as e:

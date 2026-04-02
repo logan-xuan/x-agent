@@ -14,14 +14,14 @@ Endpoints:
 
 from __future__ import annotations
 
-from typing import Any
 from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ..logger import AgentLogger
-from ..types import LogLevel, LogCategory
+from ..types import LogCategory, LogLevel
 
 router = APIRouter(prefix="/agent", tags=["Agent Logs"])
 
@@ -171,13 +171,13 @@ def _llm_call_to_response(log, include_content: bool = False) -> LLMCallResponse
         stop_reason=log.stop_reason,
         error=log.error,
     )
-    
+
     if include_content:
         response.system_prompt = log.system_prompt if hasattr(log, 'system_prompt') else None
         response.messages = log.messages
         response.tools = log.tools if hasattr(log, 'tools') else None
         response.response_content = log.response_content
-    
+
     return response
 
 
@@ -217,7 +217,7 @@ async def get_logs(
     支持按 trace_id、category、level 过滤，支持分页。
     """
     logger = get_logger()
-    
+
     # 转换字符串参数为枚举
     category_enum = None
     if category:
@@ -225,14 +225,14 @@ async def get_logs(
             category_enum = LogCategory(category)
         except ValueError:
             pass
-    
+
     level_enum = None
     if level:
         try:
             level_enum = LogLevel(level)
         except ValueError:
             pass
-    
+
     logs = logger.get_logs(
         trace_id=trace_id,
         category=category_enum,
@@ -240,7 +240,7 @@ async def get_logs(
         limit=limit,
         offset=offset,
     )
-    
+
     # 获取总数（简化处理，实际可能需要优化）
     all_logs = logger.get_logs(
         trace_id=trace_id,
@@ -249,7 +249,7 @@ async def get_logs(
         limit=10000,
         offset=0,
     )
-    
+
     return PaginatedResponse(
         items=[_log_entry_to_response(e) for e in logs],
         total=len(all_logs),
@@ -266,19 +266,19 @@ async def get_llm_calls(
 ) -> PaginatedResponse:
     """查询 LLM 调用列表."""
     logger = get_logger()
-    
+
     if trace_id:
         calls = logger.get_llm_calls_by_trace(trace_id)
     else:
         # 获取所有 LLM 调用
         calls = list(logger._llm_calls)
-    
+
     # 按时间倒序
     calls.sort(key=lambda c: c.start_time or datetime.min, reverse=True)
-    
+
     total = len(calls)
     calls = calls[offset:offset + limit]
-    
+
     return PaginatedResponse(
         items=[_llm_call_to_response(c) for c in calls],
         total=total,
@@ -291,11 +291,11 @@ async def get_llm_calls(
 async def get_llm_call_detail(call_id: str) -> LLMCallResponse:
     """获取 LLM 调用详情（包含完整消息内容）."""
     logger = get_logger()
-    
+
     log = logger.get_llm_call(call_id)
     if not log:
         raise HTTPException(status_code=404, detail=f"LLM call not found: {call_id}")
-    
+
     return _llm_call_to_response(log, include_content=True)
 
 
@@ -308,20 +308,20 @@ async def get_tool_calls(
 ) -> PaginatedResponse:
     """查询工具调用列表."""
     logger = get_logger()
-    
+
     if llm_call_id:
         calls = logger.get_tool_calls_by_llm(llm_call_id)
     elif trace_id:
         calls = logger.get_tool_calls_by_trace(trace_id)
     else:
         calls = list(logger._tool_calls)
-    
+
     # 按时间倒序
     calls.sort(key=lambda c: c.start_time or datetime.min, reverse=True)
-    
+
     total = len(calls)
     calls = calls[offset:offset + limit]
-    
+
     return PaginatedResponse(
         items=[_tool_call_to_response(c) for c in calls],
         total=total,
@@ -334,11 +334,11 @@ async def get_tool_calls(
 async def get_tool_call_detail(call_id: str) -> ToolCallResponse:
     """获取工具调用详情."""
     logger = get_logger()
-    
+
     log = logger.get_tool_call(call_id)
     if not log:
         raise HTTPException(status_code=404, detail=f"Tool call not found: {call_id}")
-    
+
     return _tool_call_to_response(log)
 
 
@@ -348,40 +348,40 @@ async def get_traces(
 ) -> list[TraceOverview]:
     """获取所有 trace 概览列表."""
     logger = get_logger()
-    
+
     # 收集所有 trace_id
     trace_ids = set()
-    
+
     for log in logger._logs:
         if log.trace_id:
             trace_ids.add(log.trace_id)
-    
+
     for llm in logger._llm_calls:
         if llm.trace_id:
             trace_ids.add(llm.trace_id)
-    
+
     results = []
     for trace_id in trace_ids:
         logs = logger.get_logs(trace_id=trace_id, limit=1000)
         llm_calls = logger.get_llm_calls_by_trace(trace_id)
         tool_calls = logger.get_tool_calls_by_trace(trace_id)
-        
+
         if not logs:
             continue
-        
+
         # 计算时间范围
         timestamps = [l.timestamp for l in logs if l.timestamp]
         first_time = min(timestamps) if timestamps else None
         last_time = max(timestamps) if timestamps else None
-        
+
         # 计算总耗时
         total_duration = None
         if first_time and last_time:
             total_duration = (last_time - first_time).total_seconds() * 1000
-        
+
         # 检查是否有错误
         has_error = any(l.level == LogLevel.ERROR for l in logs)
-        
+
         results.append(TraceOverview(
             trace_id=trace_id,
             first_event=_format_datetime(first_time) or "",
@@ -392,10 +392,10 @@ async def get_traces(
             total_duration_ms=total_duration,
             has_error=has_error,
         ))
-    
+
     # 按最后事件时间倒序
     results.sort(key=lambda r: r.last_event, reverse=True)
-    
+
     return results[:limit]
 
 
@@ -403,14 +403,14 @@ async def get_traces(
 async def get_trace_detail(trace_id: str) -> TraceDetailResponse:
     """获取指定 trace 的完整日志."""
     logger = get_logger()
-    
+
     logs = logger.get_logs(trace_id=trace_id, limit=1000)
     llm_calls = logger.get_llm_calls_by_trace(trace_id)
     tool_calls = logger.get_tool_calls_by_trace(trace_id)
-    
+
     if not logs and not llm_calls and not tool_calls:
         raise HTTPException(status_code=404, detail=f"Trace not found: {trace_id}")
-    
+
     return TraceDetailResponse(
         trace_id=trace_id,
         logs=[_log_entry_to_response(l) for l in logs],
@@ -431,7 +431,7 @@ async def clear_logs() -> dict[str, str]:
 async def get_stats() -> dict[str, Any]:
     """获取日志统计信息."""
     logger = get_logger()
-    
+
     return {
         "log_count": logger.log_count,
         "llm_call_count": logger.llm_call_count,

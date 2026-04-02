@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..ports.context_port import PreparedContext
 from ...utils.logger import get_logger
+from ..ports.context_port import PreparedContext
 
 logger = get_logger(__name__)
 

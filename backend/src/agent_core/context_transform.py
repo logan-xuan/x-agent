@@ -10,18 +10,14 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .types import (
         AgentMessage,
-        UserMessage,
         AssistantMessage,
-        ToolResultMessage,
-        TextContent,
-        ImageContent,
-        ThinkingContent,
-        ToolCallContent,
         Content,
+        ToolResultMessage,
+        UserMessage,
     )
 
 
-def convert_message_to_llm(message: "AgentMessage") -> dict[str, Any]:
+def convert_message_to_llm(message: AgentMessage) -> dict[str, Any]:
     """将 AgentMessage 转换为 LLM API 格式.
     
     Args:
@@ -30,8 +26,8 @@ def convert_message_to_llm(message: "AgentMessage") -> dict[str, Any]:
     Returns:
         dict: LLM API 格式的消息
     """
-    from .types import UserMessage, AssistantMessage, ToolResultMessage
-    
+    from .types import AssistantMessage, ToolResultMessage, UserMessage
+
     if isinstance(message, UserMessage):
         return _convert_user_message(message)
     elif isinstance(message, AssistantMessage):
@@ -42,10 +38,10 @@ def convert_message_to_llm(message: "AgentMessage") -> dict[str, Any]:
         raise ValueError(f"Unknown message type: {type(message)}")
 
 
-def _convert_user_message(message: "UserMessage") -> dict[str, Any]:
+def _convert_user_message(message: UserMessage) -> dict[str, Any]:
     """转换用户消息."""
-    from .types import TextContent, ImageContent
-    
+    from .types import ImageContent, TextContent
+
     content_list = []
     for c in message.content:
         if isinstance(c, TextContent):
@@ -62,29 +58,30 @@ def _convert_user_message(message: "UserMessage") -> dict[str, Any]:
                     "data": c.data,
                 },
             })
-    
+
     # 如果只有一个文本内容，简化为字符串
     if len(content_list) == 1 and content_list[0]["type"] == "text":
         return {
             "role": "user",
             "content": content_list[0]["text"],
         }
-    
+
     return {
         "role": "user",
         "content": content_list,
     }
 
 
-def _convert_assistant_message(message: "AssistantMessage") -> dict[str, Any]:
+def _convert_assistant_message(message: AssistantMessage) -> dict[str, Any]:
     """转换助手消息 (OpenAI 格式)."""
-    from .types import TextContent, ThinkingContent, ToolCallContent
     import json
-    
+
+    from .types import TextContent, ToolCallContent
+
     # 提取文本内容
     text_parts = []
     tool_calls = []
-    
+
     for c in message.content:
         if isinstance(c, TextContent):
             text_parts.append(c.text)
@@ -98,32 +95,32 @@ def _convert_assistant_message(message: "AssistantMessage") -> dict[str, Any]:
                     "arguments": json.dumps(c.arguments) if isinstance(c.arguments, dict) else c.arguments,
                 }
             })
-    
+
     result: dict[str, Any] = {
         "role": "assistant",
         "content": "".join(text_parts) if text_parts else "",
     }
-    
+
     if tool_calls:
         result["tool_calls"] = tool_calls
-    
+
     return result
 
 
-def _convert_tool_result_message(message: "ToolResultMessage") -> dict[str, Any]:
+def _convert_tool_result_message(message: ToolResultMessage) -> dict[str, Any]:
     """转换工具结果消息 (OpenAI 格式)."""
     from .types import TextContent
-    
+
     # 提取文本内容
     text_parts = []
     for c in message.content:
         if isinstance(c, TextContent):
             text_parts.append(c.text)
-    
+
     content = "".join(text_parts)
     if message.is_error and not content.startswith("Error:"):
         content = f"Error: {content}"
-    
+
     # OpenAI 格式: role=tool, tool_call_id, content
     return {
         "role": "tool",
@@ -132,7 +129,7 @@ def _convert_tool_result_message(message: "ToolResultMessage") -> dict[str, Any]
     }
 
 
-def convert_messages_to_llm(messages: "list[AgentMessage]") -> list[dict[str, Any]]:
+def convert_messages_to_llm(messages: list[AgentMessage]) -> list[dict[str, Any]]:
     """将消息列表转换为 LLM API 格式.
     
     Args:
@@ -144,7 +141,7 @@ def convert_messages_to_llm(messages: "list[AgentMessage]") -> list[dict[str, An
     return [convert_message_to_llm(m) for m in messages]
 
 
-def content_to_dict(content: "Content") -> dict[str, Any]:
+def content_to_dict(content: Content) -> dict[str, Any]:
     """将 Content 转换为字典.
     
     Args:
@@ -153,8 +150,8 @@ def content_to_dict(content: "Content") -> dict[str, Any]:
     Returns:
         dict: 字典表示
     """
-    from .types import TextContent, ImageContent, ThinkingContent, ToolCallContent
-    
+    from .types import ImageContent, TextContent, ThinkingContent, ToolCallContent
+
     if isinstance(content, TextContent):
         return {"type": "text", "text": content.text}
     elif isinstance(content, ImageContent):
@@ -176,7 +173,7 @@ def content_to_dict(content: "Content") -> dict[str, Any]:
         return {"type": "unknown"}
 
 
-def message_to_dict(message: "AgentMessage") -> dict[str, Any]:
+def message_to_dict(message: AgentMessage) -> dict[str, Any]:
     """将 AgentMessage 转换为字典.
     
     Args:
@@ -185,8 +182,8 @@ def message_to_dict(message: "AgentMessage") -> dict[str, Any]:
     Returns:
         dict: 字典表示
     """
-    from .types import UserMessage, AssistantMessage, ToolResultMessage
-    
+    from .types import AssistantMessage, ToolResultMessage, UserMessage
+
     if isinstance(message, UserMessage):
         return {
             "role": "user",

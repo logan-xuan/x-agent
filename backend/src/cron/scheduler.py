@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import importlib.util
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -22,6 +23,8 @@ from ..utils.logger import get_logger
 from ..conversation.identity import get_identity_manager
 from .config import CronConfig, JobConfig
 from .exceptions import SchedulerError, JobNotFoundError, InvalidTriggerError
+from .retry import RetryPolicy, RetryState, JobStatus, JobExecutionRecord
+from .execution_mode import ExecutionMode, ExecutionModeConfig
 
 logger = get_logger(__name__)
 
@@ -55,13 +58,22 @@ class CronScheduler:
         self._data_store = None
         # Unified job execution history (both scheduled and manual triggers)
         # Keyed by job_id for easy lookup during JobReleased event
-        self._job_history: dict[str, dict] = {}
+        # Using OrderedDict for LRU cache implementation
+        self._job_history: OrderedDict[str, dict] = OrderedDict()
         # Max history entries to prevent unbounded memory growth
-        self._max_history = 200
+        self._max_history = 1000  # 增加默认限制到 1000
         # Track task_ids currently being run manually to avoid duplicate records
         self._manual_running_tasks: set[str] = set()
         # Registry mapping task_id -> original func_path for recovery after restart
         self._func_path_registry: dict[str, str] = {}
+        # Retry state tracking: job_id -> RetryState
+        self._retry_states: dict[str, RetryState] = {}
+        # Health tracking
+        self._failed_job_count: int = 0
+        self._recent_failures: list[datetime] = []  # 最近失败时间戳列表
+        self._max_recent_failures: int = 100  # 保留的最近失败记录数
+        # Execution mode cache
+        self._execution_mode_configs: dict[str, ExecutionModeConfig] = {}
     
     async def initialize(self, config: CronConfig | None = None) -> None:
         """Initialize the scheduler configuration."""
@@ -172,9 +184,13 @@ class CronScheduler:
         # Skip if this task is currently being run manually (run_job_now already recorded it)
         if event.task_id in self._manual_running_tasks:
             return
-        # Skip if already recorded
+        
+        # Update existing record if present (LRU: move to end)
         if job_id in self._job_history:
+            self._job_history.move_to_end(job_id)
             return
+            
+        # Create new record
         self._job_history[job_id] = {
             "id": job_id,
             "task_id": event.task_id,
@@ -188,8 +204,8 @@ class CronScheduler:
             "result": None,
             "exception": None,
         }
-        # Evict oldest entries if over limit
-        if len(self._job_history) > self._max_history:
+        # Evict oldest entries if over limit (LRU: remove from beginning)
+        while len(self._job_history) > self._max_history:
             oldest_key = next(iter(self._job_history))
             del self._job_history[oldest_key]
 
@@ -238,9 +254,21 @@ class CronScheduler:
 
         if event.outcome == JobOutcome.success:
             record["state"] = "completed"
+            # Clear retry state on success
+            if job_id in self._retry_states:
+                del self._retry_states[job_id]
         elif event.outcome == JobOutcome.error:
             record["state"] = "failed"
             record["exception"] = event.exception_message
+            
+            # Track failure for health monitoring
+            self._track_failure()
+            
+            # Check if retry is needed (schedule async task from sync callback)
+            asyncio.create_task(
+                self._handle_job_failure(job_id, event.task_id, event.exception_message)
+            )
+            
             logger.error(
                 "Job execution failed",
                 extra={
@@ -882,7 +910,9 @@ class CronScheduler:
             "exception": None,
         }
         self._job_history[job_id] = record
-        if len(self._job_history) > self._max_history:
+        self._job_history.move_to_end(job_id)
+        # LRU eviction: remove oldest entries if over limit
+        while len(self._job_history) > self._max_history:
             oldest_key = next(iter(self._job_history))
             del self._job_history[oldest_key]
 
@@ -1150,6 +1180,220 @@ class CronScheduler:
             logger.info("Task removed", extra={"task_id": task_id})
         except Exception as e:
             raise JobNotFoundError(f"Task {task_id} not found") from e
+
+    # === Health Monitoring ===
+    
+    def _track_failure(self) -> None:
+        """Track a job failure for health monitoring."""
+        self._failed_job_count += 1
+        now = datetime.now(timezone.utc)
+        self._recent_failures.append(now)
+        
+        # Trim old failures to prevent unbounded growth
+        cutoff = now - timedelta(hours=24)
+        self._recent_failures = [f for f in self._recent_failures if f > cutoff]
+        
+        # Keep only max_recent_failures
+        if len(self._recent_failures) > self._max_recent_failures:
+            self._recent_failures = self._recent_failures[-self._max_recent_failures:]
+    
+    def get_health_status(self) -> dict[str, Any]:
+        """Get scheduler health status.
+        
+        Returns:
+            Dict with health metrics:
+            - status: "healthy", "degraded", or "unhealthy"
+            - running: Whether scheduler is running
+            - pending_jobs: Number of pending jobs
+            - recent_failures: Count of failures in last hour
+            - total_failures: Total failure count since startup
+            - history_size: Current job history cache size
+            - retry_states: Number of jobs being retried
+        """
+        now = datetime.now(timezone.utc)
+        one_hour_ago = now - timedelta(hours=1)
+        recent_failures_count = sum(1 for f in self._recent_failures if f > one_hour_ago)
+        
+        # Determine health status
+        status = "healthy"
+        if not self._running:
+            status = "unhealthy"
+        elif recent_failures_count > 10:
+            status = "unhealthy"
+        elif recent_failures_count > 5:
+            status = "degraded"
+        
+        # Count pending jobs
+        pending_jobs = len(self._job_history)
+        
+        return {
+            "status": status,
+            "running": self._running,
+            "pending_jobs": pending_jobs,
+            "recent_failures_1h": recent_failures_count,
+            "total_failures": self._failed_job_count,
+            "history_size": len(self._job_history),
+            "retry_states": len(self._retry_states),
+            "max_history_limit": self._max_history,
+        }
+    
+    # === Retry Logic ===
+    
+    async def _handle_job_failure(self, job_id: str, task_id: str, error_message: str | None) -> None:
+        """Handle a job failure and schedule retry if needed.
+        
+        Args:
+            job_id: The job ID that failed
+            task_id: The task ID
+            error_message: Error message from the failure
+        """
+        # Get or create retry state
+        retry_state = self._retry_states.get(job_id)
+        if retry_state is None:
+            # Try to get retry policy from schedule metadata
+            policy = await self._get_retry_policy_for_task(task_id)
+            retry_state = RetryState(
+                job_id=job_id,
+                task_id=task_id,
+                policy=policy,
+            )
+            self._retry_states[job_id] = retry_state
+        
+        # Increment attempt
+        attempt = retry_state.increment_attempt()
+        retry_state.last_error = error_message
+        
+        # Check if we should retry
+        # For now, we retry on any exception (can be refined with exception type checking)
+        if attempt <= retry_state.policy.max_retries:
+            next_retry_time = retry_state.calculate_next_retry()
+            delay = retry_state.policy.get_delay(attempt)
+            
+            logger.info(
+                "Scheduling job retry",
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "max_retries": retry_state.policy.max_retries,
+                    "delay_seconds": delay,
+                    "next_retry_at": next_retry_time.isoformat(),
+                }
+            )
+            
+            # Schedule retry using asyncio
+            asyncio.create_task(self._schedule_retry(job_id, task_id, delay))
+        else:
+            # Max retries exceeded - mark as dead letter
+            logger.error(
+                "Job exceeded max retries, marking as dead letter",
+                extra={
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "attempts": attempt,
+                    "max_retries": retry_state.policy.max_retries,
+                }
+            )
+            # Update job history to dead_letter status
+            if job_id in self._job_history:
+                self._job_history[job_id]["state"] = JobStatus.DEAD_LETTER.value
+            
+            # Clean up retry state
+            del self._retry_states[job_id]
+    
+    async def _schedule_retry(self, job_id: str, task_id: str, delay: float) -> None:
+        """Schedule a job retry after delay.
+        
+        Args:
+            job_id: Original job ID
+            task_id: Task ID to retry
+            delay: Delay in seconds before retry
+        """
+        try:
+            await asyncio.sleep(delay)
+            
+            if not self._running or not self._scheduler:
+                logger.warning(
+                    "Cannot retry job - scheduler not running",
+                    extra={"job_id": job_id, "task_id": task_id}
+                )
+                return
+            
+            # Update status to retrying
+            if job_id in self._job_history:
+                self._job_history[job_id]["state"] = JobStatus.RETRYING.value
+            
+            # Execute the retry
+            logger.info(
+                "Executing job retry",
+                extra={"job_id": job_id, "task_id": task_id, "delay": delay}
+            )
+            
+            # Use run_job_now for retry (this creates a new execution)
+            await self.run_job_now(task_id)
+            
+        except Exception as e:
+            logger.error(
+                "Failed to execute job retry",
+                extra={"job_id": job_id, "task_id": task_id, "error": str(e)}
+            )
+    
+    async def _get_retry_policy_for_task(self, task_id: str) -> RetryPolicy:
+        """Get retry policy for a task from schedule metadata.
+        
+        Args:
+            task_id: The task ID
+            
+        Returns:
+            RetryPolicy instance (default if not configured)
+        """
+        if not self._scheduler:
+            return RetryPolicy()  # Return default
+        
+        try:
+            schedules = await self._scheduler.get_schedules()
+            for schedule in schedules:
+                if schedule.get("task_id") == task_id:
+                    metadata = schedule.get("metadata", {})
+                    retry_policy_data = metadata.get("retry_policy")
+                    if retry_policy_data:
+                        # Parse retry policy from metadata
+                        return RetryPolicy(**retry_policy_data)
+                    break
+        except Exception as e:
+            logger.debug(
+                "Failed to get retry policy for task",
+                extra={"task_id": task_id, "error": str(e)}
+            )
+        
+        return RetryPolicy()  # Return default policy
+    
+    # === Execution Mode Support ===
+    
+    def set_execution_mode(self, task_id: str, mode: ExecutionMode | str) -> None:
+        """Set execution mode for a task.
+        
+        Args:
+            task_id: The task ID
+            mode: Execution mode (enum or string)
+        """
+        config = ExecutionModeConfig.from_mode(mode)
+        self._execution_mode_configs[task_id] = config
+        logger.info(
+            "Set execution mode for task",
+            extra={"task_id": task_id, "mode": config.mode.value}
+        )
+    
+    def get_execution_mode(self, task_id: str) -> ExecutionModeConfig:
+        """Get execution mode config for a task.
+        
+        Args:
+            task_id: The task ID
+            
+        Returns:
+            ExecutionModeConfig instance (default if not set)
+        """
+        return self._execution_mode_configs.get(task_id, ExecutionModeConfig())
     
     @property
     def is_running(self) -> bool:

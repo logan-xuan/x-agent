@@ -23,37 +23,37 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
+from .context_transform import content_to_dict, convert_messages_to_llm, estimate_tokens
+from .experience_learning import ExperienceLearner, format_experience_for_prompt
+from .tool_executor import execute_tool_calls
 from .types import (
     AgentContext,
-    AgentMessage,
-    AgentEvent,
-    AgentStartEvent,
     AgentEndEvent,
-    TurnStartEvent,
-    TurnEndEvent,
+    AgentEvent,
+    AgentMessage,
+    AgentStartEvent,
+    AssistantMessage,
+    LLMCallLog,
+    LogCategory,
+    LogLevel,
+    MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
-    MessageEndEvent,
-    AssistantMessage,
-    ToolResultMessage,
-    ToolCallContent,
+    StreamChunkType,
     TextContent,
     ThinkingContent,
-    StreamChunkType,
-    ToolExecutionEndEvent,
-    LogLevel,
-    LogCategory,
-    LLMCallLog,
+    ToolCallContent,
     ToolCallLog,
+    ToolExecutionEndEvent,
+    ToolResultMessage,
+    TurnEndEvent,
+    TurnStartEvent,
 )
-from .context_transform import convert_messages_to_llm, estimate_tokens, content_to_dict
-from .tool_executor import execute_tool_calls
-from .experience_learning import ExperienceLearner, format_experience_for_prompt
 
 if TYPE_CHECKING:
     from .config import AgentCoreConfig
-    from .ports.llm_port import LLMPort
     from .logger import AgentLogger
+    from .ports.llm_port import LLMPort
 
 
 # ============================================================
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 async def agent_loop(
     prompts: list[AgentMessage],
     context: AgentContext,
-    config: "AgentCoreConfig",
+    config: AgentCoreConfig,
     abort_event: asyncio.Event | None = None,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Agent Loop 主入口.
@@ -109,7 +109,7 @@ class _AgentLoopRunner:
         self,
         prompts: list[AgentMessage],
         context: AgentContext,
-        config: "AgentCoreConfig",
+        config: AgentCoreConfig,
         abort_event: asyncio.Event | None,
     ) -> None:
         if config.llm is None:
@@ -188,9 +188,14 @@ class _AgentLoopRunner:
     async def run(self) -> AsyncGenerator[AgentEvent, None]:
         """主循环: 协调双层循环."""
         try:
-            from src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext
+            from src.conversation.context import AgentContext as ReqContext
+            from src.conversation.context import get_current_context, set_current_context
         except ImportError:
-            from backend.src.conversation.context import get_current_context, set_current_context, AgentContext as ReqContext  # type: ignore
+            from backend.src.conversation.context import AgentContext as ReqContext
+            from backend.src.conversation.context import (  # type: ignore
+                get_current_context,
+                set_current_context,
+            )
         req_ctx = get_current_context()
         if not req_ctx:
             # 如果没有上下文（如 CLI 或测试入口），创建一个带 Identity 的新上下文
@@ -412,6 +417,7 @@ class _AgentLoopRunner:
             tool_calls=tool_calls,
             abort_event=self.abort_event,
             get_steering=None,  # TODO: 支持 steering
+            middleware_pipeline=self.config.tool_middleware_pipeline,  # 传递中间件管道
         ):
             yield event
 
@@ -559,7 +565,7 @@ class _AgentLoopRunner:
 # ============================================================
 
 async def _stream_assistant_response(
-    llm: "LLMPort",
+    llm: LLMPort,
     llm_call_id: str,
     system_prompt: str,
     messages: list[dict],

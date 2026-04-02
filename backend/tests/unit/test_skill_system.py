@@ -119,7 +119,8 @@ class TestSkillParser:
         
         assert metadata.name == "pptx"
         assert len(metadata.description) > 0
-        assert "powerpoint" in metadata.description.lower() or "pptx" in metadata.description.lower()
+        # Description may be in Chinese (PPT) or English (powerpoint/pptx)
+        assert "ppt" in metadata.description.lower() or "powerpoint" in metadata.description.lower() or "演示" in metadata.description
 
 
 class TestSkillRegistry:

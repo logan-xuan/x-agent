@@ -5,7 +5,7 @@ MemoryPort 定义了 agent_core 与记忆系统交互的接口。
 
 from __future__ import annotations
 
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 
 class MemoryPort(Protocol):
@@ -30,7 +30,7 @@ class MemoryPort(Protocol):
                 results = self.vector_store.search(embedding, limit=limit)
                 return results
     """
-    
+
     async def store(
         self,
         content: str,
@@ -53,7 +53,7 @@ class MemoryPort(Protocol):
             Exception: 存储失败时抛出异常
         """
         ...
-    
+
     async def search(
         self,
         query: str,
@@ -78,7 +78,7 @@ class MemoryPort(Protocol):
                 - metadata: 元数据
         """
         ...
-    
+
     async def delete(self, entry_id: str) -> bool:
         """删除记忆.
         

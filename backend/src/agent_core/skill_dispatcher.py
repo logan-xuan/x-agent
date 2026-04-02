@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..models.skill import SkillManifest
@@ -35,8 +35,8 @@ class SkillCommandSpec:
     name: str
     skill_name: str
     description: str
-    dispatch_kind: Optional[str] = None
-    dispatch_tool: Optional[str] = None
+    dispatch_kind: str | None = None
+    dispatch_tool: str | None = None
 
 
 @dataclass
@@ -52,9 +52,9 @@ class SkillInvocation:
     """
     skill_name: str
     command_name: str
-    args: Optional[str]
+    args: str | None
     dispatch_mode: str  # "prompt_rewrite" | "tool_dispatch"
-    tool_name: Optional[str] = None
+    tool_name: str | None = None
 
 
 # ============================================================================
@@ -85,7 +85,7 @@ class SkillCommandResolver:
         invocation = resolver.resolve("/pptx 请帮我制作一个PPT")
         # SkillInvocation(skill_name="pptx", args="请帮我制作一个PPT", ...)
     """
-    
+
     def __init__(self, skill_commands: list[SkillCommandSpec]) -> None:
         """初始化解析器.
         
@@ -99,8 +99,8 @@ class SkillCommandResolver:
             # 同时用 skill_name 作为别名
             if cmd.skill_name.lower() != cmd.name.lower():
                 self._commands[cmd.skill_name.lower()] = cmd
-    
-    def resolve(self, user_input: str) -> Optional[SkillInvocation]:
+
+    def resolve(self, user_input: str) -> SkillInvocation | None:
         """解析用户输入为技能调用.
         
         支持格式:
@@ -117,39 +117,39 @@ class SkillCommandResolver:
         trimmed = user_input.strip()
         if not trimmed.startswith("/"):
             return None
-        
+
         # 匹配: /command args (command 不含空格)
         match = re.match(r"^/([^\s]+)(?:\s+([\s\S]+))?$", trimmed)
         if not match:
             return None
-        
+
         command_name = match.group(1).lower()
         args = match.group(2)
-        
+
         # 处理 /skill <skill_name> <args> 格式 (优先于保留命令检查)
         if command_name == "skill" and args:
             skill_match = re.match(r"^([^\s]+)(?:\s+([\s\S]+))?$", args.strip())
             if skill_match:
                 actual_skill_name = skill_match.group(1).lower()
                 actual_args = skill_match.group(2)
-                
+
                 cmd = self._find_command(actual_skill_name)
                 if cmd:
                     return self._create_invocation(cmd, actual_args)
             return None
-        
+
         # 检查是否是保留命令 (skill 除外，因为已在上面处理)
         if command_name in RESERVED_COMMANDS:
             return None
-        
+
         # 直接匹配 /skill_name 格式
         cmd = self._find_command(command_name)
         if cmd:
             return self._create_invocation(cmd, args)
-        
+
         return None
-    
-    def _find_command(self, name: str) -> Optional[SkillCommandSpec]:
+
+    def _find_command(self, name: str) -> SkillCommandSpec | None:
         """查找命令规格.
         
         支持模糊匹配:
@@ -165,14 +165,14 @@ class SkillCommandResolver:
         # 精确匹配
         if name in self._commands:
             return self._commands[name]
-        
+
         # 尝试下划线/连字符互换
         normalized = self._normalize_command_name(name)
         if normalized in self._commands:
             return self._commands[normalized]
-        
+
         return None
-    
+
     def _normalize_command_name(self, name: str) -> str:
         """规范化命令名称.
         
@@ -185,11 +185,11 @@ class SkillCommandResolver:
             规范化后的名称
         """
         return re.sub(r"[\s_]+", "-", name.strip().lower())
-    
+
     def _create_invocation(
         self,
         cmd: SkillCommandSpec,
-        args: Optional[str],
+        args: str | None,
     ) -> SkillInvocation:
         """创建技能调用对象.
         
@@ -210,14 +210,14 @@ class SkillCommandResolver:
                 dispatch_mode="tool_dispatch",
                 tool_name=cmd.dispatch_tool,
             )
-        
+
         return SkillInvocation(
             skill_name=cmd.skill_name,
             command_name=cmd.name,
             args=args.strip() if args else None,
             dispatch_mode="prompt_rewrite",
         )
-    
+
     def list_commands(self) -> list[str]:
         """列出所有可用命令.
         
@@ -248,7 +248,7 @@ class SkillPromptRewriter:
         prompt = rewriter.rewrite(invocation)
         # 'Use the "pptx" skill for this request.\n\nUser input:\n请帮我制作PPT'
     """
-    
+
     def rewrite(self, invocation: SkillInvocation) -> str:
         """重写技能调用为 prompt.
         
@@ -270,16 +270,16 @@ class SkillPromptRewriter:
             "2. Follow the instructions in SKILL.md exactly",
             "3. Do NOT use alternative approaches",
         ]
-        
+
         if invocation.args:
             parts.extend([
                 "",
                 "User input:",
                 invocation.args,
             ])
-        
+
         return "\n".join(parts)
-    
+
     def rewrite_simple(self, invocation: SkillInvocation) -> str:
         """简单重写 (用于已经注入了 Skills Section 的场景).
         
@@ -292,14 +292,14 @@ class SkillPromptRewriter:
         parts = [
             f'Use the "{invocation.skill_name}" skill for this request.',
         ]
-        
+
         if invocation.args:
             parts.extend([
                 "",
                 "User input:",
                 invocation.args,
             ])
-        
+
         return "\n".join(parts)
 
 
@@ -308,8 +308,8 @@ class SkillPromptRewriter:
 # ============================================================================
 
 def build_skill_command_specs(
-    manifests: list["SkillManifest"],
-    reserved_names: Optional[set[str]] = None,
+    manifests: list[SkillManifest],
+    reserved_names: set[str] | None = None,
 ) -> list[SkillCommandSpec]:
     """从技能清单构建命令规格列表.
     
@@ -323,26 +323,26 @@ def build_skill_command_specs(
     reserved = reserved_names or set(RESERVED_COMMANDS)
     used_names: set[str] = set(reserved)
     specs: list[SkillCommandSpec] = []
-    
+
     for manifest in manifests:
         # 生成命令名称
         raw_name = manifest.skill_id
         base_name = _sanitize_command_name(raw_name)
-        
+
         # 确保唯一性
         unique_name = _resolve_unique_name(base_name, used_names)
         used_names.add(unique_name.lower())
-        
+
         # 截断描述
         description = manifest.description or manifest.name
         if len(description) > 100:
             description = description[:97] + "..."
-        
+
         # 解析 frontmatter 中的 dispatch 配置
         dispatch_kind = None
         dispatch_tool = None
         # TODO: 从 manifest.metadata 解析 command-dispatch 和 command-tool
-        
+
         specs.append(SkillCommandSpec(
             name=unique_name,
             skill_name=manifest.skill_id,
@@ -350,7 +350,7 @@ def build_skill_command_specs(
             dispatch_kind=dispatch_kind,
             dispatch_tool=dispatch_tool,
         ))
-    
+
     return specs
 
 
@@ -388,10 +388,10 @@ def _resolve_unique_name(base: str, used: set[str]) -> str:
     """
     if base.lower() not in used:
         return base
-    
+
     for i in range(2, 1000):
         candidate = f"{base}_{i}"
         if candidate.lower() not in used:
             return candidate
-    
+
     return f"{base}_x"

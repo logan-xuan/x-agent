@@ -12,6 +12,7 @@ This module provides the built-in tools that are always available:
 - fetch_web_content: Fetch web page content
 - memory_search: Search long-term memory
 - notify: Send notifications to users
+- delegate_task: Delegate tasks to another Agent (through full agent loop)
 """
 
 from .file_ops import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool, SearchFilesTool
@@ -20,6 +21,7 @@ from .get_current_time import GetCurrentTimeTool
 from .fetch_web_content import FetchWebContentTool
 from .memory_search import MemorySearchTool
 from .notify_tool import NotifyTool
+from .delegate_task_tool import DelegateTaskTool
 from .terminal import RunInTerminalTool, GetTerminalOutputTool, KillProcessTool
 
 __all__ = [
@@ -33,6 +35,7 @@ __all__ = [
     "FetchWebContentTool",
     "MemorySearchTool",
     "NotifyTool",
+    "DelegateTaskTool",
     "RunInTerminalTool",
     "GetTerminalOutputTool",
     "KillProcessTool",
@@ -59,6 +62,7 @@ def get_builtin_tools() -> list:
         FetchWebContentTool(),
         MemorySearchTool(),
         NotifyTool(),
+        DelegateTaskTool(),
         terminal_tool,
         GetTerminalOutputTool(terminal_tool),
         KillProcessTool(terminal_tool),

@@ -19,8 +19,8 @@ agent_loop 在每次 LLM 调用前通过此接口准备上下文，
 
 from __future__ import annotations
 
-from typing import Protocol
 from dataclasses import dataclass, field
+from typing import Protocol
 
 
 @dataclass

@@ -14,8 +14,8 @@ SystemPromptPort 定义了 agent_core 与系统提示词构建系统交互的接
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
-from dataclasses import dataclass, field
 
 
 @dataclass

@@ -19,6 +19,7 @@ NotifyTool 允许 Agent 在对话过程中主动向用户推送通知消息。
 """
 
 from src.utils.logger import get_logger
+
 from ..base import BaseTool, ToolParameter, ToolParameterType, ToolResult
 
 logger = get_logger(__name__)
@@ -50,8 +51,17 @@ class NotifyTool(BaseTool):
             "You MUST call this tool to actually deliver a notification — simply generating text "
             "in your response will NOT send any notification to the user.\n\n"
             "When to use:\n"
-            "- User asks you to 'send', 'notify', 'tell', 'remind', or 'push' a message\n"
-            "- You need to push task progress, alerts, or reminders directly to the user\n\n"
+            "- User asks you to 'send', 'notify', 'tell', 'remind', or 'push' a SIMPLE message\n"
+            "- You need to push task progress, alerts, or reminders directly to the user\n"
+            "- You want to deliver a message without requiring the target to take any action\n\n"
+            "When NOT to use (use 'delegate_task' instead):\n"
+            "- You need another Agent to PROCESS or EXECUTE a task (e.g., query weather, analyze code)\n"
+            "- You want another Agent to use its tools or capabilities to complete work\n"
+            "- User says '让 [agent] 帮我查询/分析/执行...' — this requires delegate_task\n"
+            "- The target Agent needs to think, plan, or call tools to respond\n\n"
+            "Key difference:\n"
+            "- notify: Simple message delivery, NO agent loop, message sent as-is\n"
+            "- delegate_task: Full agent loop execution, target Agent uses its tools/capabilities\n\n"
             "Key parameters:\n"
             "- content: the notification text to deliver (sent as-is, no processing)\n"
             "- agent_id: target agent ID (e.g. 'code-reviewer') when routing to a specific agent\n"
@@ -165,14 +175,12 @@ class NotifyTool(BaseTool):
             ToolResult with delivery status.
         """
         try:
+            from src.conversation.identity import ChannelType
             from src.gateway.notification import (
-                ChannelSendResult,
                 NotificationMessage,
-                NotificationRouter,
                 NotificationTarget,
                 get_notification_router,
             )
-            from src.conversation.identity import ChannelType
 
             # 1. 构建通知消息
             notification_message = NotificationMessage(

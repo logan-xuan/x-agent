@@ -12,10 +12,48 @@ Example usage:
 
 from .scheduler import get_scheduler, CronScheduler
 from .config import CronConfig, JobConfig
+from .retry import (
+    BackoffStrategy,
+    JobStatus,
+    RetryPolicy,
+    JobExecutionRecord,
+    RetryState,
+)
+from .chain import (
+    ChainCondition,
+    JobChainStep,
+    JobChain,
+    ChainExecutionState,
+)
+from .execution_mode import (
+    ExecutionMode,
+    ExecutionModeConfig,
+    DEFAULT_LIGHT_CONFIG,
+    DEFAULT_STANDARD_CONFIG,
+    DEFAULT_FUNCTION_CONFIG,
+)
 
 __all__ = [
+    # Core scheduler
     "get_scheduler",
     "CronScheduler",
-    "CronConfig", 
+    "CronConfig",
     "JobConfig",
+    # Retry
+    "BackoffStrategy",
+    "JobStatus",
+    "RetryPolicy",
+    "JobExecutionRecord",
+    "RetryState",
+    # Chain
+    "ChainCondition",
+    "JobChainStep",
+    "JobChain",
+    "ChainExecutionState",
+    # Execution Mode
+    "ExecutionMode",
+    "ExecutionModeConfig",
+    "DEFAULT_LIGHT_CONFIG",
+    "DEFAULT_STANDARD_CONFIG",
+    "DEFAULT_FUNCTION_CONFIG",
 ]

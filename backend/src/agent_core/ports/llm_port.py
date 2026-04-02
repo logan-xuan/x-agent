@@ -6,7 +6,8 @@ LLMPort 定义了 agent_core 与 LLM 服务交互的接口。
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from ..types import AgentTool, StreamChunk
@@ -32,13 +33,13 @@ class LLMPort(Protocol):
                 # 调用 OpenAI API 并转换响应
                 ...
     """
-    
+
     async def stream(
         self,
         system_prompt: str,
         messages: list[dict],
-        tools: "list[AgentTool] | None" = None,
-    ) -> "AsyncIterator[StreamChunk]":
+        tools: list[AgentTool] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
         """流式生成响应.
         
         Args:

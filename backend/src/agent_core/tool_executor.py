@@ -7,34 +7,36 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Callable, Any
+from collections.abc import AsyncGenerator, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .ports.tool_port import ToolPort
+    from .tool_middleware import ToolMiddlewarePipeline
     from .types import (
+        AgentMessage,
         AgentTool,
         ToolCallContent,
-        ToolResult,
+        ToolExecutionEndEvent,
         ToolExecutionStartEvent,
         ToolExecutionUpdateEvent,
-        ToolExecutionEndEvent,
-        AgentMessage,
+        ToolResult,
     )
-    from .ports.tool_port import ToolPort
 
 
 async def execute_tool_calls(
     trace_id: str,
     llm_call_id: str,
-    tool_port: "ToolPort | None",
-    tools: "list[AgentTool]",
-    tool_calls: "list[ToolCallContent]",
+    tool_port: ToolPort | None,
+    tools: list[AgentTool],
+    tool_calls: list[ToolCallContent],
     abort_event: asyncio.Event | None = None,
-    get_steering: "Callable[[], asyncio.Coroutine[Any, Any, list[AgentMessage]]] | None" = None,
-) -> "AsyncGenerator[ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent, None]":
+    get_steering: Callable[[], asyncio.Coroutine[Any, Any, list[AgentMessage]]] | None = None,
+    middleware_pipeline: ToolMiddlewarePipeline | None = None,
+) -> AsyncGenerator[ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent, None]:
     """执行工具调用.
     
-    顺序执行工具调用，支持 abort 和 steering 机制。
+    顺序执行工具调用，支持 abort、steering 和中间件机制。
     
     Args:
         trace_id: 追踪 ID
@@ -44,52 +46,90 @@ async def execute_tool_calls(
         tool_calls: 要执行的工具调用列表
         abort_event: 中止事件
         get_steering: 获取 steering 消息的回调
+        middleware_pipeline: 工具中间件管道（可选）
     
     Yields:
         ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent
     """
     from .types import (
-        ToolExecutionStartEvent,
-        ToolExecutionEndEvent,
-        ToolResult,
         TextContent,
+        ToolExecutionEndEvent,
+        ToolExecutionStartEvent,
+        ToolResult,
     )
-    
+
     for i, tc in enumerate(tool_calls):
         # 检查是否中止
         if abort_event and abort_event.is_set():
             yield _create_skipped_event(tc, "Aborted by user")
             continue
-        
+
         # 查找工具定义
         tool = next((t for t in tools if t.name == tc.name), None)
-        
+
         # 发送开始事件
         yield ToolExecutionStartEvent(
             tool_call_id=tc.id,
             tool_name=tc.name,
             arguments=tc.arguments,
         )
-        
+
         start_time = time.time()
         result: ToolResult | None = None
         is_error = False
         error_msg: str | None = None
-        
+
         try:
             if tool is None:
                 raise ValueError(f"Tool not found: {tc.name}")
-            
+
             if tool_port is None:
                 raise ValueError("ToolPort is not configured")
-            
-            # 执行工具
-            result = await tool_port.execute(
-                tool_name=tc.name,
-                arguments=tc.arguments,
-                abort_event=abort_event,
-            )
-            
+
+            # 使用中间件管道执行工具（如果配置了）
+            if middleware_pipeline is not None:
+                from .tool_middleware import ToolCallContext, MiddlewareAction
+                
+                # 创建中间件上下文
+                ctx = ToolCallContext(
+                    tool_name=tc.name,
+                    tool_call_id=tc.id,
+                    arguments=tc.arguments,
+                )
+                
+                # 执行 before 中间件
+                ctx = await middleware_pipeline.execute_before(ctx)
+                
+                # 检查是否中止
+                if ctx.action == MiddlewareAction.ABORT:
+                    result = ToolResult(
+                        content=[TextContent(text=ctx.abort_reason or "Execution aborted by middleware")],
+                        details={"aborted": True, "reason": ctx.abort_reason},
+                    )
+                    is_error = True
+                else:
+                    # 执行工具（可能使用中间件修改后的参数）
+                    result = await tool_port.execute(
+                        tool_name=ctx.tool_name,
+                        arguments=ctx.arguments,
+                        abort_event=abort_event,
+                    )
+                    ctx.result = result
+                    
+                    # 执行 after 中间件
+                    ctx = await middleware_pipeline.execute_after(ctx)
+                    
+                    # 使用中间件可能修改的结果
+                    if ctx.result is not None:
+                        result = ctx.result
+            else:
+                # 直接执行工具
+                result = await tool_port.execute(
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                    abort_event=abort_event,
+                )
+
         except Exception as e:
             is_error = True
             error_msg = str(e)
@@ -97,9 +137,9 @@ async def execute_tool_calls(
                 content=[TextContent(text=f"Error: {error_msg}")],
                 details={"error": error_msg, "error_type": type(e).__name__},
             )
-        
+
         duration_ms = (time.time() - start_time) * 1000
-        
+
         # 发送结束事件
         yield ToolExecutionEndEvent(
             tool_call_id=tc.id,
@@ -108,7 +148,7 @@ async def execute_tool_calls(
             is_error=is_error,
             duration_ms=duration_ms,
         )
-        
+
         # 检查 steering 消息
         if get_steering:
             try:
@@ -123,9 +163,9 @@ async def execute_tool_calls(
 
 
 def _create_skipped_event(
-    tc: "ToolCallContent", 
+    tc: ToolCallContent,
     reason: str
-) -> "ToolExecutionEndEvent":
+) -> ToolExecutionEndEvent:
     """创建跳过事件.
     
     Args:
@@ -135,8 +175,8 @@ def _create_skipped_event(
     Returns:
         ToolExecutionEndEvent
     """
-    from .types import ToolExecutionEndEvent, ToolResult, TextContent
-    
+    from .types import TextContent, ToolExecutionEndEvent, ToolResult
+
     return ToolExecutionEndEvent(
         tool_call_id=tc.id,
         tool_name=tc.name,
@@ -152,12 +192,12 @@ def _create_skipped_event(
 async def execute_tool_calls_parallel(
     trace_id: str,
     llm_call_id: str,
-    tool_port: "ToolPort | None",
-    tools: "list[AgentTool]",
-    tool_calls: "list[ToolCallContent]",
+    tool_port: ToolPort | None,
+    tools: list[AgentTool],
+    tool_calls: list[ToolCallContent],
     abort_event: asyncio.Event | None = None,
     max_concurrent: int = 5,
-) -> "list[tuple[ToolCallContent, ToolResult, bool, float]]":
+) -> list[tuple[ToolCallContent, ToolResult, bool, float]]:
     """并行执行工具调用.
     
     Args:
@@ -172,11 +212,11 @@ async def execute_tool_calls_parallel(
     Returns:
         list[tuple[ToolCallContent, ToolResult, is_error, duration_ms]]
     """
-    from .types import ToolResult, TextContent
-    
+    from .types import TextContent, ToolResult
+
     semaphore = asyncio.Semaphore(max_concurrent)
-    
-    async def execute_single(tc: "ToolCallContent") -> "tuple[ToolCallContent, ToolResult, bool, float]":
+
+    async def execute_single(tc: ToolCallContent) -> tuple[ToolCallContent, ToolResult, bool, float]:
         async with semaphore:
             if abort_event and abort_event.is_set():
                 return (
@@ -188,25 +228,25 @@ async def execute_tool_calls_parallel(
                     True,
                     0,
                 )
-            
+
             tool = next((t for t in tools if t.name == tc.name), None)
             start_time = time.time()
-            
+
             try:
                 if tool is None:
                     raise ValueError(f"Tool not found: {tc.name}")
-                
+
                 if tool_port is None:
                     raise ValueError("ToolPort is not configured")
-                
+
                 result = await tool_port.execute(
                     tool_name=tc.name,
                     arguments=tc.arguments,
                     abort_event=abort_event,
                 )
-                
+
                 return (tc, result, False, (time.time() - start_time) * 1000)
-                
+
             except Exception as e:
                 return (
                     tc,
@@ -217,8 +257,8 @@ async def execute_tool_calls_parallel(
                     True,
                     (time.time() - start_time) * 1000,
                 )
-    
+
     tasks = [execute_single(tc) for tc in tool_calls]
     results = await asyncio.gather(*tasks)
-    
+
     return list(results)

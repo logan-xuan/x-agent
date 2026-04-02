@@ -33,6 +33,8 @@ from ..agent_core.config import AgentCoreConfig
 from ..agent_core.adapters.llm_adapter import XAgentLLMAdapter
 from ..agent_core.adapters.tool_adapter import XAgentToolAdapter
 from ..agent_core.adapters.system_prompt_adapter import create_system_prompt_adapter
+# 新增 Adapter 导入
+from ..agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
 from ..agent_core.types import (
     AgentEndEvent,
     AgentStartEvent,
@@ -277,6 +279,9 @@ class AgentBridge:
 
         context_adapter = self._create_context_adapter(llm_router, agent_info, workspace_path=workspace_path)
 
+        # 创建工具中间件管道（可选，默认启用计时和日志中间件）
+        tool_middleware_adapter = self._create_tool_middleware_adapter()
+
         return AgentCoreConfig(
             llm=llm_adapter,
             tools=tool_adapter,
@@ -284,6 +289,7 @@ class AgentBridge:
             context=context_adapter,
             system_prompt=system_prompt,
             system_prompt_port=system_prompt_adapter,
+            tool_middleware_pipeline=tool_middleware_adapter.pipeline if tool_middleware_adapter else None,
         )
 
     def create_agent(
@@ -556,6 +562,37 @@ class AgentBridge:
         except Exception as exc:
             logger.warning(
                 "Failed to create context adapter, compression disabled",
+                extra={"error": str(exc), "error_type": type(exc).__name__},
+            )
+            return None
+
+    def _create_tool_middleware_adapter(self):
+        """创建工具中间件适配器（可选）。
+
+        默认启用计时和日志中间件。
+        可通过配置添加高危工具审批中间件。
+
+        Returns:
+            ToolMiddlewareAdapter 实例，或 None。
+        """
+        try:
+            from ..config.manager import get_config
+
+            config = get_config()
+
+            # 检查是否有配置高危工具列表
+            high_risk_tools = None
+            if hasattr(config, 'tools') and hasattr(config.tools, 'high_risk_tools'):
+                high_risk_tools = config.tools.high_risk_tools
+
+            return create_tool_middleware_adapter(
+                enable_timing=True,
+                enable_logging=True,
+                high_risk_tools=high_risk_tools,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to create tool middleware adapter",
                 extra={"error": str(exc), "error_type": type(exc).__name__},
             )
             return None

@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 from ..logger import AgentLogger
 from ..types import (
+    LLMCallLog,
+    LogCategory,
     LogEntry,
     LogLevel,
-    LogCategory,
-    LLMCallLog,
     ToolCallLog,
 )
 
@@ -33,7 +33,7 @@ class XAgentLoggerAdapter:
         
         config = AgentCoreConfig(logger=adapter)
     """
-    
+
     def __init__(self, agent_logger: AgentLogger) -> None:
         """初始化适配器.
         
@@ -42,24 +42,24 @@ class XAgentLoggerAdapter:
         """
         self._agent_logger = agent_logger
         self._structlog = _get_structlog()
-    
+
     # ================================================================
     # LoggerPort 接口实现
     # ================================================================
-    
+
     def log(self, entry: LogEntry) -> None:
         """记录通用日志 (双重输出)."""
         # 内存缓存
         self._agent_logger.log(entry)
-        
+
         # structlog 输出
         if self._structlog:
             _forward_to_structlog(self._structlog, entry)
-    
+
     def log_llm_call_start(self, log: LLMCallLog) -> None:
         """记录 LLM 调用开始."""
         self._agent_logger.log_llm_call_start(log)
-    
+
     def log_llm_call_end(
         self,
         call_id: str,
@@ -76,11 +76,11 @@ class XAgentLoggerAdapter:
             duration_ms=duration_ms,
             error=error,
         )
-    
+
     def log_tool_call_start(self, log: ToolCallLog) -> None:
         """记录工具调用开始."""
         self._agent_logger.log_tool_call_start(log)
-    
+
     def log_tool_call_end(
         self,
         call_id: str,
@@ -97,7 +97,7 @@ class XAgentLoggerAdapter:
             is_error=is_error,
             error=error,
         )
-    
+
     def get_logs(
         self,
         trace_id: str | None = None,
@@ -114,11 +114,11 @@ class XAgentLoggerAdapter:
             limit=limit,
             offset=offset,
         )
-    
+
     def get_llm_call(self, call_id: str) -> LLMCallLog | None:
         """获取 LLM 调用详情."""
         return self._agent_logger.get_llm_call(call_id)
-    
+
     def get_tool_call(self, call_id: str) -> ToolCallLog | None:
         """获取工具调用详情."""
         return self._agent_logger.get_tool_call(call_id)
@@ -158,7 +158,7 @@ def _forward_to_structlog(logger: Any, entry: LogEntry) -> None:
     """
     method_name = _LEVEL_MAP.get(entry.level, "info")
     log_fn = getattr(logger, method_name, logger.info)
-    
+
     extra = {
         "event": entry.event,
         "trace_id": entry.trace_id,
@@ -170,7 +170,7 @@ def _forward_to_structlog(logger: Any, entry: LogEntry) -> None:
         extra["duration_ms"] = entry.duration_ms
     if entry.error:
         extra["error"] = entry.error
-    
+
     try:
         log_fn(entry.message, extra=extra)
     except Exception:

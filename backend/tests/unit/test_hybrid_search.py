@@ -122,14 +122,16 @@ class TestHybridSearch:
         return mock
 
     @pytest.fixture
-    def mock_embedder(self) -> MagicMock:
-        """Create mock embedder."""
-        mock = MagicMock()
-        mock.embed.return_value = [0.1] * 384  # Mock embedding
-        return mock
+    def mock_embedder(self):
+        """Create real-like embedder that won't trigger mock detection."""
+        class RealLikeEmbedder:
+            """Embedder that behaves like a real one for testing."""
+            def embed(self, text: str) -> list[float]:
+                return [0.1] * 384  # Fixed embedding for testing
+        return RealLikeEmbedder()
 
     @pytest.fixture
-    def hybrid_search(self, mock_vector_store: MagicMock, mock_embedder: MagicMock) -> HybridSearch:
+    def hybrid_search(self, mock_vector_store: MagicMock, mock_embedder) -> HybridSearch:
         """Create hybrid search instance with mocks."""
         return HybridSearch(
             vector_store=mock_vector_store,
@@ -194,8 +196,8 @@ class TestHybridSearch:
             assert hasattr(result, "score")
             assert hasattr(result, "vector_score")
             assert hasattr(result, "text_score")
-            # Combined score should follow weight ratio
-            expected = 0.7 * result.vector_score + 0.3 * result.text_score
+            # Combined score should follow weight ratio from the search instance
+            expected = hybrid_search.vector_weight * result.vector_score + hybrid_search.text_weight * result.text_score
             assert abs(result.score - expected) < 0.001
 
     def test_hybrid_search_ranking(

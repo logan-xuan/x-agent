@@ -6,7 +6,8 @@ ToolPort 定义了 agent_core 与工具系统交互的接口。
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Protocol, Callable, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from ..types import AgentTool, ToolResult
@@ -37,14 +38,14 @@ class ToolPort(Protocol):
             def get_tools(self) -> list[AgentTool]:
                 return [...]
     """
-    
+
     async def execute(
         self,
         tool_name: str,
         arguments: dict[str, Any],
-        abort_event: "asyncio.Event | None" = None,
-        on_progress: "Callable[[Any], None] | None" = None,
-    ) -> "ToolResult":
+        abort_event: asyncio.Event | None = None,
+        on_progress: Callable[[Any], None] | None = None,
+    ) -> ToolResult:
         """执行工具.
         
         Args:
@@ -60,8 +61,8 @@ class ToolPort(Protocol):
             Exception: 工具执行失败时可以抛出异常，也可以返回错误结果
         """
         ...
-    
-    def get_tools(self) -> "list[AgentTool]":
+
+    def get_tools(self) -> list[AgentTool]:
         """获取可用工具列表.
         
         Returns:

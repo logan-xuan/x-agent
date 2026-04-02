@@ -12,17 +12,17 @@ PlanPort 定义了 agent_core 与计划系统交互的接口。
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, Any
-from enum import Enum
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from ..types import AgentContext, AgentMessage
+    from ..types import AgentContext
 
 
 class PlanStatus(Enum):
     """计划状态."""
-    
+
     PENDING = "pending"        # 待执行
     IN_PROGRESS = "in_progress"  # 执行中
     COMPLETED = "completed"    # 已完成
@@ -32,7 +32,7 @@ class PlanStatus(Enum):
 
 class StepStatus(Enum):
     """步骤状态."""
-    
+
     PENDING = "pending"        # 待执行
     RUNNING = "running"        # 执行中
     COMPLETED = "completed"    # 已完成
@@ -53,7 +53,7 @@ class PlanStep:
         result: 执行结果（可选）
         error: 错误信息（可选）
     """
-    
+
     step_id: str
     description: str
     tool_name: str = ""
@@ -75,20 +75,20 @@ class Plan:
         status: 计划状态
         metadata: 元数据
     """
-    
+
     plan_id: str = ""
     goal: str = ""
     steps: list[PlanStep] = field(default_factory=list)
     current_step: int = 0
     status: PlanStatus = PlanStatus.PENDING
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     def get_current_step(self) -> PlanStep | None:
         """获取当前步骤."""
         if 0 <= self.current_step < len(self.steps):
             return self.steps[self.current_step]
         return None
-    
+
     def get_progress(self) -> tuple[int, int]:
         """获取进度 (已完成, 总数)."""
         completed = sum(1 for s in self.steps if s.status == StepStatus.COMPLETED)
@@ -112,11 +112,11 @@ class PlanPort(Protocol):
                 ]
                 return Plan(goal=goal, steps=steps)
     """
-    
+
     async def generate_plan(
         self,
         goal: str,
-        context: "AgentContext",
+        context: AgentContext,
     ) -> Plan:
         """生成执行计划.
         
@@ -131,7 +131,7 @@ class PlanPort(Protocol):
             Exception: 生成失败时抛出异常
         """
         ...
-    
+
     async def update_step(
         self,
         plan_id: str,
@@ -153,7 +153,7 @@ class PlanPort(Protocol):
             bool: 是否更新成功
         """
         ...
-    
+
     async def get_plan(self, plan_id: str) -> Plan | None:
         """获取计划详情.
         
@@ -164,11 +164,11 @@ class PlanPort(Protocol):
             Plan | None: 计划详情，不存在返回 None
         """
         ...
-    
+
     async def should_replan(
         self,
         plan: Plan,
-        context: "AgentContext",
+        context: AgentContext,
     ) -> tuple[bool, str]:
         """判断是否需要重新规划.
         
@@ -180,12 +180,12 @@ class PlanPort(Protocol):
             tuple[bool, str]: (是否需要重规划, 原因说明)
         """
         ...
-    
+
     async def replan(
         self,
         plan: Plan,
         reason: str,
-        context: "AgentContext",
+        context: AgentContext,
     ) -> Plan:
         """重新规划.
         

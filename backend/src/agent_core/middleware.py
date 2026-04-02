@@ -26,21 +26,19 @@ Example:
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
-    Generic,
-    TypeVar,
-    Protocol,
-    Callable,
-    Awaitable,
     Any,
+    Generic,
+    Protocol,
+    TypeVar,
 )
-from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
-import logging
 
 if TYPE_CHECKING:
-    from .types import AgentMessage, AgentTool, ToolResult
+    from .types import AgentMessage, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +64,7 @@ class Middleware(Protocol, Generic[T, R]):
                 print(f"After: {result}")
                 return result
     """
-    
+
     async def process(
         self,
         data: T,
@@ -104,12 +102,12 @@ class MessageMiddleware(Protocol):
                     messages = await self._compress(messages)
                 return await next_handler(messages)
     """
-    
+
     async def process(
         self,
-        messages: list["AgentMessage"],
-        next_handler: Callable[[list["AgentMessage"]], Awaitable[list["AgentMessage"]]],
-    ) -> list["AgentMessage"]:
+        messages: list[AgentMessage],
+        next_handler: Callable[[list[AgentMessage]], Awaitable[list[AgentMessage]]],
+    ) -> list[AgentMessage]:
         """处理消息列表.
         
         Args:
@@ -136,7 +134,7 @@ class ToolCallContext:
         trace_id: 追踪ID
         metadata: 元数据
     """
-    
+
     tool_name: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
     trace_id: str = ""
@@ -154,9 +152,9 @@ class ToolCallResult:
         duration_ms: 执行耗时
         metadata: 元数据
     """
-    
+
     tool_name: str = ""
-    result: "ToolResult | None" = None
+    result: ToolResult | None = None
     is_error: bool = False
     duration_ms: float = 0
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -189,7 +187,7 @@ class ToolMiddleware(Protocol):
                 self.cache.set(cache_key, result.result)
                 return result
     """
-    
+
     async def process(
         self,
         ctx: ToolCallContext,
@@ -223,12 +221,12 @@ class MiddlewareChain(Generic[T, R]):
         
         result = await chain.execute(messages, final_handler)
     """
-    
+
     def __init__(self):
         """初始化中间件链."""
         self._middlewares: list[Middleware[T, R]] = []
-    
-    def add(self, middleware: Middleware[T, R]) -> "MiddlewareChain[T, R]":
+
+    def add(self, middleware: Middleware[T, R]) -> MiddlewareChain[T, R]:
         """添加中间件.
         
         Args:
@@ -239,7 +237,7 @@ class MiddlewareChain(Generic[T, R]):
         """
         self._middlewares.append(middleware)
         return self
-    
+
     def remove(self, middleware: Middleware[T, R]) -> bool:
         """移除中间件.
         
@@ -254,11 +252,11 @@ class MiddlewareChain(Generic[T, R]):
             return True
         except ValueError:
             return False
-    
+
     def clear(self) -> None:
         """清空所有中间件."""
         self._middlewares.clear()
-    
+
     async def execute(
         self,
         data: T,
@@ -275,14 +273,14 @@ class MiddlewareChain(Generic[T, R]):
         """
         # 构建处理链
         handler = final_handler
-        
+
         # 从后向前构建
         for middleware in reversed(self._middlewares):
             # 创建闭包捕获当前 handler
             handler = self._wrap_handler(middleware, handler)
-        
+
         return await handler(data)
-    
+
     def _wrap_handler(
         self,
         middleware: Middleware[T, R],
@@ -299,9 +297,9 @@ class MiddlewareChain(Generic[T, R]):
         """
         async def wrapped(data: T) -> R:
             return await middleware.process(data, next_handler)
-        
+
         return wrapped
-    
+
     def __len__(self) -> int:
         """返回中间件数量."""
         return len(self._middlewares)
@@ -316,28 +314,28 @@ class LoggingMessageMiddleware:
     
     记录消息处理过程。
     """
-    
+
     def __init__(self, name: str = "MessageLogger"):
         self.name = name
-    
+
     async def process(
         self,
-        messages: list["AgentMessage"],
-        next_handler: Callable[[list["AgentMessage"]], Awaitable[list["AgentMessage"]]],
-    ) -> list["AgentMessage"]:
+        messages: list[AgentMessage],
+        next_handler: Callable[[list[AgentMessage]], Awaitable[list[AgentMessage]]],
+    ) -> list[AgentMessage]:
         """记录消息处理."""
         logger.info(
             f"[{self.name}] Processing {len(messages)} messages",
             extra={"middleware": self.name, "count": len(messages)}
         )
-        
+
         result = await next_handler(messages)
-        
+
         logger.info(
             f"[{self.name}] Processed, result: {len(result)} messages",
             extra={"middleware": self.name, "result_count": len(result)}
         )
-        
+
         return result
 
 
@@ -346,10 +344,10 @@ class TimingToolMiddleware:
     
     记录工具执行耗时。
     """
-    
+
     def __init__(self, name: str = "ToolTimer"):
         self.name = name
-    
+
     async def process(
         self,
         ctx: ToolCallContext,
@@ -357,14 +355,14 @@ class TimingToolMiddleware:
     ) -> ToolCallResult:
         """记录执行耗时."""
         import time
-        
+
         start_time = time.time()
-        
+
         result = await next_handler(ctx)
-        
+
         duration_ms = (time.time() - start_time) * 1000
         result.duration_ms = duration_ms
-        
+
         logger.info(
             f"[{self.name}] Tool {ctx.tool_name} executed in {duration_ms:.2f}ms",
             extra={
@@ -373,7 +371,7 @@ class TimingToolMiddleware:
                 "duration_ms": duration_ms,
             }
         )
-        
+
         return result
 
 
@@ -382,7 +380,7 @@ class RetryToolMiddleware:
     
     工具执行失败时自动重试。
     """
-    
+
     def __init__(
         self,
         max_retries: int = 3,
@@ -392,7 +390,7 @@ class RetryToolMiddleware:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.name = name
-    
+
     async def process(
         self,
         ctx: ToolCallContext,
@@ -400,18 +398,18 @@ class RetryToolMiddleware:
     ) -> ToolCallResult:
         """失败时重试."""
         import asyncio
-        
+
         last_error = None
-        
+
         for attempt in range(self.max_retries):
             try:
                 result = await next_handler(ctx)
-                
+
                 if not result.is_error:
                     return result
-                
+
                 last_error = result
-                
+
                 if attempt < self.max_retries - 1:
                     logger.warning(
                         f"[{self.name}] Tool {ctx.tool_name} failed, "
@@ -423,12 +421,12 @@ class RetryToolMiddleware:
                         }
                     )
                     await asyncio.sleep(self.retry_delay * (attempt + 1))
-                    
+
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay * (attempt + 1))
-        
+
         # 所有重试都失败
         logger.error(
             f"[{self.name}] Tool {ctx.tool_name} failed after {self.max_retries} retries",
@@ -438,8 +436,8 @@ class RetryToolMiddleware:
                 "attempts": self.max_retries,
             }
         )
-        
+
         if isinstance(last_error, Exception):
             raise last_error
-        
+
         return last_error  # type: ignore

@@ -264,6 +264,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         "files": files,
                     }
                 )
+            
+            # Register all agents to AgentRegistry for health check and discovery
+            from .services.agent_registry import get_agent_registry, AgentCapability
+            registry = get_agent_registry()
+            for agent_config in config.multi_agent.agents:
+                # Build capabilities from type and features
+                capabilities = [agent_config.type]
+                if agent_config.features:
+                    capabilities.extend(
+                        f.strip() for f in agent_config.features.split(",") if f.strip()
+                    )
+                
+                agent_cap = AgentCapability(
+                    agent_id=agent_config.id,
+                    name=agent_config.name,
+                    capabilities=capabilities,
+                    max_concurrent_tasks=3,
+                )
+                registry.register(agent_cap)
+            
+            logger.info(
+                "Agents registered to AgentRegistry",
+                extra={"count": len(config.multi_agent.agents)}
+            )
         except Exception as e:
             logger.error(
                 "Failed to initialize multi-agent context loader",

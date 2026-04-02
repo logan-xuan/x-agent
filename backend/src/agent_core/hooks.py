@@ -31,50 +31,74 @@ Example:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Any, Awaitable
-from enum import Enum
-from dataclasses import dataclass, field
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .types import AgentState, AgentMessage, AgentEvent
+    from .types import AgentMessage, AgentState
 
 logger = logging.getLogger(__name__)
 
 
 class HookPoint(Enum):
     """Hook 触发点."""
-    
+
     # LLM 相关
     BEFORE_LLM_CALL = "before_llm_call"       # LLM 调用前
     AFTER_LLM_CALL = "after_llm_call"         # LLM 调用后
-    
+
     # 工具相关
     BEFORE_TOOL_EXEC = "before_tool_exec"     # 工具执行前
     AFTER_TOOL_EXEC = "after_tool_exec"       # 工具执行后
-    
+
     # 上下文相关
     ON_CONTEXT_OVERFLOW = "on_context_overflow"  # 上下文溢出时
     ON_CONTEXT_COMPRESS = "on_context_compress"  # 上下文压缩时
-    
+
     # 计划相关
     ON_PLAN_GENERATED = "on_plan_generated"   # 计划生成后
     ON_PLAN_UPDATED = "on_plan_updated"       # 计划更新后
     ON_REPLAN = "on_replan"                   # 触发重规划时
-    
+
     # 流程相关
     ON_TURN_START = "on_turn_start"           # Turn 开始时
     ON_TURN_END = "on_turn_end"               # Turn 结束时
     ON_ITERATION = "on_iteration"             # 每次迭代时
-    
+
     # 错误处理
     ON_ERROR = "on_error"                     # 错误发生时
     ON_RETRY = "on_retry"                     # 重试时
-    
+
     # 消息相关
     ON_USER_MESSAGE = "on_user_message"       # 收到用户消息
     ON_ASSISTANT_MESSAGE = "on_assistant_message"  # 生成助手消息
+
+    # Prompt 构建相关
+    BEFORE_PROMPT_BUILD = "before_prompt_build"     # prompt 构建前，可注入/移除 section
+    AFTER_PROMPT_BUILD = "after_prompt_build"        # prompt 构建后，可修改最终 prompt 字符串
+    ON_SECTION_RENDER = "on_section_render"          # 每个 section 渲染时，可动态修改内容
+
+    # Tool 调用生命周期相关
+    BEFORE_TOOL_SELECTION = "before_tool_selection"  # LLM 返回工具调用后、执行前，可修改/过滤工具列表
+    ON_TOOL_APPROVAL = "on_tool_approval"            # 高危工具审批（可阻断执行）
+    ON_TOOL_REGISTER = "on_tool_register"            # 工具注册时
+    ON_TOOL_UNREGISTER = "on_tool_unregister"        # 工具注销时
+    ON_TOOL_BATCH_START = "on_tool_batch_start"      # 批量工具调用开始
+    ON_TOOL_BATCH_END = "on_tool_batch_end"          # 批量工具调用结束
+
+    # Agent 通信相关
+    ON_AGENT_DELEGATE = "on_agent_delegate"            # Agent 委派任务时
+    ON_AGENT_DELEGATE_RESULT = "on_agent_delegate_result"  # 收到委派结果时
+    ON_AGENT_MESSAGE_RECEIVED = "on_agent_message_received"  # 收到 Agent 消息时
+
+    # 多 Agent 协同相关
+    ON_COLLABORATION_START = "on_collaboration_start"    # 协同任务开始
+    ON_COLLABORATION_END = "on_collaboration_end"        # 协同任务结束
+    ON_SHARED_CONTEXT_UPDATE = "on_shared_context_update"  # 共享上下文更新
 
 
 @dataclass
@@ -87,28 +111,28 @@ class HookContext:
         agent_state: Agent 状态引用
         metadata: 额外元数据
     """
-    
+
     point: HookPoint
     data: dict[str, Any] = field(default_factory=dict)
-    agent_state: "AgentState | None" = None
+    agent_state: AgentState | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     # 以下字段用于特定 HookPoint
-    
+
     # BEFORE/AFTER_LLM_CALL
-    messages: "list[AgentMessage] | None" = None
-    llm_response: "Any | None" = None
-    
+    messages: list[AgentMessage] | None = None
+    llm_response: Any | None = None
+
     # BEFORE/AFTER_TOOL_EXEC
     tool_name: str = ""
     tool_arguments: dict[str, Any] = field(default_factory=dict)
-    tool_result: "Any | None" = None
-    
+    tool_result: Any | None = None
+
     # ON_ERROR
     error: Exception | None = None
-    
+
     # ON_PLAN_*
-    plan: "Any | None" = None
+    plan: Any | None = None
 
 
 # Hook 处理函数类型
@@ -125,7 +149,7 @@ class HookEntry:
         name: Hook 名称（用于调试）
         enabled: 是否启用
     """
-    
+
     handler: HookHandler
     priority: int = 100
     name: str = ""
@@ -156,14 +180,14 @@ class HookRegistry:
         # 触发
         result = await registry.trigger(ctx)
     """
-    
+
     def __init__(self):
         """初始化注册中心."""
         self._hooks: dict[HookPoint, list[HookEntry]] = {
             point: [] for point in HookPoint
         }
         self._lock = asyncio.Lock()
-    
+
     def register(
         self,
         point: HookPoint,
@@ -187,7 +211,7 @@ class HookRegistry:
         self._hooks[point].append(entry)
         # 按优先级排序
         self._hooks[point].sort(key=lambda e: e.priority)
-        
+
         logger.debug(
             "Hook registered",
             extra={
@@ -196,7 +220,7 @@ class HookRegistry:
                 "priority": priority,
             }
         )
-    
+
     def on(
         self,
         point: HookPoint,
@@ -222,7 +246,7 @@ class HookRegistry:
             self.register(point, handler, priority, name)
             return handler
         return decorator
-    
+
     async def trigger(self, ctx: HookContext) -> HookContext:
         """触发 Hook 链.
         
@@ -236,14 +260,14 @@ class HookRegistry:
             HookContext: 处理后的上下文
         """
         entries = self._hooks.get(ctx.point, [])
-        
+
         for entry in entries:
             if not entry.enabled:
                 continue
-            
+
             try:
                 result = await entry.handler(ctx)
-                
+
                 # None 表示停止链式执行
                 if result is None:
                     logger.debug(
@@ -254,9 +278,9 @@ class HookRegistry:
                         }
                     )
                     break
-                
+
                 ctx = result
-                
+
             except Exception as e:
                 logger.error(
                     "Hook execution failed",
@@ -267,9 +291,9 @@ class HookRegistry:
                     }
                 )
                 # Hook 失败不中断主流程
-        
+
         return ctx
-    
+
     def unregister(self, point: HookPoint, name: str) -> bool:
         """注销 Hook.
         
@@ -290,7 +314,7 @@ class HookRegistry:
                 )
                 return True
         return False
-    
+
     def enable(self, point: HookPoint, name: str) -> bool:
         """启用 Hook."""
         for entry in self._hooks.get(point, []):
@@ -298,7 +322,7 @@ class HookRegistry:
                 entry.enabled = True
                 return True
         return False
-    
+
     def disable(self, point: HookPoint, name: str) -> bool:
         """禁用 Hook."""
         for entry in self._hooks.get(point, []):
@@ -306,7 +330,7 @@ class HookRegistry:
                 entry.enabled = False
                 return True
         return False
-    
+
     def list_hooks(self, point: HookPoint | None = None) -> list[dict[str, Any]]:
         """列出注册的 Hook.
         
@@ -317,7 +341,7 @@ class HookRegistry:
             list[dict]: Hook 信息列表
         """
         result = []
-        
+
         if point:
             entries = self._hooks.get(point, [])
             for entry in entries:
@@ -336,7 +360,7 @@ class HookRegistry:
                         "priority": entry.priority,
                         "enabled": entry.enabled,
                     })
-        
+
         return result
 
 
