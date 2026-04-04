@@ -43,6 +43,7 @@ class PreparedContext:
     original_tokens: int = 0
     final_tokens: int = 0
     summary: str = ""
+    metadata: dict = field(default_factory=dict)
 
 
 class ContextPort(Protocol):
@@ -71,6 +72,7 @@ class ContextPort(Protocol):
         session_id: str,
         messages: list[dict],
         system_prompt: str = "",
+        tools: list[dict] | None = None,
     ) -> PreparedContext:
         """准备 LLM 调用上下文.
 
@@ -81,6 +83,7 @@ class ContextPort(Protocol):
             session_id: 会话标识符
             messages: LLM 格式的消息列表 (不含 system prompt)
             system_prompt: 系统提示词
+            tools: OpenAI function/tool schema 列表（可选）
 
         Returns:
             PreparedContext: 准备好的上下文

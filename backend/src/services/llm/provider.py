@@ -43,6 +43,8 @@ class LLMProvider(ABC):
         self.model_id = config.get("model_id", "unknown")
         self.timeout = config.get("timeout", 30.0)
         self.max_retries = config.get("max_retries", 2)
+        self.max_context_tokens = config.get("max_context_tokens", 32000)
+        self.max_output_tokens = config.get("max_output_tokens", 8192)
     
     @abstractmethod
     async def chat(

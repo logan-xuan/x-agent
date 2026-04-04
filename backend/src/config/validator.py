@@ -190,6 +190,14 @@ class ConfigValidator:
                 severity=ValidationSeverity.WARNING,
                 suggestion="Consider increasing timeout to at least 30 seconds",
             ))
+
+        if model.max_output_tokens > model.max_context_tokens:
+            result.issues.append(ValidationIssue(
+                field=f"{prefix}.max_output_tokens",
+                message="max_output_tokens exceeds max_context_tokens",
+                severity=ValidationSeverity.WARNING,
+                suggestion="Ensure output token limit does not exceed the model context window",
+            ))
         
         # Check for backup without priority
         if not model.is_primary and model.priority == 0:

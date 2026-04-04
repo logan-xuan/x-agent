@@ -21,6 +21,18 @@ class ModelConfig(BaseModel):
     is_primary: bool = Field(default=False, description="Whether this is the primary model")
     timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Request timeout in seconds")
     max_retries: int = Field(default=2, ge=0, le=5, description="Max retry attempts")
+    max_context_tokens: int = Field(
+        default=32000,
+        ge=1000,
+        le=2000000,
+        description="Maximum input context window supported by the model"
+    )
+    max_output_tokens: int = Field(
+        default=8192,
+        ge=1,
+        le=2000000,
+        description="Maximum output tokens supported by the model"
+    )
     priority: int = Field(default=0, ge=0, description="Backup priority (lower = higher priority)")
     
     def get_masked_key(self) -> str:
@@ -145,11 +157,103 @@ class CompressionConfig(BaseModel):
         le=32000,
         description="Trigger compression when token count exceeds this threshold"
     )
+    max_context_tokens: int = Field(
+        default=12000,
+        ge=2000,
+        le=200000,
+        description="Operational hard cap for full prompt context before forcing compression"
+    )
     retention_count: int = Field(
         default=50,
         ge=5,
         le=200,
         description="Number of most recent messages to retain after compression"
+    )
+    max_tool_message_chars: int = Field(
+        default=4000,
+        ge=200,
+        le=100000,
+        description="Maximum characters retained from a single tool result when building LLM context"
+    )
+    trigger_ratio: float = Field(
+        default=0.72,
+        ge=0.3,
+        le=0.95,
+        description="Target utilization ratio of the operational context budget before compression triggers"
+    )
+    output_reserve_ratio: float = Field(
+        default=0.1,
+        ge=0.01,
+        le=0.5,
+        description="Default ratio of model context budget reserved for output when agent max_tokens is not set"
+    )
+    min_output_reserve_tokens: int = Field(
+        default=4096,
+        ge=256,
+        le=200000,
+        description="Minimum output tokens reserved for generation"
+    )
+    safety_margin_ratio: float = Field(
+        default=0.03,
+        ge=0.0,
+        le=0.2,
+        description="Safety margin ratio reserved for protocol overhead and token estimation drift"
+    )
+    min_safety_margin_tokens: int = Field(
+        default=2048,
+        ge=0,
+        le=200000,
+        description="Minimum safety margin reserved for protocol overhead and token estimation drift"
+    )
+    mode: Literal["legacy", "hybrid", "stateful"] = Field(
+        default="stateful",
+        description="Context engine mode: legacy compression only, hybrid stateful assembly + compression, or stateful-first"
+    )
+    stateful_max_working_set_messages: int = Field(
+        default=8,
+        ge=2,
+        le=50,
+        description="Maximum exact recent messages retained in stateful assembly"
+    )
+    session_state_budget_tokens: int = Field(
+        default=1200,
+        ge=200,
+        le=10000,
+        description="Token budget for session state text in stateful assembly"
+    )
+    evidence_budget_tokens: int = Field(
+        default=2000,
+        ge=0,
+        le=10000,
+        description="Token budget for evidence ledger snippets in stateful assembly"
+    )
+    episodic_budget_tokens: int = Field(
+        default=2000,
+        ge=0,
+        le=10000,
+        description="Token budget for episodic memory snippets in stateful assembly"
+    )
+    artifact_budget_tokens: int = Field(
+        default=1200,
+        ge=0,
+        le=10000,
+        description="Token budget for artifact reference snippets in stateful assembly"
+    )
+    compression_quality_gate_enabled: bool = Field(
+        default=False,
+        description="Whether to reject compression results that fail minimum quality thresholds"
+    )
+    min_compression_ratio: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="Minimum compression ratio required when quality gate is enabled"
+    )
+    min_token_savings: int = Field(
+        default=1000,
+        ge=0,
+        le=1000000,
+        description="Minimum token savings required when quality gate is enabled"
     )
 
 
@@ -512,3 +616,10 @@ class Config(BaseModel):
     aliyun_opensearch: AliyunOpensearchConfig = Field(default_factory=lambda: AliyunOpensearchConfig(api_key="", host=""), description="Aliyun OpenSearch config")
     cron: dict[str, Any] = Field(default_factory=dict, description="Cron scheduler config")
     multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig, description="Multi-agent configuration")
+
+    def get_model_by_name(self, name: str) -> ModelConfig | None:
+        """Get a configured model by its configuration name."""
+        for model in self.models:
+            if model.name == name:
+                return model
+        return None

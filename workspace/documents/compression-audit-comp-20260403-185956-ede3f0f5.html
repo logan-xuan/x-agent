@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compression Audit - comp-20260403-185956-ede3f0f5</title>
+  <style>
+    :root {
+      --bg: #f5efe3;
+      --panel: rgba(255, 251, 245, 0.92);
+      --ink: #1f1d1a;
+      --muted: #6e655b;
+      --line: rgba(66, 51, 36, 0.12);
+      --accent: #1e6f5c;
+      --accent-soft: rgba(30, 111, 92, 0.12);
+      --warn: #b85c38;
+      --warn-soft: rgba(184, 92, 56, 0.12);
+      --bad: #9f2d2d;
+      --bad-soft: rgba(159, 45, 45, 0.12);
+      --good: #256d1b;
+      --shadow: 0 18px 40px rgba(36, 26, 18, 0.08);
+      --radius: 20px;
+      --mono: "SFMono-Regular", "Menlo", "Consolas", monospace;
+      --sans: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.75), transparent 42%),
+        radial-gradient(circle at bottom right, rgba(30,111,92,0.10), transparent 28%),
+        linear-gradient(135deg, #f7f2e9 0%, #efe4d0 100%);
+      min-height: 100vh;
+    }
+
+    .shell {
+      width: min(1440px, calc(100vw - 40px));
+      margin: 24px auto 48px;
+    }
+
+    .hero {
+      padding: 28px 30px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.92), rgba(246, 239, 227, 0.94));
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(30,111,92,0.18), rgba(30,111,92,0.02));
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: clamp(28px, 4vw, 44px);
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+      max-width: 860px;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 980px;
+      font-size: 16px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .meta-strip {
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.7);
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+
+    .card h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .card h3 {
+      margin: 18px 0 8px;
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+    }
+
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-7 { grid-column: span 7; }
+    .span-6 { grid-column: span 6; }
+    .span-5 { grid-column: span 5; }
+    .span-4 { grid-column: span 4; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      padding: 16px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.76);
+      border: 1px solid var(--line);
+    }
+
+    .metric .label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .metric .value {
+      margin-top: 8px;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+
+    .metric .sub {
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .metric.bad { background: var(--bad-soft); }
+    .metric.warn { background: var(--warn-soft); }
+    .metric.good { background: rgba(37,109,27,0.08); }
+
+    .callout {
+      padding: 16px 18px;
+      border-left: 4px solid var(--warn);
+      background: rgba(255,255,255,0.72);
+      border-radius: 12px;
+      color: var(--ink);
+      line-height: 1.75;
+    }
+
+    .callout strong { color: var(--bad); }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      padding: 16px 14px 14px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.94), rgba(246,239,227,0.88));
+      border: 1px solid var(--line);
+      min-height: 150px;
+    }
+
+    .step::after {
+      content: "→";
+      position: absolute;
+      right: -11px;
+      top: calc(50% - 14px);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      box-shadow: 0 6px 16px rgba(30,111,92,0.22);
+    }
+
+    .step:last-child::after { display: none; }
+
+    .step .tag {
+      display: inline-block;
+      font-size: 12px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-radius: 999px;
+      padding: 4px 8px;
+      margin-bottom: 10px;
+    }
+
+    .step .title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .step .body {
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--muted);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .chart-wrap {
+      border-radius: 16px;
+      background: rgba(255,255,255,0.72);
+      border: 1px solid var(--line);
+      padding: 16px;
+    }
+
+    svg text {
+      font-family: var(--sans);
+      fill: var(--muted);
+      font-size: 12px;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .table th,
+    .table td {
+      text-align: left;
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      line-height: 1.6;
+    }
+
+    .table th {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: .06em;
+    }
+
+    .code-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .code-item {
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.76);
+    }
+
+    .code-item .path {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--accent);
+      margin-bottom: 6px;
+      word-break: break-all;
+    }
+
+    .code-item .desc {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .snippet {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      border-radius: 16px;
+      background: #1d1b18;
+      color: #f4f0ea;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.7;
+      overflow: auto;
+      max-height: 420px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      padding: 10px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.8);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .findings {
+      display: grid;
+      gap: 12px;
+    }
+
+    .finding {
+      padding: 16px 18px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.8);
+    }
+
+    .finding .head {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+
+    .finding .title {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .severity {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .severity.high { background: var(--bad-soft); color: var(--bad); }
+    .severity.medium { background: var(--warn-soft); color: var(--warn); }
+    .severity.low { background: var(--accent-soft); color: var(--accent); }
+
+    .finding p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.75;
+    }
+
+    .footer-note {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 1200px) {
+      .span-8, .span-7, .span-6, .span-5, .span-4 { grid-column: span 12; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .step::after { display: none; }
+      .snippet { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .shell { width: calc(100vw - 22px); margin: 12px auto 24px; }
+      .hero { padding: 22px 18px; }
+      .card { padding: 18px; }
+      .metrics { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">Compression Audit / HTML Review</div>
+      <h1>压缩记录审查: <span style="font-family:var(--mono); font-size:0.66em;">comp-20260403-185956-ede3f0f5</span></h1>
+      <p>
+        当前压缩策略不是“没触发”，而是“触发后越来越难压”。这条记录只把 31,376 tokens 压到 31,328，
+        净减少 48 tokens，压缩率只有 0.15%。根因是增量压缩把旧摘要再次喂回压缩器，同时把第一条历史摘要误当成“原始 system 消息”永久保留，
+        之后每次只压缩 3 条新增消息，收益几乎归零。
+      </p>
+      <div class="meta-strip">
+        <div class="chip">会话 ID: <strong style="color:var(--ink); font-family:var(--mono);">feishu_oc_550409ae081200c2f586dbe1f8657e7c</strong></div>
+        <div class="chip">时间: <strong style="color:var(--ink);">2026-04-03 18:59:56</strong></div>
+        <div class="chip">模型: <strong style="color:var(--ink);">glm-5 / primary</strong></div>
+        <div class="chip">当前压缩配置: <strong style="color:var(--ink);">threshold_tokens=8000, retention_count=50, max_context_tokens=32000</strong></div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="card span-12">
+        <h2>核心指标</h2>
+        <div class="metrics">
+          <div class="metric bad">
+            <div class="label">Token 压缩率</div>
+            <div class="value">0.15%</div>
+            <div class="sub">31,376 → 31,328，只减少 48 tokens。对后续 LLM 调用几乎没有帮助。</div>
+          </div>
+          <div class="metric warn">
+            <div class="label">消息变化</div>
+            <div class="value">55 → 52</div>
+            <div class="sub">本轮只归档 3 条消息，保留 50 条 recent messages，系统性限制了压缩空间。</div>
+          </div>
+          <div class="metric warn">
+            <div class="label">摘要标记数</div>
+            <div class="value">2 / 2</div>
+            <div class="sub">压缩前原始消息中已有 2 个 <code>[历史对话摘要]</code>，压缩后仍保留 2 个。</div>
+          </div>
+          <div class="metric">
+            <div class="label">JSON 体积</div>
+            <div class="value">83,950 → 83,822</div>
+            <div class="sub">原始/压缩消息 JSON 长度仅差 128 字符，说明压缩产物与输入几乎等长。</div>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:16px;">
+          <strong>直接结论：</strong>
+          当前实现已经从“有效压缩”退化成“重复携带旧摘要 + 追加新摘要 + 保留大量 recent messages”。
+          对长会话来说，这会把压缩模块变成一次昂贵的重写操作，而不是预算回收操作。
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <h2>当前压缩链路</h2>
+        <div class="steps">
+          <div class="step">
+            <div class="tag">1</div>
+            <div class="title">Agent Loop</div>
+            <div class="body">在真正调用 LLM 前，先把对话消息转成 OpenAI 兼容格式，然后进入 ContextAdapter 做压缩准备。</div>
+          </div>
+          <div class="step">
+            <div class="tag">2</div>
+            <div class="title">Context Adapter</div>
+            <div class="body">创建 <code>summary_fn</code>，摘要本身也是一次 LLM 调用；同时根据模型参数推导压缩预算。</div>
+          </div>
+          <div class="step">
+            <div class="tag">3</div>
+            <div class="title">恢复缓存</div>
+            <div class="body">先从内存缓存取历史压缩结果；如果没有，再从 <code>compression_events</code> 恢复最近一次 <code>compressed_messages</code>。</div>
+          </div>
+          <div class="step">
+            <div class="tag">4</div>
+            <div class="title">触发判断</div>
+            <div class="body">只要新增消息数、新增 token 或总 token 超过阈值，就会触发压缩。</div>
+          </div>
+          <div class="step">
+            <div class="tag">5</div>
+            <div class="title">增量拼装</div>
+            <div class="body">如果存在缓存，会先把旧的 <code>compressed_messages</code> 与新增消息直接拼起来，再送进压缩器。</div>
+          </div>
+          <div class="step">
+            <div class="tag">6</div>
+            <div class="title">压缩器处理</div>
+            <div class="body">默认保留第一条 <code>system</code> 消息，再从后续消息里提取旧摘要，生成增量摘要，并把两者拼接。</div>
+          </div>
+          <div class="step">
+            <div class="tag">7</div>
+            <div class="title">落库并回填</div>
+            <div class="body">新的 <code>compressed_messages</code> 会再次写回数据库，下一次恢复缓存时继续作为输入，问题因此会累积。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card span-7">
+        <h2>同会话压缩趋势</h2>
+        <div class="legend">
+          <span><i class="dot" style="background:#8a5a44;"></i> 原始 tokens</span>
+          <span><i class="dot" style="background:#1e6f5c;"></i> 压缩后 tokens</span>
+          <span><i class="dot" style="background:#b85c38;"></i> 本次审查记录</span>
+        </div>
+        <div class="chart-wrap">
+          <svg id="historyChart" width="100%" height="340" viewBox="0 0 860 340" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="footer-note">
+          观察点：18:49:56 这次压缩曾经有效，把 32,126 压到 8,578；但之后每次都回到 0% 附近，说明问题不是“模型不会摘要”，而是“后续增量压缩的输入结构已经坏掉”。
+        </div>
+      </section>
+
+      <section class="card span-5">
+        <h2>为什么这次只能压掉 48 tokens</h2>
+        <table class="table">
+          <thead>
+            <tr><th>证据</th><th>含义</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>original_message_count=55</strong><br/>compressed_message_count=52</td>
+              <td>这次只归档了 3 条消息，空间非常小。</td>
+            </tr>
+            <tr>
+              <td><strong>retention_count=50</strong></td>
+              <td>压缩器强行保留 50 条 recent messages，导致压缩几乎只能动边角料。</td>
+            </tr>
+            <tr>
+              <td><strong>摘要标记数: 2 → 2</strong></td>
+              <td>旧摘要没有被真正消化掉，而是继续占着上下文窗口。</td>
+            </tr>
+            <tr>
+              <td><strong>summary merge 策略是拼接</strong></td>
+              <td>旧摘要越长，下一次压缩的基础盘越大，之后很难再回收。</td>
+            </tr>
+            <tr>
+              <td><strong>DB 恢复缓存</strong></td>
+              <td>即使进程重建，也会把坏的压缩产物重新喂回去，问题具备跨请求持续性。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card span-12">
+        <h2>当前策略拆解</h2>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>层面</th>
+              <th>当前实现</th>
+              <th>优点</th>
+              <th>隐患</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>触发条件</td>
+              <td>新增消息数、新增 token、总 token 任一超阈值即压缩</td>
+              <td>能尽早拦截长会话</td>
+              <td>触发频繁，但不校验“压缩是否真的回收预算”</td>
+            </tr>
+            <tr>
+              <td>压缩输入</td>
+              <td>有缓存时直接用 <code>cache.compressed_messages + new_messages</code></td>
+              <td>避免从头重算</td>
+              <td>把旧压缩产物直接二次喂入，容易累积结构性污染</td>
+            </tr>
+            <tr>
+              <td>摘要策略</td>
+              <td>旧摘要 + 新摘要拼接，不做再摘要</td>
+              <td>看起来保守，避免信息遗漏</td>
+              <td>摘要会单调增长，最终自己变成主要负担</td>
+            </tr>
+            <tr>
+              <td>保留策略</td>
+              <td>固定保留 50 条 recent messages</td>
+              <td>近期上下文完整，回复更稳</td>
+              <td>在 52~55 条消息规模下，几乎没有可压缩空间</td>
+            </tr>
+            <tr>
+              <td>缓存恢复</td>
+              <td>从 DB 直接恢复最近一次 <code>compressed_messages</code></td>
+              <td>进程重启后也能延续</td>
+              <td>如果缓存已坏，问题会跨请求持续放大</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card span-6">
+        <h2>代码热点</h2>
+        <div class="code-list">
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/src/services/compression/manager.py:160-166</div>
+            <div class="desc">内存缓存为空时，从 <code>compression_events</code> 恢复最近一次压缩结果。</div>
+          </div>
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/src/services/compression/manager.py:200-204</div>
+            <div class="desc">触发条件：新增消息数 / 新增 token / 总 token 任一超过阈值即压缩。</div>
+          </div>
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/src/services/compression/manager.py:263-269</div>
+            <div class="desc">关键风险点：把 <code>cache.compressed_messages</code> 与新增消息直接拼接后再压缩。</div>
+          </div>
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/src/services/compression/compressor.py:85-90</div>
+            <div class="desc">默认把第一条 <code>system</code> 消息当作“原始 system prompt”保留。</div>
+          </div>
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/src/services/compression/compressor.py:92-95</div>
+            <div class="desc">只会从第一条 system 之后的消息里提取旧摘要，所以第一条历史摘要会变成“永久居民”。</div>
+          </div>
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/src/services/compression/compressor.py:175-195</div>
+            <div class="desc">旧摘要和增量摘要只做字符串拼接，不做预算控制和再摘要。</div>
+          </div>
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/src/agent_core/adapters/context_adapter.py:265-274</div>
+            <div class="desc">压缩摘要本身也要走一次 LLM；压缩成本不低，因此更需要保证压缩收益真实存在。</div>
+          </div>
+          <div class="code-item">
+            <div class="path">/Users/xuan.lx/Documents/x-agent/backend/x-agent.yaml:173-195</div>
+            <div class="desc">当前配置：<code>threshold_tokens=8000</code>、<code>retention_count=50</code>、<code>timeout=60s</code>、<code>max_retries=2</code>。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card span-6">
+        <h2>发现的问题</h2>
+        <div class="findings">
+          <div class="finding">
+            <div class="head">
+              <div class="title">历史摘要被误当成原始 system 消息长期保留</div>
+              <div class="severity high">High</div>
+            </div>
+            <p>
+              压缩器先保留第一条 <code>system</code> 消息，再提取后续摘要。对增量压缩来说，第一条 <code>system</code> 往往已经不是“原始系统提示词”，
+              而是上轮压缩注入的历史摘要。这会导致旧摘要永远保留。
+            </p>
+          </div>
+          <div class="finding">
+            <div class="head">
+              <div class="title">摘要只拼接不再压缩，长度单调增长</div>
+              <div class="severity high">High</div>
+            </div>
+            <p>
+              <code>_merge_summaries()</code> 把旧摘要和新摘要直接拼接，中间只加分隔符。随着会话增长，摘要本身会成为最大 token 消耗项。
+            </p>
+          </div>
+          <div class="finding">
+            <div class="head">
+              <div class="title">固定 retention_count=50 让增量压缩几乎只能处理 3 条消息</div>
+              <div class="severity medium">Medium</div>
+            </div>
+            <p>
+              在当前会话里，压缩后的消息数长期维持在 52 左右；下一轮一旦涨到 55，又因为保留 50 条 recent messages，只剩 3 条可归档，算法天然失去回收能力。
+            </p>
+          </div>
+          <div class="finding">
+            <div class="head">
+              <div class="title">缺少压缩质量门槛</div>
+              <div class="severity medium">Medium</div>
+            </div>
+            <p>
+              系统会记录压缩事件，但不会检查“本次压缩是否至少回收了 X% token / X 个 token”。因此负收益压缩也会被缓存并继续复用。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <h2>记录内容预览</h2>
+        <div class="pill-row" style="margin-bottom:14px;">
+          <div class="pill">original_messages 中含 2 个 <code>[历史对话摘要]</code></div>
+          <div class="pill">compressed_messages 中仍含 2 个 <code>[历史对话摘要]</code></div>
+          <div class="pill">当前记录归档消息数: 3</div>
+          <div class="pill">当前记录保留 recent messages: 50</div>
+        </div>
+        <div class="snippet">
+          <div>
+            <h3>Original Messages Preview</h3>
+            <pre id="originalPreview"></pre>
+          </div>
+          <div>
+            <h3>Compressed Messages Preview</h3>
+            <pre id="compressedPreview"></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <h2>建议的改进方向</h2>
+        <table class="table">
+          <thead>
+            <tr><th>方向</th><th>建议</th><th>预期收益</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>消息规范化</td>
+              <td>压缩前先剥离所有历史摘要消息，再显式区分“原始 system prompt”和“压缩摘要”。不要用“第一条 system”做隐式推断。</td>
+              <td>消除摘要永久驻留问题，避免多份摘要并存。</td>
+            </tr>
+            <tr>
+              <td>摘要预算治理</td>
+              <td>为摘要单独设置 token 上限；超限时对“旧摘要 + 新摘要”做再摘要，而不是继续拼接。</td>
+              <td>让摘要长度可控，防止会话后期指数式膨胀。</td>
+            </tr>
+            <tr>
+              <td>自适应保留窗口</td>
+              <td>根据总 token、工具消息密度和摘要长度动态调整 <code>retention_count</code>，而不是固定 50。</td>
+              <td>在高压场景下回收更多 token，低压场景下保留更多上下文。</td>
+            </tr>
+            <tr>
+              <td>质量门槛</td>
+              <td>增加压缩收益校验，例如“压缩率必须 &gt; 5% 或净回收至少 1000 tokens”，否则丢弃本次压缩结果，不写回缓存。</td>
+              <td>避免把坏的压缩产物继续扩散到后续请求。</td>
+            </tr>
+            <tr>
+              <td>可观测性</td>
+              <td>在日志里同时记录：原始 token、摘要 token、retained token、压缩净收益、收益是否达标。</td>
+              <td>更快定位“压缩触发但无收益”的真实原因。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const history = [
+      { id: "18:31:57", original: 7508, compressed: 4551, focus: false },
+      { id: "18:33:30", original: 13823, compressed: 13138, focus: false },
+      { id: "18:35:35", original: 16280, compressed: 16283, focus: false },
+      { id: "18:36:49", original: 19369, compressed: 19370, focus: false },
+      { id: "18:38:04", original: 22226, compressed: 22148, focus: false },
+      { id: "18:39:20", original: 23546, compressed: 23518, focus: false },
+      { id: "18:49:56", original: 32126, compressed: 8578, focus: false },
+      { id: "18:51:29", original: 15101, compressed: 14827, focus: false },
+      { id: "18:52:50", original: 18271, compressed: 18235, focus: false },
+      { id: "18:53:40", original: 19822, compressed: 19819, focus: false },
+      { id: "18:54:49", original: 22895, compressed: 22816, focus: false },
+      { id: "18:56:04", original: 26450, compressed: 26403, focus: false },
+      { id: "18:57:30", original: 29566, compressed: 29577, focus: false },
+      { id: "18:58:40", original: 30168, compressed: 30195, focus: false },
+      { id: "18:59:56", original: 31376, compressed: 31328, focus: true }
+    ];
+
+    const originalPreview = `[{"role":"system","content":"[历史对话摘要]\\n**摘要：**\\n\\n用户天尊委托research-agent调研\\"数字分身业务商业化可行性\\"课题...\\n\\n以上是对话的历史摘要，请结合当前对话理解上下文。"},{"role":"system","content":"[历史对话摘要]\\n用户请求助手指派产品经理agent撰写一份关于数字人创业项目的PRD...\\n\\n以上是对话的历史摘要，请结合当前对话理解上下文。"},{"role":"assistant","content":"天尊，这次产品经理agent 300秒都没回话..."},{"role":"user","content":"他遇到什么问题了，你能分析下吗？"}, ... ]`;
+    const compressedPreview = `[{"role":"system","content":"[历史对话摘要]\\n**摘要：**\\n\\n用户天尊委托research-agent调研\\"数字分身业务商业化可行性\\"课题...\\n\\n以上是对话的历史摘要，请结合当前对话理解上下文。"},{"role":"system","content":"[历史对话摘要]\\n用户请求助手指派产品经理agent撰写一份关于数字人创业项目的PRD...\\n\\n以上是对话的历史摘要，请结合当前对话理解上下文。"},{"role":"assistant","content":"天尊，我分析了一下，找到问题了！..."}, {"role":"assistant","content":"好的，让我来排查一下！🔍"}, ... ]`;
+
+    document.getElementById("originalPreview").textContent = originalPreview;
+    document.getElementById("compressedPreview").textContent = compressedPreview;
+
+    const svg = document.getElementById("historyChart");
+    const width = 860;
+    const height = 340;
+    const margin = { top: 24, right: 18, bottom: 54, left: 60 };
+    const innerWidth = width - margin.left - margin.right;
+    const innerHeight = height - margin.top - margin.bottom;
+    const maxY = Math.max(...history.flatMap(d => [d.original, d.compressed])) * 1.08;
+
+    const x = index => margin.left + (innerWidth / (history.length - 1)) * index;
+    const y = value => margin.top + innerHeight - (value / maxY) * innerHeight;
+
+    function pathFor(key) {
+      return history.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${y(d[key]).toFixed(2)}`).join(" ");
+    }
+
+    const gridLines = [0.25, 0.5, 0.75, 1].map(r => {
+      const value = maxY * r;
+      const yy = y(value);
+      return `
+        <line x1="${margin.left}" y1="${yy}" x2="${width - margin.right}" y2="${yy}" stroke="rgba(66,51,36,0.08)" />
+        <text x="${margin.left - 12}" y="${yy + 4}" text-anchor="end">${Math.round(value).toLocaleString()}</text>
+      `;
+    }).join("");
+
+    const xLabels = history.map((d, i) => `
+      <text x="${x(i)}" y="${height - 22}" text-anchor="middle">${d.id}</text>
+    `).join("");
+
+    const points = history.map((d, i) => `
+      <circle cx="${x(i)}" cy="${y(d.original)}" r="${d.focus ? 5.5 : 4}" fill="${d.focus ? "#b85c38" : "#8a5a44"}" />
+      <circle cx="${x(i)}" cy="${y(d.compressed)}" r="${d.focus ? 5.5 : 4}" fill="${d.focus ? "#b85c38" : "#1e6f5c"}" />
+    `).join("");
+
+    const focus = history.findIndex(d => d.focus);
+    const focusLabel = `
+      <rect x="${x(focus) - 102}" y="${y(history[focus].compressed) - 78}" width="204" height="54" rx="12" fill="rgba(255,251,245,0.96)" stroke="rgba(184,92,56,0.35)" />
+      <text x="${x(focus)}" y="${y(history[focus].compressed) - 54}" text-anchor="middle" style="font-weight:700; fill:#9f2d2d;">审查记录</text>
+      <text x="${x(focus)}" y="${y(history[focus].compressed) - 34}" text-anchor="middle">31,376 → 31,328</text>
+      <text x="${x(focus)}" y="${y(history[focus].compressed) - 16}" text-anchor="middle">净收益 48 tokens</text>
+    `;
+
+    svg.innerHTML = `
+      <rect x="0" y="0" width="${width}" height="${height}" rx="18" fill="transparent" />
+      ${gridLines}
+      <line x1="${margin.left}" y1="${margin.top + innerHeight}" x2="${width - margin.right}" y2="${margin.top + innerHeight}" stroke="rgba(66,51,36,0.18)" />
+      <path d="${pathFor("original")}" fill="none" stroke="#8a5a44" stroke-width="3.2" />
+      <path d="${pathFor("compressed")}" fill="none" stroke="#1e6f5c" stroke-width="3.2" />
+      ${points}
+      ${xLabels}
+      ${focusLabel}
+    `;
+  </script>
+</body>
+</html>

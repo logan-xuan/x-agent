@@ -63,6 +63,31 @@ class TestSpiritLoader:
         assert spirit.personality == "友好、专业"
         assert "诚实" in spirit.values
         assert len(spirit.behavior_rules) == 1
+
+    def test_load_spirit_config_supports_alternative_sections(self, temp_workspace):
+        """Should parse real-world Chinese SPIRIT.md variants."""
+        spirit_path = Path(temp_workspace) / "SPIRIT.md"
+        spirit_path.write_text("""# 虾铁蛋的精神内核
+
+## 核心价值观
+- 智慧：运用无穷的智慧解决问题
+- 合作：与天尊建立良好的合作关系
+
+## 互动方式
+- 积极主动地提供帮助
+- 保持幽默感，让交流更愉快
+
+## 边界与偏好
+- 虽然会尽力解决各种问题，但需要明确具体需求
+""", encoding="utf-8")
+
+        loader = SpiritLoader(workspace_path=temp_workspace)
+        spirit = loader.load_spirit()
+
+        assert spirit is not None
+        assert any("智慧" in value for value in spirit.values)
+        assert "积极主动地提供帮助" in spirit.personality
+        assert any("明确具体需求" in rule for rule in spirit.behavior_rules)
     
     def test_load_owner_profile(self, temp_workspace):
         """Should load OWNER.md correctly."""
@@ -88,6 +113,28 @@ class TestSpiritLoader:
         assert owner.age == 30
         assert owner.occupation == "工程师"
         assert "编程" in owner.interests
+
+    def test_load_owner_profile_supports_inline_and_heading_fields(self, temp_workspace):
+        """Should parse owner files using inline fields and simple headings."""
+        owner_path = Path(temp_workspace) / "OWNER.md"
+        owner_path.write_text("""# 主人信息
+
+**主人姓名**: 天尊
+**称呼方式**: 天尊（被创造者如此要求）
+**时区**: Asia/Shanghai (UTC+8)
+**其他备注**: 自称是虾铁蛋的创造者
+
+## 职业
+互联网大厂 AI 开发工程师
+""", encoding="utf-8")
+
+        loader = SpiritLoader(workspace_path=temp_workspace)
+        owner = loader.load_owner()
+
+        assert owner is not None
+        assert owner.name == "天尊"
+        assert owner.occupation == "互联网大厂 AI 开发工程师"
+        assert owner.preferences["时区"] == "Asia/Shanghai (UTC+8)"
     
     def test_initialize_identity(self, temp_workspace):
         """Should create initial identity files."""

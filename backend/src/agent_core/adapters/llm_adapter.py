@@ -62,6 +62,8 @@ class XAgentLLMAdapter:
         system_prompt: str,
         messages: list[dict],
         tools: list[AgentTool] | None = None,
+        provider_name: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """流式生成 LLM 响应.
         
@@ -88,19 +90,26 @@ class XAgentLLMAdapter:
             if openai_tools:
                 # === 有工具: 非流式路径 ===
                 async for chunk in self._non_streaming_with_tools(
-                    full_messages, openai_tools
+                    full_messages, openai_tools, provider_name=provider_name, max_tokens=max_tokens
                 ):
                     yield chunk
             else:
                 # === 无工具: 流式路径 ===
-                async for chunk in self._streaming_text(full_messages):
+                async for chunk in self._streaming_text(
+                    full_messages,
+                    provider_name=provider_name,
+                    max_tokens=max_tokens,
+                ):
                     yield chunk
 
         except Exception as e:
             yield StreamChunk.err(str(e))
 
     async def _streaming_text(
-        self, messages: list[dict]
+        self,
+        messages: list[dict],
+        provider_name: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """流式文本路径 (无工具).
         
@@ -110,7 +119,10 @@ class XAgentLLMAdapter:
         Yields:
             StreamChunk
         """
-        result = await self._router.chat(messages, stream=True)
+        kwargs: dict[str, Any] = {"preferred_provider": provider_name}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        result = await self._router.chat(messages, stream=True, **kwargs)
 
         last_usage = None
         async for chunk in result:
@@ -126,7 +138,11 @@ class XAgentLLMAdapter:
         yield StreamChunk.done("end_turn", last_usage)
 
     async def _non_streaming_with_tools(
-        self, messages: list[dict], openai_tools: list[dict]
+        self,
+        messages: list[dict],
+        openai_tools: list[dict],
+        provider_name: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """非流式路径 (有工具).
         
@@ -137,8 +153,14 @@ class XAgentLLMAdapter:
         Yields:
             StreamChunk
         """
+        kwargs: dict[str, Any] = {
+            "tools": openai_tools,
+            "preferred_provider": provider_name,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
         response = await self._router.chat(
-            messages, stream=False, tools=openai_tools
+            messages, stream=False, **kwargs
         )
 
         # 输出文本内容

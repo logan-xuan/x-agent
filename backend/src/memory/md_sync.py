@@ -22,8 +22,26 @@ from .models import (
     ToolDefinition,
 )
 from ..utils.logger import get_logger
+from ..utils.markdown_parsing import (
+    extract_markdown_field,
+    extract_markdown_section,
+    parse_markdown_key_values,
+    parse_markdown_list_items,
+)
 
 logger = get_logger(__name__)
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 class MarkdownSync:
@@ -114,18 +132,39 @@ class MarkdownSync:
     def _parse_spirit_content(self, content: str) -> SpiritConfig:
         """Parse SPIRIT.md content sections."""
         config = SpiritConfig()
-        
-        # Extract sections
-        sections = self._extract_sections(content)
-        
-        if "角色定位" in sections:
-            config.role = sections["角色定位"].strip()
-        if "性格特征" in sections:
-            config.personality = sections["性格特征"].strip()
-        if "价值观" in sections:
-            config.values = self._parse_list_items(sections["价值观"])
-        if "行为准则" in sections:
-            config.behavior_rules = self._parse_list_items(sections["行为准则"])
+
+        config.role = (
+            extract_markdown_section(content, ["角色定位", "角色", "定位"])
+            or extract_markdown_field(content, ["角色定位", "角色"])
+        )
+
+        personality_section = extract_markdown_section(
+            content,
+            ["性格特征", "互动方式", "沟通风格", "气质风格"],
+        )
+        if personality_section:
+            personality_items = parse_markdown_list_items(personality_section)
+            config.personality = "；".join(personality_items) if personality_items else personality_section.strip()
+
+        values_section = extract_markdown_section(content, ["价值观", "核心价值观"])
+        if values_section:
+            config.values = self._parse_list_items(values_section)
+
+        behavior_sections = [
+            extract_markdown_section(content, ["行为准则"]),
+            extract_markdown_section(content, ["工作原则"]),
+            extract_markdown_section(content, ["边界与偏好"]),
+            extract_markdown_section(content, ["禁区与边界"]),
+            extract_markdown_section(content, ["期望"]),
+        ]
+        behavior_rules: list[str] = []
+        for section in behavior_sections:
+            if not section:
+                continue
+            behavior_rules.extend(self._parse_list_items(section))
+            if not self._parse_list_items(section) and section.strip():
+                behavior_rules.append(section.strip())
+        config.behavior_rules = _dedupe_preserve_order(behavior_rules)
         
         return config
     
@@ -211,29 +250,54 @@ class MarkdownSync:
     def _parse_owner_content(self, content: str) -> OwnerProfile:
         """Parse OWNER.md content sections."""
         config = OwnerProfile()
+
         sections = self._extract_sections(content)
-        
-        if "基本信息" in sections:
-            info = sections["基本信息"]
-            # Parse name
-            name_match = re.search(r"姓名[：:]\s*(.+)", info)
-            if name_match:
-                config.name = name_match.group(1).strip()
-            # Parse age
-            age_match = re.search(r"年龄[：:]\s*(\d+)", info)
+
+        config.name = extract_markdown_field(
+            content,
+            ["姓名", "主人姓名", "名字", "称呼", "称呼方式"],
+        )
+
+        age_text = extract_markdown_field(content, ["年龄"])
+        if age_text:
+            age_match = re.search(r"\d+", age_text)
             if age_match:
-                config.age = int(age_match.group(1))
-            # Parse occupation
-            occ_match = re.search(r"职业[：:]\s*(.+)", info)
-            if occ_match:
-                config.occupation = occ_match.group(1).strip()
-        
-        if "兴趣爱好" in sections:
+                config.age = int(age_match.group(0))
+
+        config.occupation = extract_markdown_field(content, ["职业"])
+
+        interests_section = extract_markdown_section(content, ["兴趣爱好", "兴趣", "爱好"])
+        if interests_section:
+            config.interests = self._parse_list_items(interests_section)
+        elif "兴趣爱好" in sections:
             config.interests = self._parse_list_items(sections["兴趣爱好"])
-        if "当前目标" in sections:
+
+        goals_section = extract_markdown_section(content, ["当前目标", "目标"])
+        if goals_section:
+            config.goals = self._parse_list_items(goals_section)
+        elif "当前目标" in sections:
             config.goals = self._parse_list_items(sections["当前目标"])
-        if "偏好设置" in sections:
-            config.preferences = self._parse_key_value_items(sections["偏好设置"])
+
+        preference_sections = [
+            extract_markdown_section(content, ["偏好设置"]),
+            extract_markdown_section(content, ["偏好备注"]),
+            extract_markdown_section(content, ["其他备注"]),
+        ]
+        preferences: dict[str, str] = {}
+        for section in preference_sections:
+            if not section:
+                continue
+            preferences.update(self._parse_key_value_items(section))
+            if not self._parse_key_value_items(section) and section.strip():
+                preferences.setdefault("备注", section.strip())
+
+        inline_preferences = {
+            key: value
+            for key, value in parse_markdown_key_values(content).items()
+            if key in {"时区", "居住地", "身份", "其他备注", "偏好备注"}
+        }
+        preferences.update(inline_preferences)
+        config.preferences = preferences
         
         return config
     
@@ -457,12 +521,7 @@ class MarkdownSync:
     
     def _parse_list_items(self, content: str) -> list[str]:
         """Parse list items from content."""
-        items: list[str] = []
-        for line in content.split("\n"):
-            line = line.strip()
-            if line.startswith("- ") or line.startswith("* "):
-                items.append(line[2:].strip())
-        return items
+        return parse_markdown_list_items(content)
     
     def _format_list_items(self, items: list[str]) -> str:
         """Format list items as markdown."""
@@ -472,18 +531,7 @@ class MarkdownSync:
     
     def _parse_key_value_items(self, content: str) -> dict[str, str]:
         """Parse key-value items from content."""
-        result: dict[str, str] = {}
-        for line in content.split("\n"):
-            line = line.strip()
-            if line.startswith("- "):
-                line = line[2:]
-            if "：" in line:
-                key, value = line.split("：", 1)
-                result[key.strip()] = value.strip()
-            elif ":" in line:
-                key, value = line.split(":", 1)
-                result[key.strip()] = value.strip()
-        return result
+        return parse_markdown_key_values(content)
     
     def _format_key_value_items(self, items: dict[str, str]) -> str:
         """Format key-value items as markdown."""

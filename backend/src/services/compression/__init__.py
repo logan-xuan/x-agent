@@ -2,7 +2,7 @@
 
 from .token_counter import TokenCounter
 from .compressor import ContextCompressor, CompressionResult, SummaryFn
-from .manager import ContextCompressionManager, PreparedContext
+from .manager import ContextCompressionManager, PreparedContext, CompressionBudgetProfile
 
 __all__ = [
     "TokenCounter",
@@ -11,4 +11,5 @@ __all__ = [
     "SummaryFn",
     "ContextCompressionManager",
     "PreparedContext",
+    "CompressionBudgetProfile",
 ]

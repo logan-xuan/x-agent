@@ -6,6 +6,17 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ..config.manager import get_config
+from ..models import (  # noqa: F401
+    Artifact,
+    CompressionEvent,
+    EpisodicMemoryEvent,
+    EvidenceLedgerEntry,
+    LLMRequestStat,
+    Message,
+    Session,
+    SessionContextState,
+    SkillMetadata,
+)
 from ..models.base import Base
 
 

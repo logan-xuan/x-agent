@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from ..config.manager import ConfigManager
 from ..utils.logger import get_logger
+from ..utils.markdown_parsing import extract_markdown_field
 
 if TYPE_CHECKING:
     from ..agent_core.ports.system_prompt_port import IdentityInfo
@@ -33,8 +34,8 @@ logger = get_logger(__name__)
 
 # ─── 常量 ───
 
-# Bootstrap 文件加载顺序（决定优先级）
-BOOTSTRAP_FILE_ORDER: list[str] = [
+# Workspace 模板文件顺序（用于初始化与新工作区检测）
+WORKSPACE_TEMPLATE_FILE_ORDER: list[str] = [
     "AGENTS.md",
     "SPIRIT.md",
     "TOOLS.md",
@@ -43,6 +44,16 @@ BOOTSTRAP_FILE_ORDER: list[str] = [
     "HEARTBEAT.md",
     "BOOTSTRAP.md",
     "MEMORY.md",
+]
+
+# Static Prefix 文件顺序（参与 system prompt 的静态上下文）
+STATIC_PREFIX_FILE_ORDER: list[str] = [
+    "AGENTS.md",
+    "SPIRIT.md",
+    "TOOLS.md",
+    "IDENTITY.md",
+    "OWNER.md",
+    "HEARTBEAT.md",
 ]
 
 # 截断限制
@@ -194,10 +205,10 @@ class SystemPromptBuilder:
         try:
             content = identity_path.read_text(encoding="utf-8")
             return IdentityInfo(
-                name=_extract_field(content, "Name"),
-                form=_extract_field(content, "Creature"),
-                style=_extract_field(content, "Vibe"),
-                emoji=_extract_field(content, "Emoji"),
+                name=extract_markdown_field(content, ["Name", "姓名"]),
+                form=extract_markdown_field(content, ["Creature", "存在形式", "形态", "身份"]),
+                style=extract_markdown_field(content, ["Vibe", "气质风格", "风格", "性格", "气质"]),
+                emoji=extract_markdown_field(content, ["Emoji", "标志性emoji", "Emoji符号", "表情"]),
             )
         except Exception as error:
             logger.warning(
@@ -233,7 +244,7 @@ class SystemPromptBuilder:
 
         is_fresh = self._is_fresh_workspace()
 
-        for filename in BOOTSTRAP_FILE_ORDER:
+        for filename in WORKSPACE_TEMPLATE_FILE_ORDER:
             target_path = workspace_dir / filename
             if target_path.exists():
                 continue
@@ -260,7 +271,7 @@ class SystemPromptBuilder:
         workspace_dir = Path(self.workspace_path)
         return not any(
             (workspace_dir / filename).exists()
-            for filename in BOOTSTRAP_FILE_ORDER
+            for filename in WORKSPACE_TEMPLATE_FILE_ORDER
         )
 
     def _copy_template(self, filename: str) -> None:
@@ -315,33 +326,25 @@ class SystemPromptBuilder:
             if not content:
                 return False
 
-            # 检查是否有真正填写过的 Name/姓名 字段
-            name_value = _extract_field(content, "Name")
-            if not name_value and "姓名" in content:
-                return True
+            name_value = extract_markdown_field(content, ["Name", "姓名"])
             return bool(name_value)
 
         except Exception:
             return False
 
     def _load_context_files(self) -> list[ContextFile]:
-        """按固定顺序加载所有 Bootstrap 文件.
+        """按固定顺序加载所有 Static Prefix 文件.
 
+        这些文件构成稳定的 Project Context，不包含 MEMORY.md。
         应用单文件截断和总字符数截断保护。
-        如果 Agent 已完成初始化，跳过 BOOTSTRAP.md 以节省 token。
 
         Returns:
             ContextFile 列表
         """
         context_files: list[ContextFile] = []
         total_chars = 0
-        agent_born = self._is_agent_born()
 
-        for filename in BOOTSTRAP_FILE_ORDER:
-            # Agent 已出生后，跳过 BOOTSTRAP.md
-            if filename == "BOOTSTRAP.md" and agent_born:
-                logger.debug("Skipping BOOTSTRAP.md — agent already initialized")
-                continue
+        for filename in STATIC_PREFIX_FILE_ORDER:
             context_file = self._load_single_file(filename)
 
             if not context_file.is_missing:
@@ -660,14 +663,4 @@ def _extract_field(content: str, field_name: str) -> str:
     Returns:
         字段值，未找到时返回空字符串
     """
-    # 模式1: **FieldName:** value（冒号在加粗标记内）
-    match = re.search(rf"\*\*{field_name}:\*\*\s*(.+)", content)
-    if match:
-        return match.group(1).strip()
-
-    # 模式2: **FieldName**: value（冒号在加粗标记外）
-    match = re.search(rf"\*\*{field_name}\*\*:\s*(.+)", content)
-    if match:
-        return match.group(1).strip()
-
-    return ""
+    return extract_markdown_field(content, [field_name])

@@ -21,7 +21,7 @@ import time
 import traceback
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from .context_transform import content_to_dict, convert_messages_to_llm, estimate_tokens
 from .experience_learning import ExperienceLearner, format_experience_for_prompt
@@ -155,6 +155,9 @@ class _AgentLoopRunner:
         self._last_assistant_msg: AssistantMessage | None = None
         self._last_tool_results: list[ToolResultMessage] = []
         self._last_llm_call_id: str = ""
+        self._stateful_mode_detector: Any | None = None
+        self._stateful_updater: Any | None = None
+        self._tool_result_archiver: Any | None = None
 
         # 经验学习
         self._experience_learner: ExperienceLearner | None = None
@@ -164,6 +167,21 @@ class _AgentLoopRunner:
                 memory=config.memory,
                 search_timeout_ms=config.experience_search_timeout_ms,
             )
+
+        try:
+            from ..services.context import (
+                get_mode_detector,
+                get_session_state_updater,
+                get_tool_result_archiver,
+            )
+
+            self._stateful_mode_detector = get_mode_detector()
+            self._stateful_updater = get_session_state_updater()
+            self._tool_result_archiver = get_tool_result_archiver()
+        except Exception:
+            self._stateful_mode_detector = None
+            self._stateful_updater = None
+            self._tool_result_archiver = None
 
         # 日志: agent loop 开始
         if self.logger:
@@ -253,6 +271,8 @@ class _AgentLoopRunner:
                         tool_results=self._last_tool_results,
                     )
 
+                    await self._persist_stateful_turn_snapshot(msg, self._last_tool_results)
+
                     self.turn_index += 1
                     if has_more_tool_calls or self.pending_messages:
                         yield TurnStartEvent(turn_index=self.turn_index)
@@ -311,6 +331,7 @@ class _AgentLoopRunner:
         llm_messages = convert_messages_to_llm(self.current_context.messages)
 
         # 上下文压缩 (通过 ContextPort，如果已配置)
+        llm_tools = [t.to_llm_tool() for t in self.current_context.tools] if self.current_context.tools else None
         if (
             self.config.context is not None
             and self.config.enable_context_compression
@@ -319,8 +340,25 @@ class _AgentLoopRunner:
                 session_id=self.session_id,
                 messages=llm_messages,
                 system_prompt=self.current_context.system_prompt,
+                tools=llm_tools,
             )
             llm_messages = prepared.messages
+            if self.logger and getattr(prepared, "metadata", None):
+                self.logger.create_log_entry(
+                    trace_id=self.trace_id,
+                    event="context_prepared",
+                    message="Context prepared for LLM call",
+                    category=LogCategory.AGENT_LOOP,
+                    data={
+                        "context_mode": prepared.metadata.get("context_mode"),
+                        "was_compressed": prepared.was_compressed,
+                        "original_tokens": prepared.original_tokens,
+                        "final_tokens": prepared.final_tokens,
+                        "quality_rejected": prepared.metadata.get("quality_rejected", False),
+                        "used_fallback": prepared.metadata.get("used_fallback", False),
+                        "token_breakdown": prepared.metadata.get("token_breakdown", {}),
+                    },
+                )
 
         # 经验检索: LLM 调用前检索相关历史经验，注入 system prompt
         if self._experience_learner is not None:
@@ -344,7 +382,7 @@ class _AgentLoopRunner:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
                 thinking_level=self.config.thinking_level,
-                tools=[t.to_llm_tool() for t in self.current_context.tools] if self.current_context.tools else None,
+                tools=llm_tools,
             ))
 
         llm_call_start_time = time.time()
@@ -358,6 +396,7 @@ class _AgentLoopRunner:
             tools=self.current_context.tools,
             model=self.config.model,
             provider=self.config.provider,
+            max_tokens=self.config.max_tokens,
             abort_event=self.abort_event,
         ):
             yield event
@@ -491,6 +530,110 @@ class _AgentLoopRunner:
         yield MessageEndEvent(message=error_msg)
         self.new_messages.append(error_msg)
 
+    async def _persist_stateful_turn_snapshot(
+        self,
+        assistant_msg: AssistantMessage,
+        tool_results: list[ToolResultMessage],
+    ) -> None:
+        """Persist a lightweight structured state snapshot after each turn."""
+        if self._stateful_updater is None or self._stateful_mode_detector is None:
+            return
+
+        latest_user = self._find_latest_user_message()
+        new_messages: list[dict[str, Any]] = []
+        if latest_user is not None:
+            new_messages.append(
+                {
+                    "role": "user",
+                    "content": self._message_to_text(latest_user),
+                }
+            )
+        new_messages.append(
+            {
+                "role": "assistant",
+                "content": assistant_msg.get_text(),
+            }
+        )
+
+        tool_payloads = []
+        for result in tool_results:
+            details = dict(result.details)
+            if self._tool_result_archiver is not None:
+                try:
+                    details = await self._tool_result_archiver.archive(
+                        session_id=self.session_id,
+                        tool_name=result.tool_name,
+                        result_text=self._tool_result_to_text(result),
+                        details=details,
+                    )
+                except Exception as exc:
+                    if self.logger:
+                        self.logger.create_log_entry(
+                            trace_id=self.trace_id,
+                            event="tool_result_archive_failed",
+                            message=f"Tool result archive failed: {str(exc)}",
+                            level=LogLevel.WARNING,
+                            category=LogCategory.AGENT_LOOP,
+                            data={"tool_name": result.tool_name, "error_type": type(exc).__name__},
+                        )
+
+            tool_payloads.append(
+                {
+                    "tool_name": result.tool_name,
+                    "error": details.get("error") if result.is_error else "",
+                    "artifact_ref": details.get("artifact_ref"),
+                    "details": details,
+                    "evidence_count": details.get("evidence_count", 0),
+                }
+            )
+
+        try:
+            mode = self._stateful_mode_detector.detect(
+                messages=new_messages,
+                tools=self.current_context.tools,
+            )
+            await self._stateful_updater.update_after_turn(
+                session_id=self.session_id,
+                agent_id=self.agent_id,
+                mode=mode,
+                new_messages=new_messages,
+                tool_results=tool_payloads,
+                delegate_results=[],
+            )
+        except Exception as exc:
+            if self.logger:
+                self.logger.create_log_entry(
+                    trace_id=self.trace_id,
+                    event="session_state_update_failed",
+                    message=f"Session state update failed: {str(exc)}",
+                    level=LogLevel.WARNING,
+                    category=LogCategory.AGENT_LOOP,
+                    data={"error_type": type(exc).__name__},
+                )
+
+    def _find_latest_user_message(self) -> AgentMessage | None:
+        for message in reversed(self.current_context.messages):
+            if getattr(message, "role", None) == "user":
+                return message
+        return None
+
+    @staticmethod
+    def _message_to_text(message: AgentMessage) -> str:
+        content = getattr(message, "content", [])
+        parts: list[str] = []
+        for item in content:
+            if hasattr(item, "text") and item.text:
+                parts.append(item.text)
+        return " ".join(parts)
+
+    @staticmethod
+    def _tool_result_to_text(message: ToolResultMessage) -> str:
+        parts: list[str] = []
+        for item in message.content:
+            if hasattr(item, "text") and item.text:
+                parts.append(item.text)
+        return " ".join(parts)
+
     async def _retrieve_and_format_experience(self) -> str:
         """检索相关经验并格式化为 prompt 文本.
 
@@ -572,6 +715,7 @@ async def _stream_assistant_response(
     tools: list,
     model: str,
     provider: str,
+    max_tokens: int | None,
     abort_event: asyncio.Event | None,
 ) -> AsyncGenerator[AgentEvent, None]:
     """流式获取 Assistant 响应.
@@ -602,6 +746,8 @@ async def _stream_assistant_response(
             system_prompt=system_prompt,
             messages=messages,
             tools=tools if tools else None,
+            provider_name=provider or None,
+            max_tokens=max_tokens,
         ):
             if abort_event and abort_event.is_set():
                 partial_message.stop_reason = "aborted"

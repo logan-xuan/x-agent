@@ -26,6 +26,22 @@ class PreparedContext:
     messages: list[dict]              # Final message list
     summary: str | None = None        # Summary if compression occurred
     total_tokens: int = 0             # Total token count
+    was_compressed: bool = False
+    quality_rejected: bool = False
+
+
+@dataclass
+class CompressionBudgetProfile:
+    """Runtime compression budget resolved from the active model configuration."""
+
+    provider_name: str = ""
+    model_id: str = ""
+    model_context_limit_tokens: int = 0
+    model_output_limit_tokens: int = 0
+    reserved_output_tokens: int = 0
+    safety_margin_tokens: int = 0
+    hard_context_limit_tokens: int = 0
+    trigger_tokens: int = 0
 
 
 @dataclass
@@ -62,6 +78,7 @@ class ContextCompressionManager:
         config: CompressionConfig,
         workspace_path: str,
         summary_fn: SummaryFn | None = None,
+        budget_resolver: Callable[[], CompressionBudgetProfile | None] | None = None,
     ):
         """Initialize compression manager.
 
@@ -74,6 +91,7 @@ class ContextCompressionManager:
         self._initial_config = config
         self.workspace_path = Path(workspace_path)
         self.token_counter = TokenCounter()
+        self._budget_resolver = budget_resolver
 
         # 缓存每个 session 的上次压缩结果
         # key: session_id, value: _CompressionCache
@@ -89,9 +107,25 @@ class ContextCompressionManager:
             extra={
                 "threshold_rounds": self.config.threshold_rounds,
                 "threshold_tokens": self.config.threshold_tokens,
+                "max_context_tokens": self.config.max_context_tokens,
+                "max_tool_message_chars": self.config.max_tool_message_chars,
                 "retention_count": self.config.retention_count,
             }
         )
+
+    def _resolve_budget_profile(self) -> CompressionBudgetProfile | None:
+        """Resolve runtime compression budget from the active model."""
+        if self._budget_resolver is None:
+            return None
+
+        try:
+            return self._budget_resolver()
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve compression budget profile, falling back to static thresholds",
+                extra={"error": str(exc), "error_type": type(exc).__name__},
+            )
+            return None
     
     @property
     def config(self) -> CompressionConfig:
@@ -107,7 +141,8 @@ class ContextCompressionManager:
         self,
         session_id: str,
         current_messages: list[dict],
-        system_prompt: str = ""
+        system_prompt: str = "",
+        tools: list[dict] | None = None,
     ) -> PreparedContext:
         """Prepare context for LLM, compressing if needed.
 
@@ -119,6 +154,7 @@ class ContextCompressionManager:
             session_id: Session identifier
             current_messages: Current conversation messages (from DB, no summary)
             system_prompt: System prompt text
+            tools: OpenAI function/tool schema definitions for this request
 
         Returns:
             Prepared context with optional compression
@@ -140,13 +176,33 @@ class ContextCompressionManager:
             new_message_count = len(current_messages)
             new_token_count = self.token_counter.count_messages(current_messages)
 
+        tool_tokens = self.token_counter.count_tool_definitions(tools)
         total_tokens = self.token_counter.count_messages(current_messages)
         if system_prompt:
             total_tokens += self.token_counter.count_text(system_prompt)
+        total_tokens += tool_tokens
+
+        budget_profile = self._resolve_budget_profile()
+        hard_context_limit = self.config.max_context_tokens
+        effective_trigger_tokens = min(
+            hard_context_limit,
+            max(
+                self.config.threshold_tokens,
+                int(hard_context_limit * self.config.trigger_ratio),
+            ),
+        )
+        if budget_profile:
+            hard_context_limit = budget_profile.hard_context_limit_tokens or hard_context_limit
+            dynamic_trigger_tokens = budget_profile.trigger_tokens or hard_context_limit
+            effective_trigger_tokens = min(
+                hard_context_limit,
+                max(self.config.threshold_tokens, dynamic_trigger_tokens),
+            )
 
         needs_compression = (
             new_message_count > self.config.threshold_rounds
             or new_token_count > self.config.threshold_tokens
+            or total_tokens > effective_trigger_tokens
         )
 
         logger.info(
@@ -157,9 +213,18 @@ class ContextCompressionManager:
                 "new_message_count": new_message_count,
                 "token_count": total_tokens,
                 "new_token_count": new_token_count,
+                "tool_count": len(tools or []),
+                "tool_tokens": tool_tokens,
                 "has_cache": cache is not None,
                 "threshold_rounds": self.config.threshold_rounds,
                 "threshold_tokens": self.config.threshold_tokens,
+                "configured_max_context_tokens": self.config.max_context_tokens,
+                "hard_context_limit_tokens": hard_context_limit,
+                "effective_trigger_tokens": effective_trigger_tokens,
+                "budget_provider_name": budget_profile.provider_name if budget_profile else None,
+                "budget_model_id": budget_profile.model_id if budget_profile else None,
+                "budget_reserved_output_tokens": budget_profile.reserved_output_tokens if budget_profile else None,
+                "budget_safety_margin_tokens": budget_profile.safety_margin_tokens if budget_profile else None,
                 "needs_compression": needs_compression,
             },
         )
@@ -172,7 +237,12 @@ class ContextCompressionManager:
                 return PreparedContext(
                     messages=merged_messages,
                     summary=cache.summary,
-                    total_tokens=self.token_counter.count_messages(merged_messages),
+                    total_tokens=(
+                        self.token_counter.count_messages(merged_messages)
+                        + self.token_counter.count_text(system_prompt)
+                        + tool_tokens
+                    ),
+                    was_compressed=bool(cache.summary),
                 )
             return PreparedContext(
                 messages=current_messages,
@@ -188,6 +258,8 @@ class ContextCompressionManager:
                 "message_count": len(current_messages),
                 "new_message_count": new_message_count,
                 "token_count": total_tokens,
+                "tool_count": len(tools or []),
+                "tool_tokens": tool_tokens,
             },
         )
 
@@ -199,14 +271,24 @@ class ContextCompressionManager:
 
         result = await self._compress_context(session_id, messages_for_compression)
 
-        # 更新缓存
-        self._compression_cache[session_id] = _CompressionCache(
-            compressed_message_count=len(current_messages),
-            summary=result.summary or "",
-            compressed_messages=list(result.messages),
-        )
+        if result.was_compressed and not result.quality_rejected:
+            self._compression_cache[session_id] = _CompressionCache(
+                compressed_message_count=len(current_messages),
+                summary=result.summary or "",
+                compressed_messages=list(result.messages),
+            )
 
-        return result
+        return PreparedContext(
+            messages=result.messages,
+            summary=result.summary,
+            total_tokens=(
+                result.total_tokens
+                + self.token_counter.count_text(system_prompt)
+                + tool_tokens
+            ),
+            was_compressed=result.was_compressed,
+            quality_rejected=result.quality_rejected,
+        )
     
     async def _compress_context(
         self,
@@ -231,7 +313,8 @@ class ContextCompressionManager:
             return PreparedContext(
                 messages=messages,
                 summary=None,
-                total_tokens=self.token_counter.count_messages(messages)
+                total_tokens=self.token_counter.count_messages(messages),
+                was_compressed=False,
             )
 
         # 1. Archive important info before compression
@@ -243,18 +326,61 @@ class ContextCompressionManager:
             self.config.retention_count
         )
 
-        # 3. Store compression event to track history
-        await self._store_compression_event(
-            session_id=session_id,
-            original_messages=messages,
-            compressed_result=result
-        )
+        quality_passed = self._passes_quality_gate(result)
+        if quality_passed:
+            await self._store_compression_event(
+                session_id=session_id,
+                original_messages=messages,
+                compressed_result=result
+            )
+        else:
+            logger.warning(
+                "Compression quality gate rejected result",
+                extra={
+                    "session_id": session_id,
+                    "original_token_count": result.original_token_count,
+                    "compressed_token_count": result.compressed_token_count,
+                    "compression_ratio": self._compression_ratio(result),
+                    "token_savings": result.original_token_count - result.compressed_token_count,
+                    "min_compression_ratio": self.config.min_compression_ratio,
+                    "min_token_savings": self.config.min_token_savings,
+                },
+            )
+            return PreparedContext(
+                messages=messages,
+                summary=None,
+                total_tokens=self.token_counter.count_messages(messages),
+                was_compressed=False,
+                quality_rejected=True,
+            )
 
         # 4. Return prepared context with compressed results
         return PreparedContext(
             messages=result.compressed_messages,
             summary=result.summary,
-            total_tokens=result.compressed_token_count
+            total_tokens=result.compressed_token_count,
+            was_compressed=True,
+        )
+
+    def _passes_quality_gate(self, result: CompressionResult) -> bool:
+        """Validate whether a compression result is worth accepting."""
+        if not self.config.compression_quality_gate_enabled:
+            return True
+
+        savings = result.original_token_count - result.compressed_token_count
+        ratio = self._compression_ratio(result)
+        return (
+            savings >= self.config.min_token_savings
+            or ratio >= self.config.min_compression_ratio
+        )
+
+    @staticmethod
+    def _compression_ratio(result: CompressionResult) -> float:
+        if result.original_token_count <= 0:
+            return 0.0
+        return (
+            (result.original_token_count - result.compressed_token_count)
+            / result.original_token_count
         )
 
     async def _store_compression_event(
@@ -278,6 +404,11 @@ class ContextCompressionManager:
             event_id = f"comp-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:8]}"
 
             # Prepare compression event data
+            compression_ratio = (
+                (compressed_result.original_token_count - compressed_result.compressed_token_count) /
+                compressed_result.original_token_count
+                if compressed_result.original_token_count > 0 else 0
+            )
             compression_event = CompressionEvent(
                 id=event_id,
                 session_id=session_id,
@@ -285,11 +416,7 @@ class ContextCompressionManager:
                 compressed_message_count=len(compressed_result.compressed_messages),
                 original_token_count=compressed_result.original_token_count,
                 compressed_token_count=compressed_result.compressed_token_count,
-                compression_ratio=(
-                    (compressed_result.original_token_count - compressed_result.compressed_token_count) /
-                    compressed_result.original_token_count
-                    if compressed_result.original_token_count > 0 else 0
-                ),
+                compression_ratio=compression_ratio,
                 original_messages=json.dumps(original_messages, ensure_ascii=False),
                 compressed_messages=json.dumps(compressed_result.compressed_messages, ensure_ascii=False),
                 archived_message_count=len(compressed_result.archived_messages),

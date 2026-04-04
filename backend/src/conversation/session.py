@@ -63,8 +63,8 @@ class SessionManager:
             title=title or f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             agent_id=agent_id,
             status=SessionStatus.ACTIVE.value,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
             message_count=0,
         )
 
@@ -106,7 +106,7 @@ class SessionManager:
             active_sessions = list(result.scalars().all())
             for session in active_sessions:
                 session.status = SessionStatus.CLOSED.value
-                session.updated_at = datetime.utcnow()
+                session.updated_at = datetime.now()
                 closed_count += 1
             if closed_count > 0:
                 await db_session.commit()
@@ -243,8 +243,8 @@ class SessionManager:
                 title=title or "Agent 对话",
                 agent_id=agent_id,
                 status=SessionStatus.ACTIVE.value,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
                 message_count=0,
             )
             db_session.add(session)
@@ -285,7 +285,7 @@ class SessionManager:
             session_id=session_id,
             role=role,
             content=content,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(),
         )
         
         if metadata:
@@ -298,7 +298,7 @@ class SessionManager:
             session = await db_session.get(Session, session_id)
             if session:
                 session.message_count += 1
-                session.updated_at = datetime.utcnow()
+                session.updated_at = datetime.now()
             
             await db_session.commit()
             await db_session.refresh(message)
@@ -426,7 +426,7 @@ class SessionManager:
                 return False
             if session.status != SessionStatus.ACTIVE.value:
                 session.status = SessionStatus.ACTIVE.value
-                session.updated_at = datetime.utcnow()
+                session.updated_at = datetime.now()
                 await db_session.commit()
                 logger.info("Session reactivated", extra={"session_id": session_id})
         return True
@@ -446,7 +446,7 @@ class SessionManager:
             session = await db_session.get(Session, session_id)
             if not session:
                 return False
-            session.updated_at = datetime.utcnow()
+            session.updated_at = datetime.now()
             await db_session.commit()
         return True
 
@@ -489,7 +489,7 @@ class SessionManager:
             if not session:
                 return False
             session.status = SessionStatus.CLOSED.value
-            session.updated_at = datetime.utcnow()
+            session.updated_at = datetime.now()
             await db_session.commit()
 
         logger.info("Session closed", extra={"session_id": session_id})

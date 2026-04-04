@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import Optional
 
 from .agent_info import AgentInfo
@@ -52,6 +53,7 @@ from ..agent_core.skill_dispatcher import (
     SkillInvocation,
     build_skill_command_specs,
 )
+from ..services.context.session_state_store import get_session_context_state_store
 
 try:
     from ..utils.logger import get_logger
@@ -271,13 +273,27 @@ class AgentBridge:
         tool_adapter = XAgentToolAdapter(tool_manager)
         agent_logger = _get_agent_logger()
 
+        selected_provider_name = agent_info.model_name if agent_info and agent_info.model_name else None
+        selected_provider = llm_router.get_provider(selected_provider_name)
+        resolved_provider_name = selected_provider.name if selected_provider else (selected_provider_name or "")
+        resolved_model_id = selected_provider.model_id if selected_provider else ""
+        requested_output_tokens = agent_info.max_tokens if agent_info else None
+        if requested_output_tokens is not None and selected_provider is not None:
+            requested_output_tokens = min(requested_output_tokens, selected_provider.max_output_tokens)
+
         # 解析 agent 对应的 workspace 路径，多 Agent 场景下各 agent 有独立 workspace
         workspace_path = self._resolve_agent_workspace(agent_info)
 
         system_prompt_adapter = create_system_prompt_adapter(workspace_path=workspace_path)
         system_prompt = system_prompt_adapter.build_system_prompt()
 
-        context_adapter = self._create_context_adapter(llm_router, agent_info, workspace_path=workspace_path)
+        context_adapter = self._create_context_adapter(
+            llm_router,
+            agent_info,
+            workspace_path=workspace_path,
+            active_model_name=resolved_provider_name,
+            requested_output_tokens=requested_output_tokens,
+        )
 
         # 创建工具中间件管道（可选，默认启用计时和日志中间件）
         tool_middleware_adapter = self._create_tool_middleware_adapter()
@@ -290,6 +306,10 @@ class AgentBridge:
             system_prompt=system_prompt,
             system_prompt_port=system_prompt_adapter,
             tool_middleware_pipeline=tool_middleware_adapter.pipeline if tool_middleware_adapter else None,
+            model=resolved_model_id,
+            provider=resolved_provider_name,
+            temperature=agent_info.temperature if agent_info else None,
+            max_tokens=requested_output_tokens,
         )
 
     def create_agent(
@@ -361,6 +381,7 @@ class AgentBridge:
         images: list[tuple[str, str]] | None = None,
         abort_event: asyncio.Event | None = None,
         persist_user_message: bool = True,
+        allow_auto_resume: bool = True,
     ) -> AsyncGenerator[GatewayEvent, None]:
         """执行 Agent Loop 并产出 GatewayEvent。
 
@@ -421,6 +442,14 @@ class AgentBridge:
             # 4. 恢复原始 system prompt
             self._restore_system_prompt(agent)
 
+            if allow_auto_resume:
+                await self._maybe_auto_resume_main_task(
+                    user_content=content,
+                    assistant_response="".join(assistant_content),
+                    session_id=session_id,
+                    agent_info=agent_info,
+                )
+
         except Exception as exc:
             logger.exception(
                 "Error in AgentBridge.run",
@@ -439,6 +468,130 @@ class AgentBridge:
                 agent_id=event_agent_id,
                 agent_name=event_agent_name,
             )
+
+    async def _maybe_auto_resume_main_task(
+        self,
+        *,
+        user_content: str,
+        assistant_response: str,
+        session_id: str,
+        agent_info: AgentInfo | None,
+    ) -> None:
+        """Schedule a background continuation when the user only asks for status."""
+        if agent_info is None:
+            return
+        if not _is_progress_query(user_content):
+            return
+        if not _looks_like_progress_response(assistant_response):
+            return
+
+        state_store = get_session_context_state_store()
+        state = await state_store.get(session_id)
+        if state is None:
+            return
+
+        payload = state.to_dict()
+        current_goal = payload.get("current_goal") or {}
+        primary_goal = current_goal.get("primary_goal") or current_goal.get("latest_user_request")
+        if not primary_goal or primary_goal == user_content:
+            return
+
+        metadata = payload.get("metadata") or {}
+        now = datetime.now()
+        last_query = metadata.get("last_auto_resume_query")
+        last_at_raw = metadata.get("last_auto_resume_at")
+        if last_query == user_content and last_at_raw:
+            try:
+                last_at = datetime.fromisoformat(str(last_at_raw))
+                if (now - last_at).total_seconds() < 60:
+                    return
+            except ValueError:
+                pass
+
+        metadata["last_auto_resume_query"] = user_content
+        metadata["last_auto_resume_at"] = now.isoformat()
+
+        await state_store.upsert(
+            session_id,
+            mode=payload.get("mode"),
+            summary_text=payload.get("summary_text", ""),
+            token_estimate=payload.get("token_estimate", 0),
+            increment_version=False,
+            current_goal=current_goal,
+            active_subtasks=payload.get("active_subtasks", []),
+            decisions=payload.get("decisions", []),
+            constraints=payload.get("constraints", []),
+            open_questions=payload.get("open_questions", []),
+            artifact_refs=payload.get("artifact_refs", []),
+            delegate_status=payload.get("delegate_status", []),
+            recent_failures=payload.get("recent_failures", []),
+            user_preferences=payload.get("user_preferences", []),
+            metadata=metadata,
+        )
+
+        resume_content = (
+            "继续执行当前主任务，不要回复进度说明，直接继续推进任务，"
+            "有实质性结论或产出时再回复用户。\n"
+            f"主任务：{primary_goal}"
+        )
+
+        from .agent_invoker import AgentInvoker, InvokeSource
+
+        asyncio.create_task(
+            AgentInvoker(bridge=self).invoke(
+                content=resume_content,
+                agent_id=agent_info.agent_id,
+                session_id=session_id,
+                source=InvokeSource.SYSTEM,
+                metadata={
+                    "auto_resumed": True,
+                    "resume_reason": "status_query",
+                },
+            ),
+            name=f"auto-resume-{session_id[:8]}",
+        )
+
+        logger.info(
+            "Auto-resume scheduled after status reply",
+            extra={
+                "session_id": session_id,
+                "agent_id": agent_info.agent_id,
+                "primary_goal": primary_goal[:120],
+            },
+        )
+
+
+def _is_progress_query(text: str) -> bool:
+    lowered = text.lower()
+    keywords = (
+        "在处理吗",
+        "还没",
+        "好了吗",
+        "进展",
+        "还在",
+        "处理完了吗",
+        "完成了吗",
+        "做完了吗",
+        "finished",
+        "progress",
+        "status",
+    )
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _looks_like_progress_response(text: str) -> bool:
+    lowered = text.lower()
+    keywords = (
+        "正在",
+        "处理中",
+        "继续",
+        "后台",
+        "完成后",
+        "稍等",
+        "progress",
+        "still working",
+    )
+    return any(keyword in lowered for keyword in keywords)
 
     # ------------------------------------------------------------------
     # 内部方法
@@ -534,6 +687,8 @@ class AgentBridge:
         llm_router,
         agent_info: AgentInfo | None = None,
         workspace_path: str | None = None,
+        active_model_name: str = "",
+        requested_output_tokens: int | None = None,
     ):
         """创建 ContextPort adapter（上下文压缩）。
 
@@ -558,6 +713,8 @@ class AgentBridge:
                 llm_router=llm_router,
                 compression_config=config.compression,
                 workspace_path=resolved_workspace,
+                active_model_name=active_model_name,
+                requested_output_tokens=requested_output_tokens,
             )
         except Exception as exc:
             logger.warning(

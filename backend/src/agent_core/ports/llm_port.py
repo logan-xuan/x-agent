@@ -39,6 +39,8 @@ class LLMPort(Protocol):
         system_prompt: str,
         messages: list[dict],
         tools: list[AgentTool] | None = None,
+        provider_name: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """流式生成响应.
         
@@ -46,6 +48,8 @@ class LLMPort(Protocol):
             system_prompt: 系统提示词
             messages: 消息历史（已转换为 LLM 格式）
             tools: 可用工具列表（可选）
+            provider_name: 优先使用的 provider 配置名（可选）
+            max_tokens: 本次生成的最大输出 token 限制（可选）
         
         Yields:
             StreamChunk: 流式数据块，包含以下类型：

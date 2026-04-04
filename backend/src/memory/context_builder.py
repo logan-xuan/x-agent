@@ -21,6 +21,7 @@ from .models import (
 )
 from .spirit_loader import SpiritLoader
 from ..utils.logger import get_logger
+from ..utils.markdown_parsing import extract_markdown_field
 
 logger = get_logger(__name__)
 
@@ -182,8 +183,6 @@ class ContextBuilder:
         Returns:
             IdentityConfig if file exists, None otherwise
         """
-        import re
-        
         identity_path = Path(self.workspace_path) / "IDENTITY.md"
         
         if not identity_path.exists():
@@ -193,28 +192,12 @@ class ContextBuilder:
         try:
             content = identity_path.read_text(encoding="utf-8")
             
-            # Parse identity fields from markdown
             config = IdentityConfig()
-            
-            # Parse name: - **Name:** value
-            name_match = re.search(r"\*\*Name:\*\*\s*(.+)", content)
-            if name_match:
-                config.name = name_match.group(1).strip()
-            
-            # Parse form/creature
-            form_match = re.search(r"\*\*Creature:\*\*\s*(.+)", content)
-            if form_match:
-                config.form = form_match.group(1).strip()
-            
-            # Parse style/vibe
-            style_match = re.search(r"\*\*Vibe:\*\*\s*(.+)", content)
-            if style_match:
-                config.style = style_match.group(1).strip()
-            
-            # Parse emoji
-            emoji_match = re.search(r"\*\*Emoji:\*\*\s*(.+)", content)
-            if emoji_match:
-                config.emoji = emoji_match.group(1).strip()
+
+            config.name = extract_markdown_field(content, ["Name", "姓名"])
+            config.form = extract_markdown_field(content, ["Creature", "存在形式", "形态", "身份"])
+            config.style = extract_markdown_field(content, ["Vibe", "气质风格", "风格", "性格", "气质"])
+            config.emoji = extract_markdown_field(content, ["Emoji", "标志性emoji", "Emoji符号", "表情"])
             
             config.file_path = str(identity_path)
             

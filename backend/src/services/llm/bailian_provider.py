@@ -60,6 +60,7 @@ class BailianProvider(LLMProvider):
             self._client = AsyncOpenAI(
                 api_key=self._api_key,
                 base_url=self._base_url,
+                max_retries=self.max_retries,
                 http_client=http_client,
             )
         return self._client

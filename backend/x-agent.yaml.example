@@ -10,6 +10,8 @@ models:
     api_key: sk-your-openai-api-key-here
     model_id: gpt-3.5-turbo
     is_primary: true
+    max_context_tokens: 128000
+    max_output_tokens: 16384
     timeout: 30.0
     max_retries: 2
   
@@ -20,6 +22,8 @@ models:
     api_key: sk-your-bailian-api-key-here
     model_id: qwen-turbo
     is_primary: false
+    max_context_tokens: 128000
+    max_output_tokens: 16384
     timeout: 45.0
     max_retries: 3
     priority: 1  # 备用模型优先级，数值越小优先级越高
@@ -41,6 +45,19 @@ server:
     - "http://localhost:5173"
     - "http://127.0.0.1:5173"
   reload: false  # 开发模式设为 true
+
+# 上下文压缩 / Prompt 预算控制
+compression:
+  threshold_rounds: 100   # 新增消息轮数超过该阈值时触发压缩
+  threshold_tokens: 8000  # 新增 token 超过该阈值时触发压缩
+  max_context_tokens: 32000  # 完整 prompt 的硬预算，超过后强制压缩
+  max_tool_message_chars: 4000  # 单条工具结果注入后续 prompt 的最大字符数
+  trigger_ratio: 0.72  # 达到有效预算该比例时触发压缩
+  output_reserve_ratio: 0.1  # 未显式指定输出时，按上下文预算预留输出比例
+  min_output_reserve_tokens: 4096  # 最小输出预留 token
+  safety_margin_ratio: 0.03  # 预留协议开销 / token 估算漂移的安全边界
+  min_safety_margin_tokens: 2048  # 最小安全边界 token
+  retention_count: 50     # 压缩后保留的最近消息数
 
 logging:
   level: INFO  # DEBUG, INFO, WARNING, ERROR

@@ -33,6 +33,9 @@ class AgentInfo:
     agent_persona: str = ""
     workspace: str = ""
     feature: str = ""
+    model_name: str = ""
+    temperature: float | None = None
+    max_tokens: int | None = None
 
     @classmethod
     def from_orm(cls, agent_orm: Any) -> AgentInfo:
@@ -53,8 +56,12 @@ class AgentInfo:
                 agent_persona=agent_orm.get("agent_persona", ""),
                 workspace=agent_orm.get("workspace", ""),
                 feature=agent_orm.get("feature", ""),
+                model_name=(agent_orm.get("model_config", {}) or {}).get("name", ""),
+                temperature=(agent_orm.get("model_config", {}) or {}).get("temperature"),
+                max_tokens=(agent_orm.get("model_config", {}) or {}).get("max_tokens"),
             )
         # 支持 dataclass 和 ORM 模型（通过属性访问）
+        model_config = getattr(agent_orm, "model_config", {}) or {}
         return cls(
             agent_id=getattr(agent_orm, "agent_id", ""),
             agent_name=getattr(agent_orm, "agent_name", ""),
@@ -62,6 +69,9 @@ class AgentInfo:
             agent_persona=getattr(agent_orm, "agent_persona", ""),
             workspace=getattr(agent_orm, "workspace", ""),
             feature=getattr(agent_orm, "feature", ""),
+            model_name=model_config.get("name", ""),
+            temperature=model_config.get("temperature"),
+            max_tokens=model_config.get("max_tokens"),
         )
 
     @classmethod
@@ -94,4 +104,5 @@ class AgentInfo:
             "agent_type": self.agent_type,
             "workspace": self.workspace,
             "feature": self.feature,
+            "model_name": self.model_name,
         }

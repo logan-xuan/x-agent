@@ -55,6 +55,8 @@ class EditableModelConfig(BaseModel):
     is_primary: bool
     timeout: float
     max_retries: int
+    max_context_tokens: int
+    max_output_tokens: int
     priority: int
 
 
@@ -71,6 +73,8 @@ class UpdateModelRequest(BaseModel):
     is_primary: Optional[bool] = None
     timeout: Optional[float] = Field(default=None, ge=5.0, le=300.0)
     max_retries: Optional[int] = Field(default=None, ge=0, le=5)
+    max_context_tokens: Optional[int] = Field(default=None, ge=1000, le=2000000)
+    max_output_tokens: Optional[int] = Field(default=None, ge=1, le=2000000)
     priority: Optional[int] = Field(default=None, ge=0)
 
 
@@ -288,6 +292,8 @@ async def get_editable_config() -> EditableConfigResponse:
             is_primary=model.is_primary,
             timeout=model.timeout,
             max_retries=model.max_retries,
+            max_context_tokens=model.max_context_tokens,
+            max_output_tokens=model.max_output_tokens,
             priority=model.priority,
         ))
     
@@ -349,6 +355,10 @@ async def update_model_config(model_name: str, request: UpdateModelRequest) -> U
                 m["timeout"] = request.timeout
             if request.max_retries is not None:
                 m["max_retries"] = request.max_retries
+            if request.max_context_tokens is not None:
+                m["max_context_tokens"] = request.max_context_tokens
+            if request.max_output_tokens is not None:
+                m["max_output_tokens"] = request.max_output_tokens
             if request.priority is not None:
                 m["priority"] = request.priority
             break
@@ -390,6 +400,8 @@ async def update_model_config(model_name: str, request: UpdateModelRequest) -> U
             is_primary=updated_model.is_primary,
             timeout=updated_model.timeout,
             max_retries=updated_model.max_retries,
+            max_context_tokens=updated_model.max_context_tokens,
+            max_output_tokens=updated_model.max_output_tokens,
             priority=updated_model.priority,
         ),
     )

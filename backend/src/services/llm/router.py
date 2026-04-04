@@ -96,6 +96,8 @@ class LLMRouter:
             "base_url": str(config.base_url) if config.base_url else None,
             "timeout": config.timeout,
             "max_retries": config.max_retries,
+            "max_context_tokens": getattr(config, "max_context_tokens", 32000),
+            "max_output_tokens": getattr(config, "max_output_tokens", 8192),
             "priority": getattr(config, "priority", 0),
             "is_primary": config.is_primary,
         }
@@ -158,6 +160,12 @@ class LLMRouter:
     def backups(self) -> list[LLMProvider]:
         """Get backup providers sorted by priority (alias for backup_models)."""
         return self._backups
+
+    def get_provider(self, provider_name: str | None) -> LLMProvider | None:
+        """Get a configured provider by configuration name."""
+        if not provider_name:
+            return self._primary
+        return self._providers.get(provider_name)
     
     async def close(self) -> None:
         """Close all provider connections."""
@@ -203,7 +211,17 @@ class LLMRouter:
         Raises:
             RuntimeError: If no provider is available
         """
-        providers_to_try = [self._primary] + self._backups if self._primary else self._backups
+        preferred_provider_name = kwargs.pop("preferred_provider", None)
+        preferred_provider = self.get_provider(preferred_provider_name)
+
+        if preferred_provider is not None:
+            providers_to_try = [preferred_provider] + [
+                provider
+                for provider in ([self._primary] + self._backups if self._primary else self._backups)
+                if provider is not None and provider.name != preferred_provider.name
+            ]
+        else:
+            providers_to_try = [self._primary] + self._backups if self._primary else self._backups
         providers_to_try = [p for p in providers_to_try if p is not None]
         
         if not providers_to_try:
