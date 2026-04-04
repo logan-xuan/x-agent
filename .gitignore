@@ -41,6 +41,14 @@ logs/
 *.log
 .pm2/
 
+# workspace
+workspace/
+code-assistant/
+critical-agent/
+product-assistant/
+research-agent/
+
+
 # Configuration (contains secrets)
 x-agent.yaml
 *.yaml
