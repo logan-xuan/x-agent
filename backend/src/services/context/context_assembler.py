@@ -78,7 +78,8 @@ class ContextAssembler:
             messages.append({"role": "system", "content": f"[Artifact References]\n{artifact_text}"})
 
         fixed_tokens = (
-            self._token_counter.count_messages(messages)
+            self._token_counter.count_text(request.system_prompt)
+            + self._token_counter.count_messages(messages)
             + self._token_counter.count_tool_definitions(request.tools)
         )
         available_for_working_set = max(
@@ -93,6 +94,7 @@ class ContextAssembler:
         messages.extend(working_set)
 
         token_breakdown = {
+            "system_prompt": self._token_counter.count_text(request.system_prompt),
             "session_state": self._token_counter.count_text(session_state_text),
             "evidence": self._token_counter.count_text(evidence_text),
             "episodic": self._token_counter.count_text(episodic_text),

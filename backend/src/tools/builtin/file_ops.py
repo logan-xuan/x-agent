@@ -177,6 +177,7 @@ class EditFileTool(BaseTool):
             "Edit a file by replacing a specific piece of text with new text. "
             "Only the matched section is changed; the rest of the file is preserved. "
             "Use this instead of write_file when you need to modify part of an existing file. "
+            "Use it for targeted fixes, not for appending large new sections. "
             "The old_text must match exactly (including whitespace and indentation)."
         )
     
@@ -391,7 +392,11 @@ class WriteFileTool(BaseTool):
     
     @property
     def description(self) -> str:
-        return "Write content to a file. Creates the file if it doesn't exist, or overwrites if it does. Use carefully as this can erase existing content."
+        return (
+            "Write content to a file. Creates the file if it doesn't exist, or overwrites if it does. "
+            "Use carefully as this can erase existing content. Prefer this for the initial skeleton or "
+            "full replacement; for long documents or incremental section writing, prefer append_file."
+        )
     
     @property
     def parameters(self) -> list[ToolParameter]:
@@ -478,6 +483,95 @@ class WriteFileTool(BaseTool):
                 extra={"file_path": file_path, "error": str(e)}
             )
             return ToolResult.error_result(f"Failed to write file: {str(e)}")
+
+
+class AppendFileTool(BaseTool):
+    """Tool to append content to a file incrementally.
+
+    Creates the file if it does not exist, otherwise appends content to the end.
+    Intended for long reports, HTML, PRDs, and other large artifacts that should
+    be persisted section by section instead of in one final oversized write.
+    """
+
+    @property
+    def name(self) -> str:
+        return "append_file"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Append content to the end of a file. Creates the file if it doesn't exist. "
+            "Prefer this for long documents, reports, HTML, or section-by-section writing "
+            "where content should be persisted incrementally."
+        )
+
+    @property
+    def parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="file_path",
+                type=ToolParameterType.STRING,
+                description="The path to the file to append to. Can be absolute or relative.",
+                required=True,
+            ),
+            ToolParameter(
+                name="content",
+                type=ToolParameterType.STRING,
+                description="The content to append to the file.",
+                required=True,
+            ),
+        ]
+
+    async def execute(self, file_path: str, content: str) -> ToolResult:
+        """Execute the file append operation."""
+        try:
+            path = _resolve_file_path(file_path)
+
+            # Avoid silent source code mutation through append semantics.
+            if _is_protected_file(path):
+                logger.warning(
+                    "Attempted to append to protected file",
+                    extra={"file_path": str(path)}
+                )
+                return ToolResult.error_result(
+                    f"Cannot append to protected file: {file_path}. "
+                    f"Source code files are protected from append operations by the agent."
+                )
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            previous_length = path.stat().st_size if path.exists() else 0
+            with path.open("a", encoding="utf-8") as f:
+                f.write(content)
+
+            new_length = path.stat().st_size
+
+            logger.info(
+                "File appended successfully",
+                extra={
+                    "file_path": str(path),
+                    "content_length": len(content),
+                    "previous_size": previous_length,
+                    "new_size": new_length,
+                }
+            )
+
+            return ToolResult.ok(
+                f"Successfully appended {len(content)} characters to {path}",
+                file_path=str(path),
+                content_length=len(content),
+                previous_size=previous_length,
+                new_size=new_length,
+            )
+
+        except PermissionError:
+            return ToolResult.error_result(f"Permission denied: {file_path}")
+        except Exception as e:
+            logger.error(
+                "Failed to append file",
+                extra={"file_path": file_path, "error": str(e)}
+            )
+            return ToolResult.error_result(f"Failed to append file: {str(e)}")
 
 
 class ListDirTool(BaseTool):

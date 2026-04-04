@@ -15,6 +15,7 @@ class ContextBuildRequest:
     mode: str
     current_messages: list[dict[str, Any]]
     max_prompt_tokens: int
+    system_prompt: str = ""
     reserved_output_tokens: int = 0
     tools: list[dict[str, Any]] | None = None
     session_state_budget_tokens: int = 1200

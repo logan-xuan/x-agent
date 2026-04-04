@@ -28,6 +28,12 @@ class ToolSemanticMap:
             "description": "写入文件到本地（全量覆写）",
             "can_call_directly": True
         },
+        "append_file": {
+            "type": "builtin_tool",
+            "module": "src.tools.builtin.file_ops",
+            "description": "向文件末尾追加内容（适合长文分段落盘）",
+            "can_call_directly": True
+        },
         "edit_file": {
             "type": "builtin_tool",
             "module": "src.tools.builtin.file_ops",

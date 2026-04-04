@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from .agent_info import AgentInfo
@@ -409,6 +410,7 @@ class AgentBridge:
         event_agent_name = agent_info.agent_name if agent_info else None
         user_msg_id: str | None = None
         assistant_content: list[str] = []
+        written_artifacts: list[dict[str, str | int]] = []
 
         try:
             # 1. 持久化用户消息（仅用户主动发起时）
@@ -420,6 +422,17 @@ class AgentBridge:
 
             # 3. 调用 agent.prompt() 并转换事件
             async for event in agent.prompt(content, images):
+                if isinstance(event, ToolExecutionEndEvent):
+                    artifact = self._capture_written_artifact(event)
+                    if artifact is not None:
+                        written_artifacts = self._merge_written_artifacts(written_artifacts, artifact)
+
+                if isinstance(event, MessageEndEvent):
+                    self._inject_recovery_message_if_needed(
+                        event=event,
+                        written_artifacts=written_artifacts,
+                    )
+
                 gateway_event = self._convert_agent_event(
                     event,
                     agent_id=event_agent_id,
@@ -480,9 +493,9 @@ class AgentBridge:
         """Schedule a background continuation when the user only asks for status."""
         if agent_info is None:
             return
-        if not _is_progress_query(user_content):
+        if not self._is_progress_query(user_content):
             return
-        if not _looks_like_progress_response(assistant_response):
+        if not self._looks_like_progress_response(assistant_response):
             return
 
         state_store = get_session_context_state_store()
@@ -560,38 +573,38 @@ class AgentBridge:
             },
         )
 
+    @staticmethod
+    def _is_progress_query(text: str) -> bool:
+        lowered = text.lower()
+        keywords = (
+            "在处理吗",
+            "还没",
+            "好了吗",
+            "进展",
+            "还在",
+            "处理完了吗",
+            "完成了吗",
+            "做完了吗",
+            "finished",
+            "progress",
+            "status",
+        )
+        return any(keyword in lowered for keyword in keywords)
 
-def _is_progress_query(text: str) -> bool:
-    lowered = text.lower()
-    keywords = (
-        "在处理吗",
-        "还没",
-        "好了吗",
-        "进展",
-        "还在",
-        "处理完了吗",
-        "完成了吗",
-        "做完了吗",
-        "finished",
-        "progress",
-        "status",
-    )
-    return any(keyword in lowered for keyword in keywords)
-
-
-def _looks_like_progress_response(text: str) -> bool:
-    lowered = text.lower()
-    keywords = (
-        "正在",
-        "处理中",
-        "继续",
-        "后台",
-        "完成后",
-        "稍等",
-        "progress",
-        "still working",
-    )
-    return any(keyword in lowered for keyword in keywords)
+    @staticmethod
+    def _looks_like_progress_response(text: str) -> bool:
+        lowered = text.lower()
+        keywords = (
+            "正在",
+            "处理中",
+            "继续",
+            "后台",
+            "完成后",
+            "稍等",
+            "progress",
+            "still working",
+        )
+        return any(keyword in lowered for keyword in keywords)
 
     # ------------------------------------------------------------------
     # 内部方法
@@ -936,6 +949,8 @@ def _looks_like_progress_response(text: str) -> bool:
 
             for msg in event.messages:
                 if isinstance(msg, AssistantMessage):
+                    if not msg.get_text().strip() and not msg.error_message:
+                        continue
                     await session_manager.add_message(
                         session_id=session_id,
                         role="assistant",
@@ -945,6 +960,7 @@ def _looks_like_progress_response(text: str) -> bool:
                             "provider": msg.provider,
                             "stop_reason": msg.stop_reason,
                             "usage": msg.usage,
+                            "error_message": msg.error_message,
                             "user_msg_id": user_msg_id,
                         },
                     )
@@ -989,3 +1005,111 @@ def _looks_like_progress_response(text: str) -> bool:
             )
         except Exception:
             pass
+
+    def _capture_written_artifact(
+        self,
+        event: ToolExecutionEndEvent,
+    ) -> dict[str, str | int] | None:
+        if event.is_error or not event.result:
+            return None
+        if event.tool_name not in {"write_file", "append_file", "edit_file"}:
+            return None
+
+        details = dict(getattr(event.result, "details", {}) or {})
+        file_path = str(details.get("file_path") or "").strip()
+        if not file_path:
+            return None
+
+        artifact: dict[str, str | int] = {
+            "tool_name": event.tool_name,
+            "file_path": file_path,
+        }
+
+        size = self._safe_file_size(file_path)
+        if size is not None:
+            artifact["size_bytes"] = size
+
+        content_length = details.get("content_length")
+        if isinstance(content_length, int):
+            artifact["content_length"] = content_length
+
+        return artifact
+
+    def _inject_recovery_message_if_needed(
+        self,
+        *,
+        event: MessageEndEvent,
+        written_artifacts: list[dict[str, str | int]],
+    ) -> None:
+        if not event.message or not isinstance(event.message, AssistantMessage):
+            return
+
+        msg = event.message
+        if msg.stop_reason != "error":
+            return
+        if not written_artifacts:
+            return
+        if msg.get_text().strip():
+            return
+
+        recovery_text = self._build_artifact_recovery_message(
+            error_message=msg.error_message or "",
+            written_artifacts=written_artifacts,
+        )
+        if not recovery_text:
+            return
+
+        msg.content = [TextContent(text=recovery_text)]
+
+    @staticmethod
+    def _merge_written_artifacts(
+        current: list[dict[str, str | int]],
+        artifact: dict[str, str | int],
+    ) -> list[dict[str, str | int]]:
+        file_path = str(artifact.get("file_path") or "")
+        filtered = [
+            item for item in current
+            if str(item.get("file_path") or "") != file_path
+        ]
+        filtered.append(artifact)
+        return filtered[-5:]
+
+    def _build_artifact_recovery_message(
+        self,
+        *,
+        error_message: str,
+        written_artifacts: list[dict[str, str | int]],
+    ) -> str:
+        lines = [
+            "本次生成在继续补写时发生了连接错误，但已有部分产物成功写入文件。",
+            "",
+            "已写入的文件：",
+        ]
+
+        for item in written_artifacts[-3:]:
+            file_path = str(item.get("file_path") or "")
+            tool_name = str(item.get("tool_name") or "write_file")
+            size_bytes = item.get("size_bytes")
+            detail = f"{tool_name}: {file_path}"
+            if isinstance(size_bytes, int):
+                detail += f" ({size_bytes} bytes)"
+            lines.append(f"- {detail}")
+
+        if error_message:
+            lines.extend([
+                "",
+                f"错误信息：{error_message}",
+            ])
+
+        lines.extend([
+            "",
+            "你可以先查看上述文件中的已生成内容；如果需要，我可以基于现有文件继续补写剩余部分。",
+        ])
+        return "\n".join(lines)
+
+    @staticmethod
+    def _safe_file_size(file_path: str) -> int | None:
+        try:
+            return int(Path(file_path).expanduser().stat().st_size)
+        except Exception:
+            return None

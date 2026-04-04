@@ -38,7 +38,7 @@ class ModeDetector:
         }
         if {"web_search", "fetch_web_content"} & tool_names:
             return "research"
-        if {"write_file", "edit_file"} & tool_names:
+        if {"write_file", "append_file", "edit_file"} & tool_names:
             return "writing"
         if {"run_in_terminal"} & tool_names:
             return "coding"

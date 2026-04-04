@@ -23,7 +23,8 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any, TYPE_CHECKING
 
-from .context_transform import content_to_dict, convert_messages_to_llm, estimate_tokens
+from ..services.compression.token_counter import TokenCounter
+from .context_transform import content_to_dict, convert_messages_to_llm
 from .experience_learning import ExperienceLearner, format_experience_for_prompt
 from .tool_executor import execute_tool_calls
 from .types import (
@@ -54,6 +55,9 @@ if TYPE_CHECKING:
     from .config import AgentCoreConfig
     from .logger import AgentLogger
     from .ports.llm_port import LLMPort
+
+
+_TOKEN_COUNTER = TokenCounter()
 
 
 # ============================================================
@@ -329,6 +333,17 @@ class _AgentLoopRunner:
 
         # 转换消息为 LLM 格式
         llm_messages = convert_messages_to_llm(self.current_context.messages)
+        effective_system_prompt = self.current_context.system_prompt or ""
+
+        # 经验检索: 将经验提示词纳入本轮有效 system prompt，避免绕过压缩预算。
+        if self._experience_learner is not None:
+            experience_prompt = await self._retrieve_and_format_experience()
+            if experience_prompt:
+                effective_system_prompt = (
+                    f"{effective_system_prompt}\n\n{experience_prompt}"
+                    if effective_system_prompt
+                    else experience_prompt
+                )
 
         # 上下文压缩 (通过 ContextPort，如果已配置)
         llm_tools = [t.to_llm_tool() for t in self.current_context.tools] if self.current_context.tools else None
@@ -339,7 +354,7 @@ class _AgentLoopRunner:
             prepared = await self.config.context.prepare_context(
                 session_id=self.session_id,
                 messages=llm_messages,
-                system_prompt=self.current_context.system_prompt,
+                system_prompt=effective_system_prompt,
                 tools=llm_tools,
             )
             llm_messages = prepared.messages
@@ -357,16 +372,14 @@ class _AgentLoopRunner:
                         "quality_rejected": prepared.metadata.get("quality_rejected", False),
                         "used_fallback": prepared.metadata.get("used_fallback", False),
                         "token_breakdown": prepared.metadata.get("token_breakdown", {}),
-                    },
-                )
+                        },
+                    )
 
-        # 经验检索: LLM 调用前检索相关历史经验，注入 system prompt
-        if self._experience_learner is not None:
-            experience_prompt = await self._retrieve_and_format_experience()
-            if experience_prompt:
-                self.current_context.system_prompt = (
-                    self.current_context.system_prompt + "\n\n" + experience_prompt
-                )
+        estimated_prompt_tokens = _estimate_request_tokens(
+            system_prompt=effective_system_prompt,
+            messages=llm_messages,
+            tools=llm_tools,
+        )
 
         # 日志: LLM 调用开始
         if self.logger:
@@ -375,10 +388,10 @@ class _AgentLoopRunner:
                 trace_id=self.trace_id,
                 model=self.config.model,
                 provider=self.config.provider,
-                system_prompt=self.current_context.system_prompt,
+                system_prompt=effective_system_prompt,
                 messages=llm_messages,
                 message_count=len(llm_messages),
-                estimated_tokens=estimate_tokens(self.current_context.messages),
+                estimated_tokens=estimated_prompt_tokens,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
                 thinking_level=self.config.thinking_level,
@@ -391,7 +404,7 @@ class _AgentLoopRunner:
         async for event in _stream_assistant_response(
             llm=self.config.llm,
             llm_call_id=llm_call_id,
-            system_prompt=self.current_context.system_prompt,
+            system_prompt=effective_system_prompt,
             messages=llm_messages,
             tools=self.current_context.tools,
             model=self.config.model,
@@ -494,7 +507,11 @@ class _AgentLoopRunner:
                     tool_name=event.tool_name,
                     content=event.result.content if event.result else [],
                     is_error=event.is_error,
-                    details=event.result.details if event.result else {},
+                    details={
+                        **(event.result.details if event.result else {}),
+                        "duration_ms": event.duration_ms,
+                        "tool_status": "error" if event.is_error else "completed",
+                    },
                 )
                 self._last_tool_results.append(result_msg)
                 self.current_context.messages.append(result_msg)
@@ -706,6 +723,21 @@ class _AgentLoopRunner:
 # ============================================================
 # 模块级辅助函数（不依赖 runner 状态）
 # ============================================================
+
+
+def _estimate_request_tokens(
+    *,
+    system_prompt: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+) -> int:
+    """Estimate tokens for the final request payload sent to the provider."""
+    return (
+        _TOKEN_COUNTER.count_text(system_prompt)
+        + _TOKEN_COUNTER.count_messages(messages)
+        + _TOKEN_COUNTER.count_tool_definitions(tools)
+    )
+
 
 async def _stream_assistant_response(
     llm: LLMPort,

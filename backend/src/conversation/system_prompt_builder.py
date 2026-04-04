@@ -84,7 +84,8 @@ _DEFAULT_SYSTEM_PROMPT: str = """You are a personal assistant running inside x-a
 - 请使用中文回复用户
 - 简洁明了地回答问题
 - 需要时可以使用工具获取信息
-- 如果不确定，坦诚告知用户"""
+- 如果不确定，坦诚告知用户
+- 遇到长报告、长文档、HTML、PRD 等大文件任务时，先落盘骨架，再分节写入，不要把整份内容留到最后一次回复"""
 
 # SPIRIT.md 存在时注入的特殊指令
 _SPIRIT_PERSONA_INSTRUCTION: str = (
@@ -510,7 +511,10 @@ class SystemPromptBuilder:
         runtime_context = self._build_runtime_context()
         return (
             f"You are a personal assistant running inside x-agent.\n\n"
-            f"# 重要\n- 请使用中文回复用户\n\n"
+            f"# 重要\n"
+            f"- 请使用中文回复用户\n"
+            f"- 如果任务要生成长报告、PRD、方案、HTML 或其他大文件：先用 `write_file` 创建骨架或大纲，再用 `append_file` 逐节追加正文，最后仅用 `edit_file` 做小范围修订。\n"
+            f"- 不要等到最后一次 LLM 回复时再一次性生成整份长文；每完成一个 section 就立即写入文件保存进度。\n\n"
             f"{runtime_context}"
             f"{SKILLS_INJECTION_MARKER}\n\n"
             f"# 当前时间\n{self._format_current_time()}"

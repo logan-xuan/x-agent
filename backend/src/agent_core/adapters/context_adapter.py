@@ -129,6 +129,7 @@ class XAgentContextAdapter:
                 assembled_bundle = await self._assemble_stateful_context(
                     session_id=session_id,
                     messages=sanitized_messages,
+                    system_prompt=system_prompt,
                     tools=tools,
                 )
                 messages_for_manager = assembled_bundle.messages
@@ -242,6 +243,7 @@ class XAgentContextAdapter:
         *,
         session_id: str,
         messages: list[dict],
+        system_prompt: str,
         tools: list[dict] | None,
     ) -> Any:
         """Build stateful prompt fragments before legacy compression runs."""
@@ -272,6 +274,7 @@ class XAgentContextAdapter:
                 mode=getattr(self._manager.config, "mode", "hybrid"),
                 current_messages=messages,
                 max_prompt_tokens=max_prompt_tokens,
+                system_prompt=system_prompt,
                 reserved_output_tokens=reserved_output_tokens,
                 tools=tools,
                 session_state_budget_tokens=self._manager.config.session_state_budget_tokens,

@@ -3,6 +3,7 @@
 This module provides the built-in tools that are always available:
 - read_file: Read file contents
 - write_file: Write content to a file
+- append_file: Append content to a file incrementally
 - list_dir: List directory contents
 - search_files: Search for files by pattern
 - run_in_terminal: Execute shell commands
@@ -15,7 +16,7 @@ This module provides the built-in tools that are always available:
 - delegate_task: Delegate tasks to another Agent (through full agent loop)
 """
 
-from .file_ops import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool, SearchFilesTool
+from .file_ops import ReadFileTool, WriteFileTool, AppendFileTool, EditFileTool, ListDirTool, SearchFilesTool
 from .aliyun_web_search import AliyunWebSearchTool
 from .get_current_time import GetCurrentTimeTool
 from .fetch_web_content import FetchWebContentTool
@@ -27,6 +28,7 @@ from .terminal import RunInTerminalTool, GetTerminalOutputTool, KillProcessTool
 __all__ = [
     "ReadFileTool",
     "WriteFileTool",
+    "AppendFileTool",
     "EditFileTool",
     "ListDirTool",
     "SearchFilesTool",
@@ -54,6 +56,7 @@ def get_builtin_tools() -> list:
     return [
         ReadFileTool(),
         WriteFileTool(),
+        AppendFileTool(),
         EditFileTool(),
         ListDirTool(),
         SearchFilesTool(),

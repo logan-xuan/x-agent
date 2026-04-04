@@ -364,6 +364,9 @@
         <a href="#runtime">主链路图</a>
         <a href="#stages">分阶段执行图</a>
         <a href="#state-machine">任务状态机</a>
+        <a href="#sla">时间预算与 Watchdog</a>
+        <a href="#clarification">需求澄清协议</a>
+        <a href="#loop-boundary">agent_core Loop 边界</a>
         <a href="#models">数据模型</a>
         <a href="#modules">代码落点</a>
         <a href="#acceptance">验收标准</a>
@@ -646,6 +649,222 @@
                 </g>
               </svg>
             </div>
+          </div>
+        </section>
+
+        <section id="sla" class="panel">
+          <h2>时间预算、任务级 SLA 与 Watchdog</h2>
+          <div class="grid three">
+            <div class="metric warn">
+              <div class="label">当前问题</div>
+              <div class="value">只有步骤级 timeout</div>
+              <div class="sub">单次 LLM、delegate、terminal 各自超时，但系统没有“整个长任务最多允许多久”的统一约束。</div>
+            </div>
+            <div class="metric good">
+              <div class="label">目标</div>
+              <div class="value">双层时限</div>
+              <div class="sub">每个 stage 有自己的 timeout，每个 task 有统一 SLA，再配合 heartbeat 和 watchdog。</div>
+            </div>
+            <div class="metric bad">
+              <div class="label">用户体感风险</div>
+              <div class="value">看起来像卡住</div>
+              <div class="sub">某一步超时后没有统一状态机托底，用户只能看到“处理中”，却不知道任务是否仍在推进。</div>
+            </div>
+          </div>
+
+          <h3>建议时间预算</h3>
+          <table class="table">
+            <thead>
+              <tr><th>层级</th><th>对象</th><th>建议值</th><th>说明</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>步骤级</td><td><code>evidence_collect</code></td><td>120s</td><td>工具最密集，通常最慢</td></tr>
+              <tr><td>步骤级</td><td><code>outline_generate</code></td><td>60s</td><td>只看 task + evidence 摘要，不应太重</td></tr>
+              <tr><td>步骤级</td><td><code>section_draft</code></td><td>90s / section</td><td>每个 section 独立限时，不共享一个大 timeout</td></tr>
+              <tr><td>步骤级</td><td><code>document_assemble</code></td><td>60s</td><td>优先合并已有 artifacts，不要再大模型整段重写</td></tr>
+              <tr><td>任务级</td><td><code>interactive_task</code></td><td>15 min</td><td>主会话可随时查进度</td></tr>
+              <tr><td>任务级</td><td><code>deep_research</code></td><td>30 min</td><td>允许多阶段搜集、写作、合并</td></tr>
+              <tr><td>任务级</td><td><code>heavy_batch</code></td><td>60 min</td><td>低交互、长批处理任务</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Heartbeat / Watchdog 图</h3>
+          <div class="diagram">
+            <svg width="1100" height="260" viewBox="0 0 1100 260" aria-label="SLA and watchdog diagram">
+              <defs>
+                <marker id="arrow6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                  <path d="M0,0 L9,3 L0,6 Z" fill="#6d655c"></path>
+                </marker>
+              </defs>
+              <rect x="60" y="60" width="210" height="58" rx="16" fill="rgba(163,55,47,0.10)" stroke="rgba(163,55,47,0.35)"/>
+              <text x="165" y="94" text-anchor="middle" font-size="18" font-weight="700">Worker Stage</text>
+              <text x="165" y="116" text-anchor="middle" font-size="13">执行中持续更新 heartbeat</text>
+
+              <rect x="340" y="60" width="220" height="58" rx="16" fill="rgba(165,106,16,0.12)" stroke="rgba(165,106,16,0.35)"/>
+              <text x="450" y="94" text-anchor="middle" font-size="18" font-weight="700">Task Registry</text>
+              <text x="450" y="116" text-anchor="middle" font-size="13">last_heartbeat_at / deadline_at</text>
+
+              <rect x="640" y="60" width="220" height="58" rx="16" fill="rgba(20,108,99,0.12)" stroke="rgba(20,108,99,0.35)"/>
+              <text x="750" y="94" text-anchor="middle" font-size="18" font-weight="700">Watchdog</text>
+              <text x="750" y="116" text-anchor="middle" font-size="13">检查 stale / SLA / resume_count</text>
+
+              <rect x="930" y="60" width="120" height="58" rx="16" fill="rgba(47,125,50,0.10)" stroke="rgba(47,125,50,0.35)"/>
+              <text x="990" y="94" text-anchor="middle" font-size="18" font-weight="700">恢复</text>
+              <text x="990" y="116" text-anchor="middle" font-size="13">resume / fail</text>
+
+              <line x1="270" y1="89" x2="340" y2="89" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow6)"/>
+              <line x1="560" y1="89" x2="640" y2="89" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow6)"/>
+              <line x1="860" y1="89" x2="930" y2="89" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow6)"/>
+
+              <rect x="220" y="170" width="650" height="44" rx="14" fill="rgba(255,255,255,0.78)" stroke="rgba(69,55,39,0.12)"/>
+              <text x="545" y="198" text-anchor="middle" font-size="14">
+                stale_threshold = max(stage_timeout × 1.5, 60s)，若长时间无 heartbeat，则进入 stale 并触发自动恢复或失败处理
+              </text>
+            </svg>
+          </div>
+
+          <div class="note">
+            <strong>设计要求：</strong>
+            以后必须同时存在“步骤级 timeout”和“任务级 SLA”。  
+            系统不应该只知道“这一步超时了”，还要知道“整个任务接下来该恢复、降级、失败，还是继续”。
+          </div>
+        </section>
+
+        <section id="clarification" class="panel">
+          <h2>需求澄清协议</h2>
+          <div class="grid two">
+            <div>
+              <h3>协议目标</h3>
+              <ul class="bullets">
+                <li>worker 可以提出“缺什么信息”，但不能直接与用户对话。</li>
+                <li>owner session 负责把问题展示给用户。</li>
+                <li>用户回答通过 control queue 回流，不直接进入 worker message history。</li>
+                <li>worker 恢复时读取结构化 answer payload，而不是重新吃整段聊天记录。</li>
+              </ul>
+            </div>
+            <div class="note">
+              <strong>核心边界：</strong>
+              worker session 可以提问，但不能直接问用户；owner 负责转述，worker 负责继续执行。
+            </div>
+          </div>
+
+          <h3>澄清交互图</h3>
+          <div class="diagram">
+            <svg width="1200" height="360" viewBox="0 0 1200 360" aria-label="Clarification protocol diagram">
+              <defs>
+                <marker id="arrow5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                  <path d="M0,0 L9,3 L0,6 Z" fill="#6d655c"></path>
+                </marker>
+              </defs>
+
+              <text x="120" y="40" text-anchor="middle" font-size="16" font-weight="700">Worker Session</text>
+              <text x="430" y="40" text-anchor="middle" font-size="16" font-weight="700">Task Runner</text>
+              <text x="760" y="40" text-anchor="middle" font-size="16" font-weight="700">Owner Session</text>
+              <text x="1060" y="40" text-anchor="middle" font-size="16" font-weight="700">User</text>
+
+              <line x1="120" y1="60" x2="120" y2="320" stroke="#c8beb1" stroke-width="2"/>
+              <line x1="430" y1="60" x2="430" y2="320" stroke="#c8beb1" stroke-width="2"/>
+              <line x1="760" y1="60" x2="760" y2="320" stroke="#c8beb1" stroke-width="2"/>
+              <line x1="1060" y1="60" x2="1060" y2="320" stroke="#c8beb1" stroke-width="2"/>
+
+              <rect x="40" y="88" width="160" height="36" rx="12" fill="rgba(163,55,47,0.10)" stroke="rgba(163,55,47,0.35)"/>
+              <text x="120" y="111" text-anchor="middle">1. worker 发现缺关键信息</text>
+
+              <line x1="200" y1="106" x2="430" y2="106" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow5)"/>
+              <rect x="330" y="136" width="200" height="36" rx="12" fill="rgba(165,106,16,0.12)" stroke="rgba(165,106,16,0.35)"/>
+              <text x="430" y="159" text-anchor="middle">2. 写 clarification_request</text>
+
+              <line x1="530" y1="154" x2="760" y2="154" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow5)"/>
+              <rect x="670" y="184" width="180" height="36" rx="12" fill="rgba(20,108,99,0.12)" stroke="rgba(20,108,99,0.35)"/>
+              <text x="760" y="207" text-anchor="middle">3. owner session 转述问题</text>
+
+              <line x1="850" y1="202" x2="1060" y2="202" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow5)"/>
+              <rect x="1000" y="232" width="120" height="36" rx="12" fill="rgba(20,108,99,0.12)" stroke="rgba(20,108,99,0.35)"/>
+              <text x="1060" y="255" text-anchor="middle">4. 用户回答</text>
+
+              <line x1="1000" y1="272" x2="760" y2="272" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow5)"/>
+              <line x1="670" y1="272" x2="430" y2="272" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow5)"/>
+              <rect x="330" y="252" width="200" height="36" rx="12" fill="rgba(165,106,16,0.12)" stroke="rgba(165,106,16,0.35)"/>
+              <text x="430" y="275" text-anchor="middle">5. 写 task_update / answer</text>
+
+              <line x1="330" y1="304" x2="120" y2="304" stroke="#6d655c" stroke-width="2" marker-end="url(#arrow5)"/>
+              <text x="225" y="326" text-anchor="middle" font-size="13" fill="#6d655c">6. worker 读取结构化答案并恢复执行</text>
+            </svg>
+          </div>
+
+          <h3>关键约束</h3>
+          <table class="table">
+            <thead>
+              <tr><th>对象</th><th>职责</th><th>绝不能做什么</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>worker session</code></td>
+                <td>推进主任务、发现信息缺口、消费答案后继续执行</td>
+                <td>直接向用户提问</td>
+              </tr>
+              <tr>
+                <td><code>owner session</code></td>
+                <td>展示澄清问题、接收用户回答、展示最终结果</td>
+                <td>直接改写 worker 主任务上下文</td>
+              </tr>
+              <tr>
+                <td><code>task control queue</code></td>
+                <td>传递结构化 answer / update / cancel</td>
+                <td>直接持有用户聊天消息历史</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="loop-boundary" class="panel">
+          <h2>agent_core Loop 边界</h2>
+          <div class="grid two">
+            <div>
+              <h3>保留职责</h3>
+              <ul class="bullets">
+                <li>单次 worker 执行回合</li>
+                <li>LLM 调用与工具执行</li>
+                <li>本轮消息事件流</li>
+                <li>本轮 `SessionState` 更新</li>
+                <li>高价值工具结果归档</li>
+              </ul>
+            </div>
+            <div>
+              <h3>移出职责</h3>
+              <ul class="bullets">
+                <li>长任务创建与 task_id 生命周期管理</li>
+                <li>owner / worker session 路由</li>
+                <li>状态查询旁路</li>
+                <li>澄清请求转发</li>
+                <li>自动续跑调度</li>
+                <li>watchdog 与 stage 切换</li>
+                <li>整个任务是否完成的判定</li>
+              </ul>
+            </div>
+          </div>
+
+          <h3>分层图</h3>
+          <div class="diagram">
+            <svg width="1100" height="260" viewBox="0 0 1100 260" aria-label="Loop boundary layering">
+              <rect x="80" y="40" width="940" height="50" rx="18" fill="rgba(20,108,99,0.12)" stroke="rgba(20,108,99,0.35)"/>
+              <text x="550" y="72" text-anchor="middle" font-size="20" font-weight="700">Orchestration Layer</text>
+              <text x="550" y="92" text-anchor="middle" font-size="13">TaskRunner / TaskRegistry / StatusHandler / Clarification Protocol / Completion Push</text>
+
+              <rect x="150" y="115" width="800" height="50" rx="18" fill="rgba(165,106,16,0.12)" stroke="rgba(165,106,16,0.35)"/>
+              <text x="550" y="147" text-anchor="middle" font-size="20" font-weight="700">State Layer</text>
+              <text x="550" y="167" text-anchor="middle" font-size="13">SessionState / EvidenceLedger / Artifacts / EpisodicMemory</text>
+
+              <rect x="250" y="190" width="600" height="50" rx="18" fill="rgba(163,55,47,0.10)" stroke="rgba(163,55,47,0.35)"/>
+              <text x="550" y="222" text-anchor="middle" font-size="20" font-weight="700">Execution Layer</text>
+              <text x="550" y="242" text-anchor="middle" font-size="13">agent_core loop：只负责单轮执行，不负责整任务生命周期</text>
+            </svg>
+          </div>
+
+          <div class="note">
+            <strong>关键语义：</strong>
+            `AgentEndEvent` 只表示“本次 worker 回合结束”，不表示整个长任务完成。  
+            长任务完成必须由 `TaskRunner` 根据 stage、artifact、状态机综合判断。
           </div>
         </section>
 

@@ -567,7 +567,183 @@ while task.status in {"pending", "running"}:
 7. 自动完成推送与 cancel/update 控制
 8. 最后再做 UI 展示优化
 
-## 16. 结论
+## 16. 时间预算、任务级 SLA 与 Watchdog
+
+### 16.1 当前问题
+
+当前系统只有步骤级 timeout，没有任务级 timeout。
+
+表现为：
+
+- 单次 LLM 调用会在 provider timeout + retry 上限处失败
+- delegate_task 会在 wait timeout 处返回“后台继续”
+- 终端工具会在工具级 timeout 处中止
+- 但系统没有“整个长任务最多允许运行多久”的统一约束
+
+结果就是：
+
+- 任务整体没有明确 SLA
+- 某一步超时后，系统不知道应不应该恢复、降级还是失败
+- 用户主观感受是“卡住了”
+
+### 16.2 目标
+
+重构后应有两层时间控制：
+
+1. **步骤级 timeout**
+2. **任务级 SLA**
+
+并配套：
+
+3. **watchdog**
+4. **heartbeat**
+5. **自动恢复**
+
+### 16.3 步骤级 timeout
+
+每个 stage 都应有自己的 timeout 预算。
+
+建议：
+
+- `task_intake`: 10s
+- `evidence_collect`: 120s
+- `evidence_normalize`: 60s
+- `outline_generate`: 60s
+- `section_draft`: 90s / section
+- `section_review`: 60s / section
+- `document_assemble`: 60s
+- `render_publish`: 60s
+
+说明：
+
+- `evidence_collect` 通常最慢，因为包含多个工具调用
+- `section_draft` 必须按 section 单独限时，不能整个报告共享一个大 timeout
+- `render_publish` 不应使用大模型超长调用，优先用已有 artifact 合并
+
+### 16.4 任务级 SLA
+
+每个 task 需要有统一 SLA。
+
+建议按任务类型分档：
+
+- `interactive_task`: 15 分钟
+- `deep_research`: 30 分钟
+- `heavy_batch`: 60 分钟
+
+可在 `agent_tasks` 中增加：
+
+- `sla_seconds`
+- `deadline_at`
+
+### 16.5 Heartbeat
+
+worker session 和 TaskRunner 都应更新 heartbeat。
+
+建议：
+
+- worker 每完成一个 stage、每生成一个 section、每次 evidence 批次写入后更新 heartbeat
+- `last_heartbeat_at` 写在 `agent_tasks`
+
+heartbeat 更新粒度建议：
+
+- 最长间隔不超过 30 秒
+
+### 16.6 Watchdog
+
+新增 watchdog 检查：
+
+- 如果 `now - last_heartbeat_at > stale_threshold`
+- 且任务状态仍是 `running`
+
+则标记：
+
+- `status = stale`
+
+并触发：
+
+- 自动恢复
+- 或主会话提醒
+
+建议阈值：
+
+- `stale_threshold = max(stage_timeout * 1.5, 60s)`
+
+### 16.7 自动恢复
+
+自动恢复必须有上限。
+
+建议：
+
+- 每个 stage 最多恢复 2 次
+- 每个 task 总恢复次数最多 5 次
+
+恢复策略：
+
+1. 若当前 stage 有 checkpoint，则从最近 checkpoint 恢复
+2. 若无 checkpoint，但已有部分 artifact，则只补未完成部分
+3. 若连续两次都卡在同一 stage，则将 task 标记为 `failed` 或 `waiting_input`
+
+### 16.8 降级策略
+
+当某个 stage repeatedly timeout 时，系统应自动降级。
+
+示例：
+
+#### `section_draft`
+
+- 超时一次：减少 evidence 注入量
+- 超时两次：将 section 再拆成更小子段
+
+#### `document_assemble`
+
+- 超时一次：先输出 markdown artifact
+- 超时两次：跳过 HTML 渲染，先推送 markdown 结果
+
+### 16.9 状态机补充
+
+任务状态补充以下含义：
+
+- `stale`: 长时间无 heartbeat，需要恢复
+- `blocked`: 外部资源缺失或工具失败，无法继续
+- `failed`: 超过恢复上限
+
+### 16.10 用户可见策略
+
+用户不需要看到复杂的 timeout 细节，但需要看到：
+
+- 当前阶段
+- 最近更新时间
+- 任务是否仍在推进
+- 是否已自动恢复
+- 是否因超时进入降级输出
+
+### 16.11 建议新增字段
+
+在 `agent_tasks` 中新增：
+
+- `sla_seconds`
+- `deadline_at`
+- `stale_threshold_seconds`
+- `last_heartbeat_at`
+- `resume_count`
+- `last_stage_timeout_at`
+
+在 `agent_task_stages` 中新增：
+
+- `timeout_seconds`
+- `stale_threshold_seconds`
+- `attempt_count`
+
+### 16.12 验收标准
+
+必须满足：
+
+1. 单个 stage timeout 不会导致整个任务直接消失
+2. 长任务超出步骤级 timeout 后会进入 `stale` 或自动恢复
+3. 超过任务 SLA 后，任务状态明确，不再无限后台悬挂
+4. 主会话可查询当前任务是否已进入降级或恢复
+
+## 17. 结论
 
 不要再让“你在处理吗”进入长任务 worker 的主上下文。
 
@@ -580,7 +756,7 @@ while task.status in {"pending", "running"}:
 
 这比“回复完状态后再自动续跑一次”的补丁方案更稳，也更接近真正可规模化的长任务架构。
 
-## 17. 需求澄清协议设计
+## 18. 需求澄清协议设计
 
 ### 17.1 问题
 
@@ -730,7 +906,7 @@ while task.status in {"pending", "running"}:
 - 首版：自由文本澄清
 - 第二版：高频任务切换到表单化澄清
 
-## 18. 对现有 agent_core loop 的影响与边界
+## 19. 对现有 agent_core loop 的影响与边界
 
 ### 18.1 结论
 
