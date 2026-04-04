@@ -39,6 +39,7 @@ env/
 # Logs
 logs/
 *.log
+.pm2/
 
 # Configuration (contains secrets)
 x-agent.yaml
