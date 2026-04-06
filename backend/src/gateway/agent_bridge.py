@@ -384,6 +384,7 @@ class AgentBridge:
         abort_event: asyncio.Event | None = None,
         persist_user_message: bool = True,
         disable_skills: bool = False,
+        allow_auto_resume: bool = False,
     ) -> AsyncGenerator[GatewayEvent, None]:
         """执行 Agent Loop 并产出 GatewayEvent。
 
@@ -404,6 +405,7 @@ class AgentBridge:
             persist_user_message: 是否持久化用户消息。AgentInvoker 等内部
                 触发场景应设为 False，因为 prompt 不是用户主动发送的。
             disable_skills: 是否跳过技能匹配与 prompt 注入。
+            allow_auto_resume: 是否在状态类回复后自动触发主任务继续执行。
 
         Yields:
             GatewayEvent 事件流。
@@ -454,6 +456,29 @@ class AgentBridge:
 
             # 4. 恢复原始 system prompt
             self._restore_system_prompt(agent)
+
+            if allow_auto_resume:
+                try:
+                    from ..services.context.session_state_store import SessionContextStateStore
+                    from ..services.storage import get_storage_service
+                    from .agent_invoker import AgentInvoker
+
+                    state = await SessionContextStateStore(get_storage_service()).get(session_id)
+                    if state is not None:
+                        payload = state.to_dict()
+                        goal = payload.get("current_goal", {})
+                        primary_goal = goal.get("primary_goal", "")
+                        if goal.get("is_progress_query") and primary_goal:
+                            await AgentInvoker(self).invoke(
+                                agent_id=event_agent_id or "",
+                                session_id=session_id,
+                                content=f"继续执行当前主任务：{primary_goal}",
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to schedule auto-resume",
+                        extra={"session_id": session_id, "error": str(exc)},
+                    )
 
         except Exception as exc:
             logger.exception(
