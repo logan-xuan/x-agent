@@ -35,7 +35,7 @@
 - `[x] P3-T12`: 已为 `/api/v1/dev/runtime-turn` 增加 `disable_tools` fast mode，`8s` 调试窗口内可稳定返回最终文本
 - `[x] P3-T13`: 已为 fast mode 增加 `disable_skills`，进一步压缩首 token 延迟
 - `[x] P3-T14`: 已将 fast mode 本地开销压缩到近 0ms，并确认剩余瓶颈在 provider 首 chunk
-- `[ ] P3-T15`: 继续收口 provider 侧首 chunk 波动，或为 fast mode 设计明确的 debug fallback 策略
+- `[~] P3-T15`: 正在收口 provider 侧首 chunk 波动，并为 fast mode 补充更可解释的 timeout fallback
 
 ---
 
@@ -548,12 +548,27 @@
 - fast mode 在更短超时窗口内也能稳定拿到文本
 - 新开关边界清晰，有回归测试和 e2e 验证
 
-#### [ ] P3-T15: 收口 provider 侧首 chunk 波动或提供 debug fallback
+#### [~] P3-T15: 收口 provider 侧首 chunk 波动或提供 debug fallback
 
 - 目标：
   - 明确 provider streaming 首 chunk 的真实耗时分布
   - 评估是否需要 provider 参数调优、备用模型、或 debug-only synthetic fallback
   - 保证 `/api/v1/dev/runtime-turn` 在短超时窗口下也能给出稳定、可解释的结果
+
+- 当前已完成：
+  - `backend/src/services/llm/router.py`
+  - `backend/src/gateway/agent_bridge.py`
+  - `backend/tests/unit/test_runtime_gateway_adapter.py`
+  - 关键改动：
+    - streaming wrapper 记录 provider 首个内容 chunk 的结构化日志
+    - fast mode timeout 在无正文时返回更可解释的 fallback 文本
+  - 已验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
+
+- 当前结论：
+  - 本地 runtime overhead 已经基本压平
+  - provider 首 chunk 仍存在显著波动，极简 prompt 下也可能超过 `8s`
+  - 下一步要么继续 provider 参数/模型侧验证，要么为 debug fast mode 设计更明确的 synthetic fallback
 
 验收：
 

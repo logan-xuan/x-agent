@@ -503,6 +503,8 @@ class AgentBridge:
             "phase": "resolve_agent",
             "timeout_ms": timeout_ms,
             "agent_id": None,
+            "fast_mode": bool(request.metadata.get("runtime_disable_tools"))
+            or bool(request.metadata.get("runtime_disable_skills")),
             "events_seen": 0,
             "text_chunks": 0,
             "text_chars": 0,
@@ -797,9 +799,16 @@ class AgentBridge:
         last_event = diagnostics.get("last_event_type") or "none"
         events_seen = diagnostics.get("events_seen", 0)
         timeout_ms = diagnostics.get("timeout_ms")
+        fast_mode = bool(diagnostics.get("fast_mode"))
 
         if finish_reason == "max_wall_time":
             timeout_suffix = f" after {timeout_ms}ms" if timeout_ms else ""
+            if fast_mode and not streamed:
+                return (
+                    f"[runtime fast mode timeout{timeout_suffix}] "
+                    f"bridge ok, waiting for provider content. "
+                    f"phase={phase}, last_event={last_event}, events_seen={events_seen}"
+                )
             return (
                 f"[runtime-turn timeout{timeout_suffix}] "
                 f"phase={phase}, last_event={last_event}, events_seen={events_seen}"

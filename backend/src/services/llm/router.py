@@ -348,18 +348,6 @@ class LLMRouter:
                 start_time = time.time()
                 result = await provider.chat(messages, stream=stream, **kwargs)
                 latency_ms = int((time.time() - start_time) * 1000)
-                self._provider_health_cache[provider.name] = (time.monotonic(), True)
-                
-                # Record success
-                await breaker.record_success()
-                logger.info(
-                    "Successfully used provider",
-                    extra={
-                        "provider_name": provider.name,
-                        "latency_ms": latency_ms,
-                        "session_id": session_id,
-                    }
-                )
                 
                 # Log LLM interaction to dedicated prompt log
                 try:
@@ -372,11 +360,21 @@ class LLMRouter:
                     if stream:
                         # For streaming, wrap to capture response
                         return self._wrap_streaming_with_prompt_log(
-                            result, provider, session_id, messages, latency_ms,
+                            result, provider, breaker, session_id, messages, latency_ms,
                             ctx.trace_id if ctx else None, prompt_logger,
                             tools=kwargs.get("tools"),
                         )
                     else:
+                        self._provider_health_cache[provider.name] = (time.monotonic(), True)
+                        await breaker.record_success()
+                        logger.info(
+                            "Successfully used provider",
+                            extra={
+                                "provider_name": provider.name,
+                                "latency_ms": latency_ms,
+                                "session_id": session_id,
+                            }
+                        )
                         # For non-streaming, log immediately
                         prompt_logger.log_interaction(
                             session_id=session_id,
@@ -407,10 +405,20 @@ class LLMRouter:
                     if stream:
                         # For streaming, wrap the generator to capture stats
                         return self._wrap_streaming_response(
-                            result, provider, session_id, latency_ms, stat_service,
+                            result, provider, breaker, session_id, latency_ms, stat_service,
                             prompt_messages=messages,
                         )
                     else:
+                        self._provider_health_cache[provider.name] = (time.monotonic(), True)
+                        await breaker.record_success()
+                        logger.info(
+                            "Successfully used provider",
+                            extra={
+                                "provider_name": provider.name,
+                                "latency_ms": latency_ms,
+                                "session_id": session_id,
+                            }
+                        )
                         # For non-streaming, record immediately
                         await stat_service.record_request(
                             provider_name=provider.name,
@@ -526,6 +534,7 @@ class LLMRouter:
         self,
         stream: AsyncGenerator[StreamingLLMResponse, None],
         provider: LLMProvider,
+        breaker: Any,
         session_id: str | None,
         initial_latency_ms: int,
         stat_service: Any,
@@ -548,6 +557,7 @@ class LLMRouter:
         model = provider.model_id
         total_latency_ms = initial_latency_ms
         has_error = False
+        completed = False
         error_message = None
         
         try:
@@ -558,6 +568,7 @@ class LLMRouter:
                     model = chunk.model
                 yield chunk
             total_latency_ms = int((time.time() - start_time) * 1000) + initial_latency_ms
+            completed = True
             
         except Exception as e:
             has_error = True
@@ -565,6 +576,20 @@ class LLMRouter:
             raise
         
         finally:
+            if completed:
+                self._provider_health_cache[provider.name] = (time.monotonic(), True)
+                await breaker.record_success()
+                logger.info(
+                    "Successfully used provider",
+                    extra={
+                        "provider_name": provider.name,
+                        "latency_ms": total_latency_ms,
+                        "session_id": session_id,
+                    }
+                )
+            elif has_error:
+                await breaker.record_failure(Exception(error_message or "streaming_error"))
+
             # Record stats after streaming completes
             try:
                 # Estimate prompt tokens from input messages
@@ -600,6 +625,7 @@ class LLMRouter:
         self,
         stream: AsyncGenerator[StreamingLLMResponse, None],
         provider: LLMProvider,
+        breaker: Any,
         session_id: str | None,
         prompt_messages: list[dict[str, str]],
         initial_latency_ms: int,
@@ -625,6 +651,7 @@ class LLMRouter:
         total_content = ""
         total_latency_ms = initial_latency_ms
         has_error = False
+        completed = False
         error_message = None
         first_content_chunk_logged = False
         
@@ -646,6 +673,7 @@ class LLMRouter:
                     )
                 yield chunk
             total_latency_ms = int((time.time() - start_time) * 1000) + initial_latency_ms
+            completed = True
             if not first_content_chunk_logged:
                 logger.info(
                     "Streaming provider completed without content chunk",
@@ -662,6 +690,20 @@ class LLMRouter:
             raise
         
         finally:
+            if completed:
+                self._provider_health_cache[provider.name] = (time.monotonic(), True)
+                await breaker.record_success()
+                logger.info(
+                    "Successfully used provider",
+                    extra={
+                        "provider_name": provider.name,
+                        "latency_ms": total_latency_ms,
+                        "session_id": session_id,
+                    }
+                )
+            elif has_error:
+                await breaker.record_failure(Exception(error_message or "streaming_error"))
+
             # Log prompt interaction after streaming completes
             try:
                 # Estimate tokens for streaming response
