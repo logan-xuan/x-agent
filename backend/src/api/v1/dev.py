@@ -77,6 +77,9 @@ class RuntimeTurnDebugRequest(BaseModel):
     channel_protocol: str = "rest_api"
     agent_id: str | None = None
     agent_name: str | None = None
+    runtime_timeout_ms: int | None = Field(default=30000, ge=1)
+    disable_tools: bool = False
+    disable_skills: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -276,6 +279,14 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
     """Execute the experimental runtime bridge over HTTP without changing the default chat path."""
     channel_type = _parse_channel_type(request.channel_type)
     channel_protocol = _parse_channel_protocol(request.channel_protocol)
+    metadata = dict(request.metadata)
+    if request.runtime_timeout_ms is not None:
+        metadata.setdefault("runtime_timeout_ms", request.runtime_timeout_ms)
+    if request.disable_tools:
+        metadata.setdefault("runtime_disable_tools", True)
+        metadata.setdefault("runtime_disable_skills", True)
+    if request.disable_skills:
+        metadata.setdefault("runtime_disable_skills", True)
     envelope = Envelope.create_chat(
         content=request.content,
         session_id=request.session_id,
@@ -283,12 +294,12 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
         channel_protocol=channel_protocol,
         agent_id=request.agent_id,
         agent_name=request.agent_name,
-        metadata=dict(request.metadata),
+        metadata=metadata,
     )
     dispatcher = GatewayDispatcher()
     result: TurnResult = await dispatcher.execute_runtime_turn(
         envelope,
-        metadata=dict(request.metadata),
+        metadata=metadata,
     )
     return RuntimeTurnDebugResponse(
         session_id=request.session_id,

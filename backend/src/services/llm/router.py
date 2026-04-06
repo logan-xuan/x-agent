@@ -1,5 +1,6 @@
 """LLM Router for primary/backup model routing with failover."""
 
+import asyncio
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -34,7 +35,105 @@ class LLMRouter:
         self._primary: LLMProvider | None = None
         self._backups: list[LLMProvider] = []
         self._model_configs = model_configs
+        self._provider_health_cache: dict[str, tuple[float, bool]] = {}
+        self._provider_health_locks: dict[str, asyncio.Lock] = {}
+        self._provider_health_ttl_seconds = 30.0
         self._load_providers()
+
+    def _health_lock_for(self, provider_name: str) -> asyncio.Lock:
+        """Return a per-provider lock used to dedupe concurrent health probes."""
+        lock = self._provider_health_locks.get(provider_name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._provider_health_locks[provider_name] = lock
+        return lock
+
+    def _recent_provider_health(self, provider_name: str) -> bool | None:
+        """Return cached provider health when still fresh."""
+        cached = self._provider_health_cache.get(provider_name)
+        if cached is None:
+            return None
+        checked_at, healthy = cached
+        if time.monotonic() - checked_at >= self._provider_health_ttl_seconds:
+            return None
+        return healthy
+
+    async def _check_provider_health(
+        self,
+        provider: LLMProvider,
+        *,
+        use_cache: bool = True,
+    ) -> bool:
+        """Run or reuse a recent provider health probe."""
+        provider_name = provider.name
+        now = time.monotonic()
+        cached = self._provider_health_cache.get(provider_name)
+        if (
+            use_cache
+            and cached is not None
+            and now - cached[0] < self._provider_health_ttl_seconds
+        ):
+            logger.info(
+                "Using cached provider health result",
+                extra={
+                    "provider_name": provider_name,
+                    "healthy": cached[1],
+                    "cache_age_ms": int((now - cached[0]) * 1000),
+                },
+            )
+            return cached[1]
+
+        lock = self._health_lock_for(provider_name)
+        async with lock:
+            now = time.monotonic()
+            cached = self._provider_health_cache.get(provider_name)
+            if (
+                use_cache
+                and cached is not None
+                and now - cached[0] < self._provider_health_ttl_seconds
+            ):
+                logger.info(
+                    "Using cached provider health result",
+                    extra={
+                        "provider_name": provider_name,
+                        "healthy": cached[1],
+                        "cache_age_ms": int((now - cached[0]) * 1000),
+                    },
+                )
+                return cached[1]
+
+            started = time.monotonic()
+            logger.info(
+                "Running provider health probe",
+                extra={
+                    "provider_name": provider_name,
+                    "use_cache": use_cache,
+                },
+            )
+            try:
+                healthy = await provider.health_check()
+            except Exception as exc:
+                healthy = False
+                logger.warning(
+                    "Provider health probe raised an exception",
+                    extra={
+                        "provider_name": provider_name,
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                )
+
+            completed_at = time.monotonic()
+            self._provider_health_cache[provider_name] = (completed_at, healthy)
+            logger.info(
+                "Provider health probe completed",
+                extra={
+                    "provider_name": provider_name,
+                    "healthy": healthy,
+                    "elapsed_ms": int((completed_at - started) * 1000),
+                },
+            )
+            return healthy
     
     def _load_providers(self) -> None:
         """Load providers from configuration."""
@@ -235,11 +334,11 @@ class LLMRouter:
                         "stream": stream,
                     }
                 )
-                
-                # Check provider health before using
-                if not await provider.health_check():
+
+                recent_health = self._recent_provider_health(provider.name)
+                if recent_health is False:
                     logger.warning(
-                        "Provider health check failed, skipping",
+                        "Skipping provider due to recent failed health probe",
                         extra={
                             "provider_name": provider.name,
                         }
@@ -250,6 +349,7 @@ class LLMRouter:
                 start_time = time.time()
                 result = await provider.chat(messages, stream=stream, **kwargs)
                 latency_ms = int((time.time() - start_time) * 1000)
+                self._provider_health_cache[provider.name] = (time.monotonic(), True)
                 
                 # Record success
                 await breaker.record_success()
@@ -584,7 +684,7 @@ class LLMRouter:
         results = {}
         for name, provider in self._providers.items():
             try:
-                results[name] = await provider.health_check()
+                results[name] = await self._check_provider_health(provider, use_cache=False)
             except Exception as e:
                 logger.warning(
                     "Health check failed for provider",

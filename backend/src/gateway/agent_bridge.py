@@ -21,8 +21,9 @@ AgentBridge 是 Gateway 与 Agent Core 之间的唯一连接点。
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncGenerator
-from typing import Optional
+from typing import Any, Optional
 
 from .agent_info import AgentInfo
 from .response import GatewayEvent, GatewayEventType
@@ -63,6 +64,14 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+
+_RUNTIME_FAST_SYSTEM_PROMPT = (
+    "你正在执行 runtime debug fast mode。"
+    "请使用中文，直接、简短回答用户当前请求。"
+    "不要调用工具，不要展开额外计划，不要读取长期上下文。"
+    "优先在一小段文本内给出结论。"
+)
 
 
 # ============================================================================
@@ -260,7 +269,12 @@ class AgentBridge:
         self.runtime_session_orchestrator = DefaultSessionOrchestrator()
         self.runtime_turn_controller = DefaultTurnController()
 
-    def create_config(self, agent_info: AgentInfo | None = None) -> AgentCoreConfig:
+    def create_config(
+        self,
+        agent_info: AgentInfo | None = None,
+        *,
+        disable_tools: bool = False,
+    ) -> AgentCoreConfig:
         """创建 Agent 配置。
 
         注入 LLM、Tool、SystemPrompt、Context 适配器。
@@ -273,10 +287,9 @@ class AgentBridge:
             配置好的 AgentCoreConfig 实例。
         """
         llm_router = _get_llm_router()
-        tool_manager = _get_tool_manager()
 
         llm_adapter = XAgentLLMAdapter(llm_router)
-        tool_adapter = XAgentToolAdapter(tool_manager)
+        tool_adapter = None if disable_tools else XAgentToolAdapter(_get_tool_manager())
         agent_logger = _get_agent_logger()
 
         # 解析 agent 对应的 workspace 路径，多 Agent 场景下各 agent 有独立 workspace
@@ -288,7 +301,7 @@ class AgentBridge:
         context_adapter = self._create_context_adapter(llm_router, agent_info, workspace_path=workspace_path)
 
         # 创建工具中间件管道（可选，默认启用计时和日志中间件）
-        tool_middleware_adapter = self._create_tool_middleware_adapter()
+        tool_middleware_adapter = None if disable_tools else self._create_tool_middleware_adapter()
 
         return AgentCoreConfig(
             llm=llm_adapter,
@@ -369,6 +382,7 @@ class AgentBridge:
         images: list[tuple[str, str]] | None = None,
         abort_event: asyncio.Event | None = None,
         persist_user_message: bool = True,
+        disable_skills: bool = False,
     ) -> AsyncGenerator[GatewayEvent, None]:
         """执行 Agent Loop 并产出 GatewayEvent。
 
@@ -388,6 +402,7 @@ class AgentBridge:
             abort_event: 中止事件。
             persist_user_message: 是否持久化用户消息。AgentInvoker 等内部
                 触发场景应设为 False，因为 prompt 不是用户主动发送的。
+            disable_skills: 是否跳过技能匹配与 prompt 注入。
 
         Yields:
             GatewayEvent 事件流。
@@ -403,7 +418,8 @@ class AgentBridge:
                 user_msg_id = await self._persist_user_message(session_id, content)
 
             # 2. 技能匹配和 prompt 注入
-            self._inject_skill_prompt(agent, content)
+            if not disable_skills:
+                self._inject_skill_prompt(agent, content)
 
             # 3. 调用 agent.prompt() 并转换事件
             async for event in agent.prompt(content, images):
@@ -464,48 +480,239 @@ class AgentBridge:
 
     async def _run_runtime_turn_via_legacy_bridge(self, request: TurnRequest) -> TurnResult:
         """Fallback runtime execution path that reuses the legacy AgentBridge event stream."""
-        agent_info = self._resolve_runtime_agent_info(request)
-        agent = self.create_agent(agent_info=agent_info)
-        await self.load_session_history(agent, request.session.session_id)
-
+        started_at = time.monotonic()
         response_parts: list[str] = []
         final_content: str | None = None
         error_payload: dict[str, object] | None = None
         persist_user_message = bool(request.metadata.get("persist_user_message", True))
+        disable_skills = bool(request.metadata.get("runtime_disable_skills", False))
+        timeout_ms = self._normalize_runtime_timeout_ms(request.metadata.get("runtime_timeout_ms"))
+        diagnostics: dict[str, Any] = {
+            "path": "legacy_bridge",
+            "phase": "resolve_agent",
+            "timeout_ms": timeout_ms,
+            "agent_id": None,
+            "events_seen": 0,
+            "text_chunks": 0,
+            "text_chars": 0,
+            "event_counts": {},
+            "last_event_type": None,
+            "last_progress": "resolving_agent",
+            "milestones_ms": {"started": 0},
+        }
 
-        async for event in self.run(
-            agent=agent,
-            content=request.user_input,
-            session_id=request.session.session_id,
-            agent_info=agent_info,
-            persist_user_message=persist_user_message,
-        ):
-            if event.type == GatewayEventType.TEXT_CHUNK:
-                chunk = event.data.get("content", "")
-                if chunk:
-                    response_parts.append(chunk)
-            elif event.type == GatewayEventType.MESSAGE_END:
-                content = event.data.get("content", "")
-                if content:
-                    final_content = content
-            elif event.type == GatewayEventType.ERROR:
-                error_payload = dict(event.data)
+        def elapsed_ms() -> int:
+            return int((time.monotonic() - started_at) * 1000)
 
-        if error_payload is not None:
+        def mark_milestone(name: str, *, phase: str | None = None, progress: str | None = None) -> None:
+            diagnostics["milestones_ms"][name] = elapsed_ms()
+            if phase is not None:
+                diagnostics["phase"] = phase
+            if progress is not None:
+                diagnostics["last_progress"] = progress
+
+        async def consume_events() -> None:
+            nonlocal final_content, error_payload
+
+            mark_milestone(
+                "event_stream_started",
+                phase="stream_events",
+                progress="waiting_for_gateway_events",
+            )
+
+            async for event in self.run(
+                agent=agent,
+                content=request.user_input,
+                session_id=request.session.session_id,
+                agent_info=agent_info,
+                persist_user_message=persist_user_message,
+                disable_skills=disable_skills,
+            ):
+                event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
+                diagnostics["events_seen"] += 1
+                diagnostics["event_counts"][event_type] = diagnostics["event_counts"].get(event_type, 0) + 1
+                diagnostics["last_event_type"] = event_type
+
+                if diagnostics["events_seen"] == 1:
+                    mark_milestone("first_event", progress="received_first_gateway_event")
+                    logger.info(
+                        "Runtime turn via legacy bridge received first event",
+                        extra={
+                            "session_id": request.session.session_id,
+                            "agent_id": agent_info.agent_id,
+                            "event_type": event_type,
+                            "elapsed_ms": diagnostics["milestones_ms"]["first_event"],
+                        },
+                    )
+
+                if event.type == GatewayEventType.TEXT_CHUNK:
+                    chunk = event.data.get("content", "")
+                    if chunk:
+                        response_parts.append(chunk)
+                        diagnostics["text_chunks"] += 1
+                        diagnostics["text_chars"] += len(chunk)
+                        if diagnostics["text_chunks"] == 1:
+                            mark_milestone("first_text_chunk", progress="streaming_text")
+                elif event.type == GatewayEventType.MESSAGE_END:
+                    content = event.data.get("content", "")
+                    if content:
+                        final_content = content
+                    mark_milestone(
+                        "message_end",
+                        phase="message_end",
+                        progress="received_message_end",
+                    )
+                elif event.type == GatewayEventType.ERROR:
+                    error_payload = dict(event.data)
+                    mark_milestone(
+                        "error_event",
+                        phase="error",
+                        progress="received_error_event",
+                    )
+
+        try:
+            agent_info = self._resolve_runtime_agent_info(request)
+            diagnostics["agent_id"] = agent_info.agent_id
+            mark_milestone("agent_resolved", phase="create_agent", progress="agent_resolved")
+
+            runtime_config = self._build_runtime_agent_config(request, agent_info)
+            agent = self.create_agent(config=runtime_config, agent_info=agent_info)
+            mark_milestone("agent_created", phase="load_history", progress="agent_created")
+
+            logger.info(
+                "Runtime turn via legacy bridge started",
+                extra={
+                    "session_id": request.session.session_id,
+                    "agent_id": agent_info.agent_id,
+                    "timeout_ms": timeout_ms,
+                },
+            )
+
+            await self.load_session_history(agent, request.session.session_id)
+            mark_milestone("history_loaded", phase="stream_events", progress="session_history_loaded")
+
+            if timeout_ms is not None:
+                await asyncio.wait_for(consume_events(), timeout=float(timeout_ms) / 1000.0)
+            else:
+                await consume_events()
+        except asyncio.TimeoutError:
+            mark_milestone("timed_out", phase="timeout", progress="timed_out")
+            logger.warning(
+                "Runtime turn via legacy bridge timed out",
+                extra={
+                    "session_id": request.session.session_id,
+                    "agent_id": diagnostics.get("agent_id"),
+                    "timeout_ms": timeout_ms,
+                    "phase": diagnostics["phase"],
+                    "last_event_type": diagnostics["last_event_type"],
+                    "events_seen": diagnostics["events_seen"],
+                },
+            )
+            return TurnResult(
+                kind="abort",
+                finish_reason="max_wall_time",
+                output_text=self._resolve_runtime_output_text(
+                    final_content,
+                    response_parts,
+                    diagnostics=diagnostics,
+                    finish_reason="max_wall_time",
+                ),
+                updated_task_frame=request.task_frame,
+                metadata={
+                    "legacy_bridge": True,
+                    "agent_id": diagnostics.get("agent_id"),
+                    "timeout_ms": timeout_ms,
+                    "runtime_diagnostics": diagnostics,
+                },
+            )
+        except Exception as exc:
+            mark_milestone("failed", phase="error", progress="runtime_bridge_failed")
+            logger.exception(
+                "Runtime turn via legacy bridge failed",
+                extra={
+                    "session_id": request.session.session_id,
+                    "agent_id": diagnostics.get("agent_id"),
+                    "phase": diagnostics["phase"],
+                    "events_seen": diagnostics["events_seen"],
+                    "error": str(exc),
+                },
+            )
             return TurnResult(
                 kind="abort",
                 finish_reason="controller_abort",
-                output_text=final_content or "".join(response_parts) or None,
+                output_text=self._resolve_runtime_output_text(
+                    final_content,
+                    response_parts,
+                    diagnostics=diagnostics,
+                    finish_reason="controller_abort",
+                    error_payload={
+                        "message": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                ),
                 updated_task_frame=request.task_frame,
-                metadata={"legacy_bridge": True, "error": error_payload},
+                metadata={
+                    "legacy_bridge": True,
+                    "agent_id": diagnostics.get("agent_id"),
+                    "error": {
+                        "message": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                    "runtime_diagnostics": diagnostics,
+                },
             )
 
+        if error_payload is not None:
+            mark_milestone("completed", phase="error", progress="completed_with_error_event")
+            logger.warning(
+                "Runtime turn via legacy bridge completed with error event",
+                extra={
+                    "session_id": request.session.session_id,
+                    "agent_id": diagnostics.get("agent_id"),
+                    "events_seen": diagnostics["events_seen"],
+                    "last_event_type": diagnostics["last_event_type"],
+                },
+            )
+            return TurnResult(
+                kind="abort",
+                finish_reason="controller_abort",
+                output_text=self._resolve_runtime_output_text(
+                    final_content,
+                    response_parts,
+                    diagnostics=diagnostics,
+                    finish_reason="controller_abort",
+                    error_payload=error_payload,
+                ),
+                updated_task_frame=request.task_frame,
+                metadata={
+                    "legacy_bridge": True,
+                    "agent_id": diagnostics.get("agent_id"),
+                    "error": error_payload,
+                    "runtime_diagnostics": diagnostics,
+                },
+            )
+
+        mark_milestone("completed", phase="completed", progress="completed_successfully")
+        logger.info(
+            "Runtime turn via legacy bridge completed",
+            extra={
+                "session_id": request.session.session_id,
+                "agent_id": diagnostics.get("agent_id"),
+                "events_seen": diagnostics["events_seen"],
+                "text_chunks": diagnostics["text_chunks"],
+                "elapsed_ms": diagnostics["milestones_ms"]["completed"],
+            },
+        )
         return TurnResult(
             kind="final",
             finish_reason="done_definition_satisfied",
             output_text=final_content or "".join(response_parts) or None,
             updated_task_frame=request.task_frame,
-            metadata={"legacy_bridge": True, "agent_id": agent_info.agent_id},
+            metadata={
+                "legacy_bridge": True,
+                "agent_id": diagnostics.get("agent_id"),
+                "runtime_diagnostics": diagnostics,
+            },
         )
 
     def _resolve_runtime_agent_info(self, request: TurnRequest) -> AgentInfo:
@@ -516,6 +723,79 @@ class AgentBridge:
             if agent is not None:
                 return AgentInfo.from_orm(agent)
         return AgentInfo.default()
+
+    def _normalize_runtime_timeout_ms(self, value: object) -> int | None:
+        """Normalize per-request wall-time timeout metadata for runtime debug execution."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+        return None
+
+    def _build_runtime_agent_config(
+        self,
+        request: TurnRequest,
+        agent_info: AgentInfo,
+    ) -> AgentCoreConfig | None:
+        """Build an optional runtime-specific agent config for debug execution."""
+        disable_tools = bool(request.metadata.get("runtime_disable_tools"))
+        disable_skills = bool(request.metadata.get("runtime_disable_skills"))
+        if not disable_tools and not disable_skills:
+            return None
+
+        if disable_tools:
+            llm_router = _get_llm_router()
+            return AgentCoreConfig(
+                llm=XAgentLLMAdapter(llm_router),
+                tools=None,
+                logger=_get_agent_logger(),
+                context=None,
+                system_prompt=_RUNTIME_FAST_SYSTEM_PROMPT,
+                system_prompt_port=None,
+                enable_context_compression=False,
+                enable_experience_learning=False,
+                thinking_level="off",
+                max_tokens=256,
+                tool_middleware_pipeline=None,
+            )
+
+        return self.create_config(agent_info, disable_tools=False)
+
+    def _resolve_runtime_output_text(
+        self,
+        final_content: str | None,
+        response_parts: list[str],
+        *,
+        diagnostics: dict[str, Any],
+        finish_reason: str,
+        error_payload: dict[str, object] | None = None,
+    ) -> str | None:
+        """Return streamed output when available, otherwise synthesize a compact debug summary."""
+        streamed = final_content or "".join(response_parts) or None
+        if streamed:
+            return streamed
+
+        phase = diagnostics.get("phase") or "unknown"
+        last_event = diagnostics.get("last_event_type") or "none"
+        events_seen = diagnostics.get("events_seen", 0)
+        timeout_ms = diagnostics.get("timeout_ms")
+
+        if finish_reason == "max_wall_time":
+            timeout_suffix = f" after {timeout_ms}ms" if timeout_ms else ""
+            return (
+                f"[runtime-turn timeout{timeout_suffix}] "
+                f"phase={phase}, last_event={last_event}, events_seen={events_seen}"
+            )
+
+        if error_payload:
+            error_type = error_payload.get("error_type") or "RuntimeError"
+            message = error_payload.get("message") or "runtime turn aborted"
+            return (
+                f"[runtime-turn abort] phase={phase}, last_event={last_event}, "
+                f"error={error_type}: {message}"
+            )
+
+        return f"[runtime-turn abort] phase={phase}, last_event={last_event}, events_seen={events_seen}"
 
     # ------------------------------------------------------------------
     # 内部方法

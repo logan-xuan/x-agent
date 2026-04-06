@@ -74,6 +74,28 @@ interface UseAgentReturn {
     loadHistory: (sessionId: string) => Promise<void>;
 }
 
+function normalizeWsBaseUrl(rawUrl?: string): string {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const fallbackOrigin = `${protocol}//${window.location.host}`;
+
+    if (!rawUrl) {
+        return `${fallbackOrigin}/ws`;
+    }
+
+    try {
+        const parsed = new URL(rawUrl, fallbackOrigin);
+        const normalizedProtocol =
+            parsed.protocol === 'https:' ? 'wss:' :
+            parsed.protocol === 'http:' ? 'ws:' :
+            parsed.protocol;
+        const normalizedPath = parsed.pathname === '/' ? '/ws' : parsed.pathname.replace(/\/+$/, '');
+        return `${normalizedProtocol}//${parsed.host}${normalizedPath}`;
+    } catch {
+        const trimmed = rawUrl.replace(/\/+$/, '');
+        return trimmed.endsWith('/ws') ? trimmed : `${trimmed}/ws`;
+    }
+}
+
 /**
  * 构建 WebSocket 基础 URL
  * 在开发环境下使用当前页面的 host/port，让 Vite 代理 WebSocket 请求
@@ -81,12 +103,11 @@ interface UseAgentReturn {
 function getDefaultWsBaseUrl(): string {
     // 如果设置了环境变量，使用环境变量
     if (import.meta.env.VITE_WS_URL) {
-        return import.meta.env.VITE_WS_URL;
+        return normalizeWsBaseUrl(import.meta.env.VITE_WS_URL);
     }
 
     // 否则使用当前页面的 host/port，让 Vite 代理处理
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws`;
+    return normalizeWsBaseUrl();
 }
 
 /**

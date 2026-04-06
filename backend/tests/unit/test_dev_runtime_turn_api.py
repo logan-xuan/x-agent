@@ -40,6 +40,101 @@ def test_dev_runtime_turn_endpoint_returns_runtime_result():
     assert data["finish_reason"] == "done_definition_satisfied"
     assert data["output_text"] == "runtime-ok"
     assert data["metadata"]["turn_index"] == 0
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["mode"] == "debug"
+    assert metadata["runtime_timeout_ms"] == 30000
+
+
+def test_dev_runtime_turn_endpoint_accepts_custom_runtime_timeout():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="abort",
+                finish_reason="max_wall_time",
+                output_text=None,
+                metadata={"timeout_ms": 1500},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "runtime_timeout_ms": 1500,
+                "metadata": {"mode": "debug"},
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["runtime_timeout_ms"] == 1500
+
+
+def test_dev_runtime_turn_endpoint_can_disable_tools():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="final",
+                finish_reason="done_definition_satisfied",
+                output_text="runtime-ok",
+                metadata={},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "disable_tools": True,
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["runtime_disable_tools"] is True
+    assert metadata["runtime_disable_skills"] is True
+
+
+def test_dev_runtime_turn_endpoint_can_disable_skills():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="final",
+                finish_reason="done_definition_satisfied",
+                output_text="runtime-ok",
+                metadata={},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "disable_skills": True,
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["runtime_disable_skills"] is True
 
 
 def test_dev_runtime_turn_endpoint_rejects_invalid_channel_type():
