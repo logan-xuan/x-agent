@@ -10,6 +10,7 @@ models:
   #    - 目标 base_url
   #    - 目标 model_id
   #    - 当前 key 是否真能访问该组合
+  #    - 如有第二 key，可用 api_key_override 临时验证，不必先改主配置
   # 4. 如果 probe 返回 invalid_api_key / model not supported，应视为外部依赖未就绪
 
   # 主模型配置

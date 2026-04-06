@@ -693,7 +693,7 @@
 - 明确 provider onboarding 方案或明确列出外部依赖阻塞项
 - 若涉及代码或配置变更，有测试与 smoke 验证
 
-#### [ ] P3-T19: 准备第二 provider / 第二 key / 第二 endpoint 方案
+#### [x] P3-T19: 准备第二 provider / 第二 key / 第二 endpoint 方案
 
 - 目标：
   - 明确备用 provider 的接入前提
@@ -713,6 +713,11 @@
     - 当仅配置 primary model、没有 backup model 时，配置校验会给出 warning
     - 当配置 backup model 时，配置校验会额外给出 onboarding warning，提醒先做 `llm-stream-probe`
     - `llm-stream-probe` 现已支持 `api_key_override`，可直接验证第二 key，而不必先改主配置
+
+- 当前结论：
+  - 第二 provider / 第二 endpoint / 第二 key 的 onboarding 路径已经明确
+  - 进入主配置前，必须先用 `llm-stream-probe(base_url_override + model_override + api_key_override)` 验证候选组合
+  - 如果 probe 返回 `invalid_api_key / model not supported`，即视为外部依赖阻塞，而不是 runtime 主链路问题
 
 验收：
 
