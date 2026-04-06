@@ -864,6 +864,7 @@
   - 当前落地：
     - `SummaryRecord` 已补齐 `based_on_entry_ids / objective / decisions / open_questions / read_files / modified_files / recent_failures`
     - `StateSnapshotRecord` 已补齐 `turn_index / unresolved / active_artifact_refs / tool_usage_json / last_finish_reason`
+    - `InMemorySummaryRepository.latest_for_session()` 已补齐
     - in-memory repository 测试已固定 richer summary/snapshot 字段行为
   - 验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_repositories.py`
