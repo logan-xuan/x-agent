@@ -922,6 +922,7 @@
     - 新增协议级注入测试，确认 orchestrator 可直接使用自定义 repository 实现
     - 新增 `DefaultSessionOrchestrator.prepare_child_turn()`，将 child session create + policy envelope 收口为统一入口
     - 新增 `record_summary()/latest_summary()` 与 `record_state_snapshot()/latest_state_snapshot()`，把 summary/snapshot 读写入口先统一收进 orchestrator
+    - 新增 `append_transcript_entry()` 与 `store_artifact()`，把 transcript/artifact 读写入口也统一收进 orchestrator
   - 验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_session_orchestrator.py tests/unit/test_runtime_child_session_policy.py tests/unit/test_runtime_announcement_manager.py tests/unit/test_runtime_repositories.py`
     - `python -m compileall src/runtime/session src/runtime/repositories.py`

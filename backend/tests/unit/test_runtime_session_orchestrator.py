@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 import pytest
 
 from src.runtime.session.orchestrator import DefaultSessionOrchestrator
-from src.runtime.repositories import StateSnapshotRecord, SummaryRecord
-from src.runtime.types import ChildResult, SessionDescriptor, SpawnPacket, TaskFrame
+from src.runtime.repositories import StateSnapshotRecord, SummaryRecord, TranscriptEntry
+from src.runtime.types import ArtifactRef, ChildResult, SessionDescriptor, SpawnPacket, TaskFrame
 
 
 @pytest.mark.asyncio
@@ -183,3 +183,35 @@ async def test_orchestrator_records_and_reads_latest_state_snapshot():
 
     assert latest is not None
     assert latest.snapshot_id == "snap-2"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_appends_transcript_entry_via_repository():
+    orchestrator = DefaultSessionOrchestrator()
+
+    entry = await orchestrator.append_transcript_entry(
+        TranscriptEntry(
+            entry_id="entry-1",
+            session_id="sess-1",
+            turn_index=0,
+            kind="user_message",
+            text="hello",
+        )
+    )
+
+    entries = await orchestrator.transcript_repository.list_by_session("sess-1")
+
+    assert entry.entry_id == "entry-1"
+    assert [item.entry_id for item in entries] == ["entry-1"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_stores_artifact_via_repository():
+    orchestrator = DefaultSessionOrchestrator()
+    artifact = ArtifactRef(id="artifact-1", kind="tool", title="Artifact", preview="preview")
+
+    stored = await orchestrator.store_artifact(artifact, "body")
+    round_trip = await orchestrator.artifact_repository.get("artifact-1")
+
+    assert stored is artifact
+    assert round_trip == (artifact, "body")

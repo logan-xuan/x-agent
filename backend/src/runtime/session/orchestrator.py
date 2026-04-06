@@ -7,16 +7,21 @@ from uuid import uuid4
 from typing import Any
 
 from ..repositories import (
+    ArtifactRepository,
     InMemorySessionRepository,
     InMemoryStateSnapshotRepository,
     InMemorySummaryRepository,
+    InMemoryArtifactRepository,
+    InMemoryTranscriptRepository,
     SessionRepository,
     StateSnapshotRecord,
     StateSnapshotRepository,
     SummaryRecord,
     SummaryRepository,
+    TranscriptEntry,
+    TranscriptRepository,
 )
-from ..types import ChildResult, RouteMeta, SessionDescriptor, SpawnPacket, TurnRequest
+from ..types import ArtifactRef, ChildResult, RouteMeta, SessionDescriptor, SpawnPacket, TurnRequest
 from .announcement_manager import AnnouncementManager
 from .child_session import ChildSessionManager, ChildTurnEnvelope
 from .lane_scheduler import InMemoryLaneScheduler
@@ -30,7 +35,9 @@ class DefaultSessionOrchestrator:
     """Resolve sessions, schedule work, and manage child-session announcements."""
 
     session_store: SessionRepository = field(default_factory=InMemorySessionRepository)
+    transcript_repository: TranscriptRepository = field(default_factory=InMemoryTranscriptRepository)
     summary_repository: SummaryRepository = field(default_factory=InMemorySummaryRepository)
+    artifact_repository: ArtifactRepository = field(default_factory=InMemoryArtifactRepository)
     state_snapshot_repository: StateSnapshotRepository = field(default_factory=InMemoryStateSnapshotRepository)
     route_resolver: DefaultRouteResolver = field(default_factory=DefaultRouteResolver)
     lane_scheduler: InMemoryLaneScheduler = field(default_factory=InMemoryLaneScheduler)
@@ -119,9 +126,19 @@ class DefaultSessionOrchestrator:
         await self.summary_repository.put(summary)
         return summary
 
+    async def append_transcript_entry(self, entry: TranscriptEntry) -> TranscriptEntry:
+        """Persist one transcript entry and return it."""
+        await self.transcript_repository.append(entry)
+        return entry
+
     async def latest_summary(self, session_id: str) -> SummaryRecord | None:
         """Return the latest stored summary for a session when available."""
         return await self.summary_repository.latest_for_session(session_id)
+
+    async def store_artifact(self, artifact: ArtifactRef, content: str) -> ArtifactRef:
+        """Persist an artifact payload and return its reference."""
+        await self.artifact_repository.put(artifact, content)
+        return artifact
 
     async def record_state_snapshot(self, snapshot: StateSnapshotRecord) -> StateSnapshotRecord:
         """Persist a runtime state snapshot and return it."""
