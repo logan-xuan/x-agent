@@ -508,9 +508,10 @@
     - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
     - `curl -X POST http://localhost:8888/api/v1/dev/runtime-turn ... disable_tools=true runtime_timeout_ms=8000`
   - 当前观测结论：
-    - 首个 `text_chunk` 由约 `4.8s` 下降到约 `4.2s`
+    - 首个 `agent_start` 已从秒级初始化延迟下降到约 `25ms - 42ms`
     - `disable_tools=true` + `disable_skills=true` 下，`8s` 请求可稳定返回 final output_text
-    - `5s` 预算仍偏紧，主要瓶颈已集中到模型首 chunk 和基础 prompt/context 装配
+    - `5s` 预算仍偏紧，首个 `text_chunk` 仍可能在约 `6.2s` 左右出现
+    - 当前主要瓶颈已从 skill 初始化转移到模型首 chunk
 
 验收：
 
