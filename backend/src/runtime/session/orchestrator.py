@@ -17,6 +17,7 @@ from ..repositories import (
     InMemoryCompressionEventRepository,
     InMemoryTranscriptRepository,
     SessionRepository,
+    ResumeSessionState,
     StateSnapshotRecord,
     StateSnapshotRepository,
     SummaryRecord,
@@ -163,7 +164,7 @@ class DefaultSessionOrchestrator:
         session_key: str,
         *,
         recent_entries_limit: int = 20,
-    ) -> dict[str, object] | None:
+    ) -> ResumeSessionState | None:
         """Load the minimum persisted state needed to resume a runtime session."""
         session = await self.session_store.get(session_key)
         if session is None:
@@ -175,12 +176,12 @@ class DefaultSessionOrchestrator:
             session.session_id,
             recent_entries_limit,
         )
-        return {
-            "session": session,
-            "latest_snapshot": latest_snapshot,
-            "latest_summary": latest_summary,
-            "recent_entries": recent_entries,
-        }
+        return ResumeSessionState(
+            session=session,
+            latest_snapshot=latest_snapshot,
+            latest_summary=latest_summary,
+            recent_entries=recent_entries,
+        )
 
     def _event_value(self, event: Any, key: str) -> str | None:
         if isinstance(event, dict):

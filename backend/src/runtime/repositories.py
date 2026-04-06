@@ -100,6 +100,16 @@ class CompressionEventRecord:
     created_at: float = 0.0
 
 
+@dataclass
+class ResumeSessionState:
+    """Structured persisted state bundle used by runtime resume/reconnect flows."""
+
+    session: SessionDescriptor
+    latest_snapshot: StateSnapshotRecord | None = None
+    latest_summary: SummaryRecord | None = None
+    recent_entries: list[TranscriptEntry] = field(default_factory=list)
+
+
 @runtime_checkable
 class SessionRepository(Protocol):
     """Storage interface for runtime session descriptors."""
@@ -283,6 +293,7 @@ class InMemoryCompressionEventRepository:
 __all__ = [
     "CompressionEventRecord",
     "CompressionEventRepository",
+    "ResumeSessionState",
     "ArtifactRepository",
     "InMemoryArtifactRepository",
     "InMemoryCompressionEventRepository",

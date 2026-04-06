@@ -281,7 +281,7 @@ async def test_orchestrator_resume_session_loads_snapshot_summary_and_recent_ent
     resumed = await orchestrator.resume_session("sess-key", recent_entries_limit=1)
 
     assert resumed is not None
-    assert resumed["session"] == session
-    assert resumed["latest_summary"] is not None
-    assert resumed["latest_snapshot"] is not None
-    assert [entry.entry_id for entry in resumed["recent_entries"]] == ["entry-2"]
+    assert resumed.session == session
+    assert resumed.latest_summary is not None
+    assert resumed.latest_snapshot is not None
+    assert [entry.entry_id for entry in resumed.recent_entries] == ["entry-2"]
