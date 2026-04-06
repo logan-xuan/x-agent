@@ -284,4 +284,5 @@ async def test_orchestrator_resume_session_loads_snapshot_summary_and_recent_ent
     assert resumed.session == session
     assert resumed.latest_summary is not None
     assert resumed.latest_snapshot is not None
+    assert [summary.summary_id for summary in resumed.summary_chain] == ["sum-1"]
     assert [entry.entry_id for entry in resumed.recent_entries] == ["entry-2"]

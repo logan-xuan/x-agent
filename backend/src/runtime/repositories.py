@@ -107,6 +107,7 @@ class ResumeSessionState:
     session: SessionDescriptor
     latest_snapshot: StateSnapshotRecord | None = None
     latest_summary: SummaryRecord | None = None
+    summary_chain: list[SummaryRecord] = field(default_factory=list)
     recent_entries: list[TranscriptEntry] = field(default_factory=list)
 
 

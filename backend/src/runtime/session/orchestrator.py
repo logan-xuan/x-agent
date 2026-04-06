@@ -172,6 +172,7 @@ class DefaultSessionOrchestrator:
 
         latest_snapshot = await self.latest_state_snapshot(session.session_id)
         latest_summary = await self.latest_summary(session.session_id)
+        summary_chain = await self.summary_repository.list_by_session(session.session_id)
         recent_entries = await self.transcript_repository.recent_by_session(
             session.session_id,
             recent_entries_limit,
@@ -180,6 +181,7 @@ class DefaultSessionOrchestrator:
             session=session,
             latest_snapshot=latest_snapshot,
             latest_summary=latest_summary,
+            summary_chain=summary_chain,
             recent_entries=recent_entries,
         )
 
