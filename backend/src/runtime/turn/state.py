@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import json
 from dataclasses import dataclass, field
 from hashlib import sha1
 from typing import Any
@@ -33,8 +34,25 @@ class ToolCallSignature:
     @classmethod
     def from_args(cls, tool_name: str, arguments: dict[str, Any] | None = None) -> "ToolCallSignature":
         """Build a signature using a normalized representation of tool arguments."""
-        normalized = repr(sorted((arguments or {}).items())).encode("utf-8")
+        normalized_payload = _normalize_json_like(arguments or {})
+        normalized = json.dumps(
+            normalized_payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
         return cls(tool_name=tool_name, normalized_args_hash=sha1(normalized).hexdigest())
+
+
+def _normalize_json_like(value: Any) -> Any:
+    """Normalize nested JSON-like values so semantically equivalent payloads hash the same."""
+    if isinstance(value, dict):
+        return {str(key): _normalize_json_like(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_normalize_json_like(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_json_like(item) for item in value]
+    return value
 
 
 @dataclass

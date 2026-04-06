@@ -130,3 +130,16 @@ def test_tool_governor_blocks_batch_that_would_overshoot_turn_limit():
     assert len(plan.calls) == 1
     assert len(plan.rejected_calls) == 1
     assert "max_uses_per_turn" in plan.warnings[0]
+
+
+def test_tool_call_signature_is_stable_for_nested_dict_order():
+    left = ToolCallSignature.from_args(
+        "web_search",
+        {"query": {"a": 1, "b": 2}, "filters": [{"x": 1, "y": 2}]},
+    )
+    right = ToolCallSignature.from_args(
+        "web_search",
+        {"filters": [{"y": 2, "x": 1}], "query": {"b": 2, "a": 1}},
+    )
+
+    assert left == right

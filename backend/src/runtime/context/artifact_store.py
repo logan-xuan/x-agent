@@ -64,6 +64,18 @@ class InMemoryArtifactStore:
         """Return a stored artifact by id."""
         return self._items.get(artifact_id)
 
+    def configure_preview(
+        self,
+        *,
+        preview_chars: int,
+        preview_head_chars: int,
+        preview_tail_chars: int,
+    ) -> None:
+        """Update preview sizing parameters for subsequent artifact writes."""
+        self.preview_chars = max(preview_chars, 1)
+        self.preview_head_chars = max(preview_head_chars, 0)
+        self.preview_tail_chars = max(preview_tail_chars, 0)
+
     def _dedupe_key(self, item: ArtifactWriteRequest) -> str:
         payload = f"{item.kind}\n{item.location or ''}\n{item.content}".encode("utf-8")
         return hashlib.sha1(payload).hexdigest()
@@ -72,9 +84,14 @@ class InMemoryArtifactStore:
         if len(content) <= self.preview_chars:
             return content
 
-        head = content[: self.preview_head_chars]
-        tail = content[-self.preview_tail_chars :] if self.preview_tail_chars > 0 else ""
-        omitted = len(content) - len(head) - len(tail)
+        max_kept = min(self.preview_chars, len(content))
+        head_keep = min(self.preview_head_chars, max_kept)
+        remaining = max(max_kept - head_keep, 0)
+        tail_keep = min(self.preview_tail_chars, remaining, len(content) - head_keep)
+
+        head = content[:head_keep]
+        tail = content[-tail_keep:] if tail_keep > 0 else ""
+        omitted = max(len(content) - len(head) - len(tail), 0)
         return f"{head}\n...[{omitted} chars omitted]...\n{tail}"
 
     def _normalize_kind(self, kind: str) -> str:

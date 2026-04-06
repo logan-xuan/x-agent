@@ -113,6 +113,11 @@ class DefaultCompressionPipeline:
         operations: list[str] = []
         original_messages = [dict(message) for message in ctx.messages]
         original_artifacts = list(ctx.active_artifacts)
+        self.artifact_store.configure_preview(
+            preview_chars=ctx.profile.persist.artifact_preview_chars,
+            preview_head_chars=ctx.profile.persist.artifact_preview_head_chars,
+            preview_tail_chars=ctx.profile.persist.artifact_preview_tail_chars,
+        )
 
         messages, artifacts, persist_applied = await self._persist_large_results(ctx, messages, artifacts)
         if persist_applied:
@@ -143,27 +148,29 @@ class DefaultCompressionPipeline:
             if flush_result.flushed or flush_result.notes:
                 operations.append("memory_flush")
 
-        verification = self.verifier.verify(
-            CompressionVerifyRequest(
-                task_frame=ctx.task_frame,
-                original_messages=original_messages,
-                compressed_messages=messages,
-                original_artifacts=original_artifacts,
-                compressed_artifacts=artifacts,
-                metadata={
-                    "objective_out_of_band": True,
-                    "compressed_unresolved": list(ctx.task_frame.unresolved),
-                },
+        verification = None
+        if ctx.profile.quality.require_post_check:
+            verification = self.verifier.verify(
+                CompressionVerifyRequest(
+                    task_frame=ctx.task_frame,
+                    original_messages=original_messages,
+                    compressed_messages=messages,
+                    original_artifacts=original_artifacts,
+                    compressed_artifacts=artifacts,
+                    metadata={
+                        "objective_out_of_band": True,
+                        "compressed_unresolved": list(ctx.task_frame.unresolved),
+                    },
+                )
             )
-        )
-        if not verification.ok and ctx.profile.quality.rollback_on_invariant_failure:
-            return CompressionResult(
-                messages=original_messages,
-                active_artifacts=original_artifacts,
-                estimated_input_tokens=self._estimate_tokens(original_messages),
-                operations=[*operations, "rollback"],
-                metadata={"verification": verification},
-            )
+            if not verification.ok and ctx.profile.quality.rollback_on_invariant_failure:
+                return CompressionResult(
+                    messages=original_messages,
+                    active_artifacts=original_artifacts,
+                    estimated_input_tokens=self._estimate_tokens(original_messages),
+                    operations=[*operations, "rollback"],
+                    metadata={"verification": verification},
+                )
 
         return CompressionResult(
             messages=messages,
@@ -176,7 +183,8 @@ class DefaultCompressionPipeline:
     async def run_emergency(self, ctx: CompressionContext) -> CompressionResult:
         """Run a harder fallback compression pass for prompt overflows."""
         leading_system = [ctx.messages[0]] if ctx.messages and ctx.messages[0].get("role") == "system" else []
-        tail = ctx.messages[-ctx.profile.retain_recent_messages :]
+        working_messages = ctx.messages[1:] if leading_system else ctx.messages
+        tail = working_messages[-ctx.profile.retain_recent_messages :]
         summary_message = {
             "role": "system",
             "content": (
@@ -276,6 +284,8 @@ class DefaultCompressionPipeline:
             if timestamp_ms <= 0 or timestamp_ms >= cutoff:
                 continue
             if len(content) < ctx.profile.pruning.min_prunable_tool_chars:
+                continue
+            if not ctx.profile.pruning.hard_clear_enabled:
                 continue
             message["content"] = ctx.profile.pruning.hard_clear_placeholder
             applied = True
