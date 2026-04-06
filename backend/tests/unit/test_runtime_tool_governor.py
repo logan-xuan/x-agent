@@ -108,3 +108,25 @@ def test_tool_governor_blocks_session_level_tool_limit():
 
     assert plan.calls == []
     assert "max_uses_per_session" in plan.warnings[0]
+
+
+def test_tool_governor_blocks_batch_that_would_overshoot_turn_limit():
+    governor = DefaultToolGovernor(
+        policies_by_name={"web_search": ToolPolicy(max_uses_per_turn=2)}
+    )
+    state = _build_state()
+    state.tool_usage["web_search"] = 1
+
+    plan = governor.validate_plan(
+        ToolExecutionPlan(
+            calls=[
+                ToolCallSpec(tool_name="web_search", arguments={"q": "a"}),
+                ToolCallSpec(tool_name="web_search", arguments={"q": "b"}),
+            ]
+        ),
+        state,
+    )
+
+    assert len(plan.calls) == 1
+    assert len(plan.rejected_calls) == 1
+    assert "max_uses_per_turn" in plan.warnings[0]

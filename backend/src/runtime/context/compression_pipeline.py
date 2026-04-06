@@ -126,18 +126,23 @@ class DefaultCompressionPipeline:
         if ttl_applied:
             operations.append("ttl_prune")
 
-        messages, collapse_applied = self._collapse_history(ctx, messages)
+        current_estimated_tokens = self._estimate_tokens(messages)
+
+        messages, collapse_applied = self._collapse_history(ctx, messages, current_estimated_tokens)
         if collapse_applied:
             operations.append("collapse")
+            current_estimated_tokens = self._estimate_tokens(messages)
 
-        if ctx.profile.memory_flush.enabled and ctx.estimated_input_tokens >= ctx.profile.memory_flush.soft_threshold_tokens:
+        if (
+            ctx.profile.memory_flush.enabled
+            and current_estimated_tokens >= ctx.profile.memory_flush.soft_threshold_tokens
+        ):
             flush_result = await self.memory_flusher.flush(
                 MemoryFlushRequest(session_key=ctx.session_key, messages=messages)
             )
             if flush_result.flushed or flush_result.notes:
                 operations.append("memory_flush")
 
-        estimated_tokens = self._estimate_tokens(messages)
         verification = self.verifier.verify(
             CompressionVerifyRequest(
                 task_frame=ctx.task_frame,
@@ -145,6 +150,10 @@ class DefaultCompressionPipeline:
                 compressed_messages=messages,
                 original_artifacts=original_artifacts,
                 compressed_artifacts=artifacts,
+                metadata={
+                    "objective_out_of_band": True,
+                    "compressed_unresolved": list(ctx.task_frame.unresolved),
+                },
             )
         )
         if not verification.ok and ctx.profile.quality.rollback_on_invariant_failure:
@@ -159,7 +168,7 @@ class DefaultCompressionPipeline:
         return CompressionResult(
             messages=messages,
             active_artifacts=artifacts,
-            estimated_input_tokens=estimated_tokens,
+            estimated_input_tokens=current_estimated_tokens,
             operations=operations,
             metadata={"verification": verification},
         )
@@ -276,10 +285,11 @@ class DefaultCompressionPipeline:
         self,
         ctx: CompressionContext,
         messages: list[dict[str, Any]],
+        estimated_input_tokens: int,
     ) -> tuple[list[dict[str, Any]], bool]:
         if not ctx.profile.collapse.enabled:
             return messages, False
-        if ctx.estimated_input_tokens < int(ctx.model_context_window * ctx.profile.collapse.trigger_pct):
+        if estimated_input_tokens < int(ctx.model_context_window * ctx.profile.collapse.trigger_pct):
             return messages, False
         if len(messages) <= ctx.profile.retain_recent_messages:
             return messages, False
@@ -294,7 +304,14 @@ class DefaultCompressionPipeline:
         summary = self._summarize_messages(archived)
         collapsed = [
             *leading_system,
-            {"role": "system", "content": f"[Collapsed history]\n{summary}"},
+            {
+                "role": "system",
+                "content": (
+                    "[Collapsed history]\n"
+                    f"Objective: {ctx.task_frame.objective or '(empty)'}\n"
+                    f"{summary}"
+                ),
+            },
             *recent,
         ]
         return collapsed, True

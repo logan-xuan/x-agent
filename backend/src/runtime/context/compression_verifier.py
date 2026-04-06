@@ -36,11 +36,15 @@ class DefaultCompressionVerifier:
     def verify(self, request: CompressionVerifyRequest) -> CompressionPostCheck:
         reasons: list[str] = []
         preserved = {
-            "objective": bool(request.task_frame.objective),
+            "objective": True,
             "unresolved": True,
             "artifact_refs": True,
             "role_ordering": True,
         }
+
+        if request.task_frame.objective and not self._objective_preserved(request):
+            preserved["objective"] = False
+            reasons.append("compressed output no longer preserves the task objective")
 
         original_artifact_ids = {artifact.id for artifact in request.original_artifacts}
         compressed_artifact_ids = {artifact.id for artifact in request.compressed_artifacts}
@@ -73,6 +77,20 @@ class DefaultCompressionVerifier:
             if role in {"tool", "tool_result"} and not seen_assistant:
                 return False
         return True
+
+    def _objective_preserved(self, request: CompressionVerifyRequest) -> bool:
+        if request.metadata.get("objective_out_of_band") is True:
+            return True
+
+        objective = request.task_frame.objective.strip()
+        if not objective:
+            return True
+
+        for message in request.compressed_messages:
+            content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+            if objective in str(content):
+                return True
+        return False
 
 
 __all__ = [

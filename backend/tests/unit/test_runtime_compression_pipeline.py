@@ -46,7 +46,7 @@ async def test_compression_pipeline_collapses_history_when_pressure_is_high():
         profile=profile,
         model_context_window=100,
         estimated_input_tokens=90,
-        messages=[{"role": "user", "content": f"message {i}"} for i in range(20)],
+        messages=[{"role": "user", "content": f"message {i} " + ("x" * 80)} for i in range(20)],
         active_artifacts=[],
         budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
     )
@@ -55,6 +55,33 @@ async def test_compression_pipeline_collapses_history_when_pressure_is_high():
 
     assert "collapse" in result.operations
     assert any(message["content"].startswith("[Collapsed history]") for message in result.messages)
+
+
+@pytest.mark.asyncio
+async def test_compression_pipeline_recomputes_pressure_after_persist():
+    store = InMemoryArtifactStore(preview_chars=50)
+    pipeline = DefaultCompressionPipeline(artifact_store=store)
+    profile = CompressionProfile()
+    profile.persist.single_result_chars = 20
+    ctx = CompressionContext(
+        session_key="s1",
+        turn=2,
+        task_frame=TaskFrame(objective="Task"),
+        profile=profile,
+        model_context_window=100,
+        estimated_input_tokens=90,
+        messages=[
+            {"role": "assistant", "content": "call tool"},
+            {"role": "tool", "content": "x" * 120, "tool_name": "web_fetch", "tool_call_id": "t1"},
+        ],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run(ctx)
+
+    assert "persist" in result.operations
+    assert "collapse" not in result.operations
 
 
 @pytest.mark.asyncio

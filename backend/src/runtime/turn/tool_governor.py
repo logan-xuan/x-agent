@@ -25,15 +25,26 @@ class DefaultToolGovernor:
         rejected: list[ToolCallSpec] = []
         warnings: list[str] = []
         max_parallelism = state.budget.profile.max_parallel_tools if plan.allow_parallel else 1
+        provisional_tool_usage = dict(state.tool_usage)
+        provisional_session_usage = dict(state.session_tool_usage)
+        provisional_signature_counts = dict(state.tool_signature_counts)
 
         for call in plan.calls:
             policy = self.get_policy(call.tool_name)
-            reason = self._rejection_reason(call, state, policy)
+            reason = self._rejection_reason(
+                call,
+                state,
+                policy,
+                provisional_tool_usage=provisional_tool_usage,
+                provisional_session_usage=provisional_session_usage,
+                provisional_signature_counts=provisional_signature_counts,
+            )
             if reason is not None:
                 rejected.append(call)
                 warnings.append(reason)
                 continue
 
+            signature = ToolCallSignature.from_args(call.tool_name, call.arguments)
             timeout_ms = call.timeout_ms or policy.default_timeout_ms
             accepted.append(
                 ToolCallSpec(
@@ -42,6 +53,9 @@ class DefaultToolGovernor:
                     timeout_ms=timeout_ms,
                 )
             )
+            provisional_tool_usage[call.tool_name] = provisional_tool_usage.get(call.tool_name, 0) + 1
+            provisional_session_usage[call.tool_name] = provisional_session_usage.get(call.tool_name, 0) + 1
+            provisional_signature_counts[signature] = provisional_signature_counts.get(signature, 0) + 1
             max_parallelism = min(max_parallelism, policy.max_parallelism)
 
         if not accepted:
@@ -69,25 +83,29 @@ class DefaultToolGovernor:
         call: ToolCallSpec,
         state: TurnState,
         policy: ToolPolicy,
+        *,
+        provisional_tool_usage: dict[str, int],
+        provisional_session_usage: dict[str, int],
+        provisional_signature_counts: dict[ToolCallSignature, int],
     ) -> str | None:
         if state.request.session.lane == "subagent" and not policy.allow_in_subagent:
             return f"tool '{call.tool_name}' is disabled in subagent sessions"
 
-        current_uses = state.tool_usage.get(call.tool_name, 0)
+        current_uses = provisional_tool_usage.get(call.tool_name, 0)
         if current_uses >= policy.max_uses_per_turn:
             return f"tool '{call.tool_name}' exceeded max_uses_per_turn"
 
-        session_uses = state.session_tool_usage.get(call.tool_name, 0) + current_uses
+        session_uses = provisional_session_usage.get(call.tool_name, 0)
         if session_uses >= policy.max_uses_per_session:
             return f"tool '{call.tool_name}' exceeded max_uses_per_session"
 
         signature = ToolCallSignature.from_args(call.tool_name, call.arguments)
-        signature_count = state.tool_signature_counts.get(signature, 0)
+        signature_count = provisional_signature_counts.get(signature, 0)
         if signature_count >= policy.repeat_signature_limit:
             return f"tool '{call.tool_name}' exceeded repeat_signature_limit"
 
         per_tool_limit = state.budget.profile.max_tool_calls_by_name.get(call.tool_name)
-        if per_tool_limit is not None and state.budget.per_tool_calls.get(call.tool_name, 0) >= per_tool_limit:
+        if per_tool_limit is not None and current_uses >= per_tool_limit:
             return f"tool '{call.tool_name}' exceeded budget profile per-tool limit"
 
         return None

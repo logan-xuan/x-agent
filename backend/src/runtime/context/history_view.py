@@ -33,10 +33,8 @@ class DefaultHistoryViewBuilder:
         """Construct an active history view from raw transcript messages."""
         summary_chain = list(summary_chain or [])
         messages = list(raw_messages)
-        leading_system: list[Any] = []
-
         if self.strip_leading_system and messages and self._role(messages[0]) == "system":
-            leading_system.append(messages.pop(0))
+            messages.pop(0)
 
         start_index = max(len(messages) - self.recent_message_count, 0)
         assistant_kept = 0
@@ -47,7 +45,7 @@ class DefaultHistoryViewBuilder:
                 start_index = min(start_index, index)
                 break
 
-        active_messages = [*leading_system, *summary_chain, *messages[start_index:]]
+        active_messages = [*summary_chain, *messages[start_index:]]
         return HistoryView(
             raw_messages=list(raw_messages),
             summary_chain=summary_chain,

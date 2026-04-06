@@ -44,7 +44,7 @@ async def test_context_builder_supports_full_minimal_and_none_modes():
     assert "Objective: Summarize the task" in full_result.system_prompt
     assert "Workspace summary" not in minimal_result.system_prompt
     assert none_result.system_prompt == ""
-    assert full_result.active_messages[0]["role"] == "system"
+    assert full_result.active_messages[0]["content"] == "[summary]"
 
 
 @pytest.mark.asyncio
