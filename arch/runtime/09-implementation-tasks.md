@@ -592,6 +592,13 @@
   - 判断是否需要备用 provider、备用 base_url，或明确的 provider fallback policy
   - 在不影响默认主路径的前提下，为 runtime debug 提供更稳定的 provider 选择依据
 
+- 当前已完成：
+  - debug endpoint 新增 `timeout_fallback_mode`
+  - `timeout_fallback_mode=final` 已可在 `5s` fast mode 下稳定返回 synthetic final 结果
+  - 真实验证：
+    - `POST /api/v1/dev/runtime-turn`, `disable_tools=true`, `timeout_fallback_mode=final`, `runtime_timeout_ms=5000`
+    - 返回：`kind=final`, `finish_reason=max_wall_time`, `metadata.synthetic_fallback=true`
+
 验收：
 
 - 至少形成一条可执行的 provider 优化或 fallback 策略

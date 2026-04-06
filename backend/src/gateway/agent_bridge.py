@@ -623,6 +623,7 @@ class AgentBridge:
                 response_parts,
                 diagnostics=diagnostics,
             )
+            timeout_fallback_mode = self._runtime_timeout_fallback_mode(request)
             logger.warning(
                 "Runtime turn via legacy bridge timed out",
                 extra={
@@ -635,7 +636,7 @@ class AgentBridge:
                 },
             )
             return TurnResult(
-                kind="abort",
+                kind="final" if timeout_fallback_mode == "final" and used_synthetic_fallback else "abort",
                 finish_reason="max_wall_time",
                 output_text=self._resolve_runtime_output_text(
                     final_content,
@@ -650,6 +651,7 @@ class AgentBridge:
                     "agent_id": diagnostics.get("agent_id"),
                     "timeout_ms": timeout_ms,
                     "synthetic_fallback": used_synthetic_fallback,
+                    "timeout_fallback_mode": timeout_fallback_mode,
                     "runtime_diagnostics": diagnostics,
                 },
             )
@@ -885,6 +887,13 @@ class AgentBridge:
         if final_content or response_parts:
             return False
         return bool(diagnostics.get("fast_mode"))
+
+    def _runtime_timeout_fallback_mode(self, request: TurnRequest) -> str:
+        """Resolve the debug-only timeout fallback mode."""
+        mode = request.metadata.get("runtime_timeout_fallback_mode")
+        if isinstance(mode, str) and mode in {"abort", "final"}:
+            return mode
+        return "abort"
 
     # ------------------------------------------------------------------
     # 内部方法

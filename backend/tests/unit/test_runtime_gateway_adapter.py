@@ -336,6 +336,46 @@ async def test_agent_bridge_runtime_fast_mode_timeout_after_agent_start_mentions
 
 
 @pytest.mark.asyncio
+async def test_agent_bridge_runtime_fast_mode_can_finalize_timeout_fallback():
+    bridge = AgentBridge()
+    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
+    envelope = Envelope.create_chat(
+        content="runtime execute",
+        session_id="sess-fast-timeout-final",
+        channel_type=ChannelType.WEB_CHAT,
+        channel_protocol=ChannelProtocol.WEBSOCKET,
+        metadata={
+            "runtime_timeout_ms": 1,
+            "runtime_disable_tools": True,
+            "runtime_timeout_fallback_mode": "final",
+        },
+    )
+    _, request = await adapter.prepare_turn(
+        envelope,
+        metadata={
+            "runtime_timeout_ms": 1,
+            "runtime_disable_tools": True,
+            "runtime_timeout_fallback_mode": "final",
+        },
+    )
+    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
+    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
+
+    async def slow_events():
+        await __import__("asyncio").sleep(0.05)
+        yield GatewayEvent.text_chunk("late")
+
+    bridge.run = Mock(return_value=slow_events())  # type: ignore[method-assign]
+
+    result = await bridge.run_runtime_turn(request)
+
+    assert result.kind == "final"
+    assert result.finish_reason == "max_wall_time"
+    assert result.metadata["synthetic_fallback"] is True
+    assert result.metadata["timeout_fallback_mode"] == "final"
+
+
+@pytest.mark.asyncio
 async def test_agent_bridge_runtime_legacy_path_can_disable_tools():
     bridge = AgentBridge()
     adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
