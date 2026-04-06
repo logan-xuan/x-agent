@@ -2,7 +2,10 @@
 
 from .repositories import (
     ArtifactRepository,
+    CompressionEventRecord,
+    CompressionEventRepository,
     InMemoryArtifactRepository,
+    InMemoryCompressionEventRepository,
     InMemorySessionRepository,
     InMemoryStateSnapshotRepository,
     InMemorySummaryRepository,
@@ -66,6 +69,8 @@ __all__ = [
     "ChildSessionPolicy",
     "ChildTurnEnvelope",
     "ChildResult",
+    "CompressionEventRecord",
+    "CompressionEventRepository",
     "CompressionContext",
     "CompressionProfile",
     "ContextBuildRequest",
@@ -78,6 +83,7 @@ __all__ = [
     "DefaultSessionOrchestrator",
     "FinishReason",
     "InMemoryArtifactRepository",
+    "InMemoryCompressionEventRepository",
     "InMemoryArtifactStore",
     "InMemoryLaneScheduler",
     "InMemorySessionRepository",

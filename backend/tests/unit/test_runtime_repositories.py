@@ -1,5 +1,6 @@
 """Unit tests for runtime in-memory repositories."""
 
+from src.runtime import CompressionEventRecord as ExportedCompressionEventRecord
 from src.runtime.repositories import (
     CompressionEventRecord,
     InMemoryArtifactRepository,
@@ -13,6 +14,10 @@ from src.runtime.repositories import (
     TranscriptEntry,
 )
 from src.runtime.types import ArtifactRef, SessionDescriptor, TaskFrame
+
+
+def test_runtime_package_exports_compression_event_record():
+    assert ExportedCompressionEventRecord is CompressionEventRecord
 
 
 async def test_in_memory_session_repository_patch_and_list():
