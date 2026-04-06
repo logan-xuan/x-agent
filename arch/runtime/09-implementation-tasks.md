@@ -573,6 +573,7 @@
     - 新增 `llm-stream-probe` 端点，直接量化 `create_stream_ms / first_chunk_ms / done_ms`
     - `llm-stream-probe` 支持 `attempts` 批量采样
     - fast mode 新增 `runtime_force_non_streaming` / `runtime_temperature` 调参入口
+    - `llm-stream-probe` 现在会捕获 stream 迭代阶段异常并结构化返回 `error`
   - 已验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
     - `POST /api/v1/dev/llm-stream-probe` 真实 probe
@@ -827,6 +828,8 @@
 
 - 已完成：
   - `backend/src/runtime/repositories.py`
+  - `backend/src/runtime/session/orchestrator.py`
+  - `backend/src/runtime/session/store.py`
   - `backend/src/runtime/__init__.py`
   - `backend/tests/unit/test_runtime_repositories.py`
   - 当前已定义：
@@ -843,6 +846,7 @@
     - `InMemorySummaryRepository`
     - `InMemoryArtifactRepository`
     - `InMemoryStateSnapshotRepository`
+    - `DefaultSessionOrchestrator.session_store` 已切到 `SessionRepository` 协议
   - 验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_repositories.py`
     - `python -m compileall src/runtime/repositories.py`

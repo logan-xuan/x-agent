@@ -9,7 +9,7 @@ from typing import Any
 from ..repositories import InMemorySessionRepository, SessionRepository
 from ..types import ChildResult, RouteMeta, SessionDescriptor, SpawnPacket, TurnRequest
 from .announcement_manager import AnnouncementManager
-from .child_session import ChildSessionManager
+from .child_session import ChildSessionManager, ChildTurnEnvelope
 from .lane_scheduler import InMemoryLaneScheduler
 from .lifecycle import SessionLifecycleManager
 from .route_resolver import DefaultRouteResolver
@@ -63,6 +63,19 @@ class DefaultSessionOrchestrator:
         child = await self.spawn_manager.spawn_child(parent, packet, route=parent.route)
         await self.session_store.put(child)
         return child
+
+    async def prepare_child_turn(
+        self,
+        parent: SessionDescriptor,
+        packet: SpawnPacket,
+    ) -> ChildTurnEnvelope:
+        """Create a child session and return its bounded child-turn envelope."""
+        child = await self.spawn_child(parent, packet)
+        return self.child_session_manager.prepare_child_turn(
+            parent=parent,
+            child=child,
+            packet=packet,
+        )
 
     async def complete_child(self, child: SessionDescriptor, result: ChildResult) -> dict[str, object]:
         """Build and queue a child completion announcement."""

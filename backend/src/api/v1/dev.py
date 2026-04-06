@@ -469,6 +469,8 @@ async def _run_llm_stream_probe_once(
                     break
     except TimeoutError:
         timed_out = True
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
     finally:
         aclose = getattr(stream, "aclose", None) if stream is not None else None
         if callable(aclose):

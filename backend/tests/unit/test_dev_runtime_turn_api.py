@@ -469,6 +469,35 @@ def test_dev_llm_stream_probe_endpoint_reports_override_errors():
     assert data["samples"][0]["error"] == "RuntimeError: boom"
 
 
+def test_dev_llm_stream_probe_endpoint_reports_stream_iteration_errors():
+    client = TestClient(app)
+
+    class FakeRouter:
+        async def chat(self, messages, stream=False, model=None, max_tokens=None, temperature=None):
+            _ = messages
+            _ = stream
+            _ = model
+            _ = max_tokens
+            _ = temperature
+
+            async def _stream():
+                raise RuntimeError("stream boom")
+                yield  # pragma: no cover
+
+            return _stream()
+
+    with patch("src.api.v1.dev._get_shared_llm_router", return_value=FakeRouter()):
+        response = client.post(
+            "/api/v1/dev/llm-stream-probe",
+            json={"content": "probe"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["error"] == "RuntimeError: stream boom"
+    assert data["samples"][0]["error"] == "RuntimeError: stream boom"
+
+
 def test_dev_llm_stream_probe_endpoint_accepts_model_override():
     client = TestClient(app)
 
