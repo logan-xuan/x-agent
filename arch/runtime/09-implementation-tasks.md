@@ -244,11 +244,24 @@
 
 - 大工具输出可以稳定外置
 
-#### [ ] P2-T4: 定义 CompressionProfile
+#### [x] P2-T4: 定义 CompressionProfile
 
 - 读取 `runtime.compression_profiles`
 - 建立 provider
 - 校验默认 profile 和字段约束
+
+- 已完成：
+  - `backend/src/runtime/context/profile_provider.py`
+  - `backend/src/runtime/context/__init__.py`
+  - `backend/src/runtime/__init__.py`
+  - `backend/tests/unit/test_runtime_compression_profiles.py`
+  - 当前落地：
+    - 新增 `CompressionProfileProvider`
+    - 内置 `balanced / aggressive / conservative` 三套默认 profile
+    - provider 会对关键约束做基本校验，并返回 defensive copy
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_compression_profiles.py`
+    - `python -m compileall src/runtime/context/profile_provider.py src/runtime/context/__init__.py src/runtime/__init__.py`
 
 验收：
 

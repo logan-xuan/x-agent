@@ -21,6 +21,7 @@ from .repositories import (
 from .context import (
     CompressionContext,
     CompressionProfile,
+    CompressionProfileProvider,
     ContextBuildRequest,
     ContextBuildResult,
     DefaultCompressionPipeline,
@@ -28,6 +29,7 @@ from .context import (
     DefaultContextBuilder,
     DefaultHistoryViewBuilder,
     InMemoryArtifactStore,
+    build_default_compression_profiles,
 )
 from .session import (
     AnnouncementManager,
@@ -73,6 +75,7 @@ __all__ = [
     "CompressionEventRepository",
     "CompressionContext",
     "CompressionProfile",
+    "CompressionProfileProvider",
     "ContextBuildRequest",
     "ContextBuildResult",
     "DefaultCompressionPipeline",
@@ -110,4 +113,5 @@ __all__ = [
     "TurnBudgetProfile",
     "TurnRequest",
     "TurnResult",
+    "build_default_compression_profiles",
 ]
