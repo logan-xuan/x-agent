@@ -185,12 +185,18 @@ class DefaultCompressionPipeline:
         leading_system = [ctx.messages[0]] if ctx.messages and ctx.messages[0].get("role") == "system" else []
         working_messages = ctx.messages[1:] if leading_system else ctx.messages
         tail = working_messages[-ctx.profile.retain_recent_messages :]
+        artifact_line = (
+            f"Artifacts: {', '.join(artifact.id for artifact in ctx.active_artifacts)}"
+            if ctx.active_artifacts
+            else "Artifacts: (none)"
+        )
         summary_message = {
             "role": "system",
             "content": (
                 "[Emergency context summary]\n"
                 f"Objective: {ctx.task_frame.objective}\n"
                 f"Unresolved: {'; '.join(ctx.task_frame.unresolved) if ctx.task_frame.unresolved else '(none)'}"
+                f"\n{artifact_line}"
             ),
         }
         messages = [*leading_system, summary_message, *tail]
@@ -199,6 +205,10 @@ class DefaultCompressionPipeline:
             active_artifacts=list(ctx.active_artifacts),
             estimated_input_tokens=self._estimate_tokens(messages),
             operations=["emergency_compact"],
+            metadata={
+                "fallback_summary_used": True,
+                "rollback_ready": ctx.profile.quality.rollback_on_invariant_failure,
+            },
         )
 
     async def _persist_large_results(

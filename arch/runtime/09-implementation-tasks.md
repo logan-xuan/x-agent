@@ -297,13 +297,24 @@
 
 - 压缩后不再仅靠人工检查正确性
 
-#### [ ] P2-T7: 接入 emergency compression
+#### [x] P2-T7: 接入 emergency compression
 
 - 为 `prompt_too_long / context_overflow` 定义统一 fallback
 - 接入：
   - rollback
   - fallback summary
   - emergency compact
+
+- 已完成：
+  - `backend/src/runtime/context/compression_pipeline.py`
+  - `backend/tests/unit/test_runtime_compression_pipeline.py`
+  - 当前落地：
+    - `run_emergency()` 已返回显式 `emergency_compact`
+    - emergency summary 现在会保留 `objective / unresolved / active artifacts`
+    - metadata 会显式标注 `fallback_summary_used` 与 `rollback_ready`
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_compression_pipeline.py`
+    - `python -m compileall src/runtime/context/compression_pipeline.py`
 
 验收：
 

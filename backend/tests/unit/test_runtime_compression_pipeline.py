@@ -4,7 +4,7 @@ import pytest
 
 from src.runtime.context import DefaultCompressionPipeline, InMemoryArtifactStore
 from src.runtime.context.compression_pipeline import CompressionContext, CompressionProfile
-from src.runtime.types import BudgetSnapshot, TaskFrame, TurnBudgetProfile
+from src.runtime.types import ArtifactRef, BudgetSnapshot, TaskFrame, TurnBudgetProfile
 
 
 @pytest.mark.asyncio
@@ -170,6 +170,8 @@ async def test_emergency_compression_keeps_tail_and_adds_summary():
 
     assert result.operations == ["emergency_compact"]
     assert result.messages[0]["content"].startswith("[Emergency context summary]")
+    assert result.metadata["fallback_summary_used"] is True
+    assert result.metadata["rollback_ready"] is True
 
 
 @pytest.mark.asyncio
@@ -196,6 +198,33 @@ async def test_emergency_compression_does_not_duplicate_leading_system():
     assert [message["role"] for message in result.messages].count("system") == 2
     assert result.messages[0]["content"] == "base system"
     assert result.messages[2]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_emergency_compression_includes_active_artifact_refs():
+    pipeline = DefaultCompressionPipeline()
+    ctx = CompressionContext(
+        session_key="s1",
+        turn=3,
+        task_frame=TaskFrame(objective="Task", unresolved=["u1"]),
+        profile=CompressionProfile(),
+        model_context_window=100,
+        estimated_input_tokens=95,
+        messages=[{"role": "user", "content": "message 1"}],
+        active_artifacts=[
+            ArtifactRef(
+                id="artifact-1",
+                kind="tool",
+                title="Artifact",
+                preview="preview",
+            )
+        ],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run_emergency(ctx)
+
+    assert "Artifacts: artifact-1" in result.messages[0]["content"]
 
 
 @pytest.mark.asyncio
