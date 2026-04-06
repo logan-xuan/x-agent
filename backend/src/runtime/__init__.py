@@ -1,5 +1,16 @@
 """Next-generation runtime package for bounded turns and session orchestration."""
 
+from .context import (
+    CompressionContext,
+    CompressionProfile,
+    ContextBuildRequest,
+    ContextBuildResult,
+    DefaultCompressionPipeline,
+    DefaultCompressionVerifier,
+    DefaultContextBuilder,
+    DefaultHistoryViewBuilder,
+    InMemoryArtifactStore,
+)
 from .types import (
     ArtifactRef,
     BudgetDecision,
@@ -23,7 +34,16 @@ __all__ = [
     "BudgetDecision",
     "BudgetSnapshot",
     "ChildResult",
+    "CompressionContext",
+    "CompressionProfile",
+    "ContextBuildRequest",
+    "ContextBuildResult",
+    "DefaultCompressionPipeline",
+    "DefaultCompressionVerifier",
+    "DefaultContextBuilder",
+    "DefaultHistoryViewBuilder",
     "FinishReason",
+    "InMemoryArtifactStore",
     "LoopAssessment",
     "RouteMeta",
     "SessionDescriptor",
