@@ -1,5 +1,15 @@
 """Next-generation runtime package for bounded turns and session orchestration."""
 
+from .repositories import (
+    ArtifactRepository,
+    SessionRepository,
+    StateSnapshotRecord,
+    StateSnapshotRepository,
+    SummaryRecord,
+    SummaryRepository,
+    TranscriptEntry,
+    TranscriptRepository,
+)
 from .context import (
     CompressionContext,
     CompressionProfile,
@@ -44,6 +54,7 @@ from .types import (
 __all__ = [
     "AnnouncementManager",
     "ArtifactRef",
+    "ArtifactRepository",
     "BudgetDecision",
     "BudgetSnapshot",
     "ChildSessionManager",
@@ -66,13 +77,20 @@ __all__ = [
     "InMemorySessionStore",
     "LoopAssessment",
     "RouteMeta",
+    "SessionRepository",
     "SessionLifecycleManager",
     "SessionDescriptor",
     "SpawnPacket",
     "SpawnManager",
+    "StateSnapshotRecord",
+    "StateSnapshotRepository",
+    "SummaryRecord",
+    "SummaryRepository",
     "TaskFrame",
     "ToolExecutionResult",
     "ToolPolicy",
+    "TranscriptEntry",
+    "TranscriptRepository",
     "TurnBudgetProfile",
     "TurnRequest",
     "TurnResult",

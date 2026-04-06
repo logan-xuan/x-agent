@@ -40,6 +40,7 @@
 - `[x] P3-T17`: 已明确当前 debug fast mode fallback policy，默认在短超时窗口下返回 synthetic final
 - `[x] P3-T18`: 已完成当前 provider/model 可用性探测，确认现有 endpoint 上暂无可直接启用的候选 backup model
 - `[ ] P3-T19`: 继续准备外部依赖与配置方案，评估第二 provider / 第二 key / 第二 endpoint 的引入路径
+- `[x] P5-T1`: 已定义 runtime 仓储层接口和最小记录对象
 
 ---
 
@@ -816,13 +817,35 @@
 
 ### 7.2 任务清单
 
-#### [ ] P5-T1: 定义仓储层接口
+#### [x] P5-T1: 定义仓储层接口
 
 - `SessionRepository`
 - `TranscriptRepository`
 - `SummaryRepository`
 - `ArtifactRepository`
 - `StateSnapshotRepository`
+
+- 已完成：
+  - `backend/src/runtime/repositories.py`
+  - `backend/src/runtime/__init__.py`
+  - `backend/tests/unit/test_runtime_repositories.py`
+  - 当前已定义：
+    - `SessionRepository`
+    - `TranscriptRepository`
+    - `SummaryRepository`
+    - `ArtifactRepository`
+    - `StateSnapshotRepository`
+    - `TranscriptEntry`
+    - `SummaryRecord`
+    - `StateSnapshotRecord`
+    - `InMemorySessionRepository`
+    - `InMemoryTranscriptRepository`
+    - `InMemorySummaryRepository`
+    - `InMemoryArtifactRepository`
+    - `InMemoryStateSnapshotRepository`
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_repositories.py`
+    - `python -m compileall src/runtime/repositories.py`
 
 验收：
 
