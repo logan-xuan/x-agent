@@ -157,6 +157,7 @@ class TurnState:
     ) -> None:
         """Record a tool invocation for budget and repetition checks."""
         self.tool_usage[tool_name] = self.tool_usage.get(tool_name, 0) + 1
+        self.session_tool_usage[tool_name] = self.session_tool_usage.get(tool_name, 0) + 1
         self.budget.per_tool_calls[tool_name] = self.budget.per_tool_calls.get(tool_name, 0) + 1
         self.budget.total_tool_calls += 1
         if signature is not None:

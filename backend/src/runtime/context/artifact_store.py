@@ -44,7 +44,9 @@ class InMemoryArtifactStore:
         dedupe_key = self._dedupe_key(item)
         if dedupe_key in self._dedupe:
             artifact_id = self._dedupe[dedupe_key]
-            return self._items[artifact_id].ref
+            stored = self._items[artifact_id]
+            stored.ref.preview = self._build_preview(stored.content)
+            return stored.ref
 
         artifact_id = f"artifact:{len(self._items) + 1}"
         ref = ArtifactRef(

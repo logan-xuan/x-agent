@@ -228,3 +228,59 @@ async def test_compression_pipeline_applies_profile_preview_sizes():
     preview = result.active_artifacts[0].preview
     assert "abcdefghijklmnopqrstuvwxyz" not in preview
     assert "[21 chars omitted]" in preview
+
+
+@pytest.mark.asyncio
+async def test_deduped_artifact_preview_updates_for_new_profile():
+    store = InMemoryArtifactStore()
+    pipeline = DefaultCompressionPipeline(artifact_store=store)
+    content = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+    first_profile = CompressionProfile()
+    first_profile.persist.single_result_chars = 20
+    first_profile.persist.artifact_preview_chars = 30
+    first_profile.persist.artifact_preview_head_chars = 10
+    first_profile.persist.artifact_preview_tail_chars = 5
+
+    second_profile = CompressionProfile()
+    second_profile.persist.single_result_chars = 20
+    second_profile.persist.artifact_preview_chars = 16
+    second_profile.persist.artifact_preview_head_chars = 4
+    second_profile.persist.artifact_preview_tail_chars = 4
+
+    first_result = await pipeline.run(
+        CompressionContext(
+            session_key="s1",
+            turn=1,
+            task_frame=TaskFrame(objective="Task"),
+            profile=first_profile,
+            model_context_window=1000,
+            estimated_input_tokens=100,
+            messages=[
+                {"role": "assistant", "content": "calling tool"},
+                {"role": "tool", "content": content, "tool_name": "web_fetch"},
+            ],
+            active_artifacts=[],
+            budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+        )
+    )
+    second_result = await pipeline.run(
+        CompressionContext(
+            session_key="s1",
+            turn=2,
+            task_frame=TaskFrame(objective="Task"),
+            profile=second_profile,
+            model_context_window=1000,
+            estimated_input_tokens=100,
+            messages=[
+                {"role": "assistant", "content": "calling tool"},
+                {"role": "tool", "content": content, "tool_name": "web_fetch"},
+            ],
+            active_artifacts=[],
+            budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+        )
+    )
+
+    assert first_result.active_artifacts[0].id == second_result.active_artifacts[0].id
+    assert second_result.active_artifacts[0].preview.startswith("abcd")
+    assert second_result.active_artifacts[0].preview.endswith("6789")

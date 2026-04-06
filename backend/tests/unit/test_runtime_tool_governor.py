@@ -143,3 +143,31 @@ def test_tool_call_signature_is_stable_for_nested_dict_order():
     )
 
     assert left == right
+
+
+def test_session_level_limit_accumulates_across_successive_batches():
+    governor = DefaultToolGovernor(
+        policies_by_name={"web_search": ToolPolicy(max_uses_per_session=2)}
+    )
+    state = _build_state()
+
+    first_plan = governor.validate_plan(
+        ToolExecutionPlan(calls=[ToolCallSpec(tool_name="web_search", arguments={"q": "a"})]),
+        state,
+    )
+    assert len(first_plan.calls) == 1
+    state.record_tool_call("web_search", signature=ToolCallSignature.from_args("web_search", {"q": "a"}))
+
+    second_plan = governor.validate_plan(
+        ToolExecutionPlan(
+            calls=[
+                ToolCallSpec(tool_name="web_search", arguments={"q": "b"}),
+                ToolCallSpec(tool_name="web_search", arguments={"q": "c"}),
+            ]
+        ),
+        state,
+    )
+
+    assert len(second_plan.calls) == 1
+    assert len(second_plan.rejected_calls) == 1
+    assert "max_uses_per_session" in second_plan.warnings[0]
