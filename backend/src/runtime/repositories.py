@@ -73,6 +73,33 @@ class StateSnapshotRecord:
     created_at: float = 0.0
 
 
+@dataclass
+class CompressionEventRecord:
+    """Telemetry/audit record for one runtime compression operation."""
+
+    event_id: str
+    session_id: str
+    turn_index: int
+    stage: Literal[
+        "persist",
+        "aggregate_budget",
+        "ttl_prune",
+        "microcompact",
+        "collapse",
+        "autocompact",
+        "memory_flush",
+        "emergency",
+    ]
+    tokens_before: int
+    tokens_after: int
+    freed_tokens: int
+    affected_entry_ids: list[str] = field(default_factory=list)
+    affected_artifact_ids: list[str] = field(default_factory=list)
+    fallback_used: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: float = 0.0
+
+
 @runtime_checkable
 class SessionRepository(Protocol):
     """Storage interface for runtime session descriptors."""
@@ -111,6 +138,9 @@ class SummaryRepository(Protocol):
     async def list_by_session(self, session_id: str) -> list[SummaryRecord]:
         ...
 
+    async def latest_for_session(self, session_id: str) -> SummaryRecord | None:
+        ...
+
 
 @runtime_checkable
 class ArtifactRepository(Protocol):
@@ -131,6 +161,17 @@ class StateSnapshotRepository(Protocol):
         ...
 
     async def latest_for_session(self, session_id: str) -> StateSnapshotRecord | None:
+        ...
+
+
+@runtime_checkable
+class CompressionEventRepository(Protocol):
+    """Storage interface for runtime compression telemetry records."""
+
+    async def append(self, event: CompressionEventRecord) -> None:
+        ...
+
+    async def list_by_session(self, session_id: str) -> list[CompressionEventRecord]:
         ...
 
 
@@ -181,6 +222,12 @@ class InMemorySummaryRepository:
     async def list_by_session(self, session_id: str) -> list[SummaryRecord]:
         return [summary for summary in self._summaries if summary.session_id == session_id]
 
+    async def latest_for_session(self, session_id: str) -> SummaryRecord | None:
+        matches = [summary for summary in self._summaries if summary.session_id == session_id]
+        if not matches:
+            return None
+        return max(matches, key=lambda summary: summary.created_at)
+
 
 @dataclass
 class InMemoryArtifactRepository:
@@ -211,9 +258,25 @@ class InMemoryStateSnapshotRepository:
         return max(matches, key=lambda snapshot: snapshot.created_at)
 
 
+@dataclass
+class InMemoryCompressionEventRepository:
+    """In-memory repository for runtime compression telemetry."""
+
+    _events: list[CompressionEventRecord] = field(default_factory=list)
+
+    async def append(self, event: CompressionEventRecord) -> None:
+        self._events.append(event)
+
+    async def list_by_session(self, session_id: str) -> list[CompressionEventRecord]:
+        return [event for event in self._events if event.session_id == session_id]
+
+
 __all__ = [
+    "CompressionEventRecord",
+    "CompressionEventRepository",
     "ArtifactRepository",
     "InMemoryArtifactRepository",
+    "InMemoryCompressionEventRepository",
     "InMemorySessionRepository",
     "InMemoryStateSnapshotRepository",
     "InMemorySummaryRepository",

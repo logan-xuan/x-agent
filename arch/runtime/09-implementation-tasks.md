@@ -873,7 +873,7 @@
 
 - resume 可以依赖状态快照，而不是从全量 transcript 重新推导
 
-#### [ ] P5-T3: 统一压缩 telemetry
+#### [x] P5-T3: 统一压缩 telemetry
 
 - 将 `compression_events` 定位为 telemetry / audit
 - 记录：
@@ -881,6 +881,18 @@
   - tokens before/after
   - affected entries
   - fallback used
+
+- 已完成：
+  - `backend/src/runtime/repositories.py`
+  - `backend/tests/unit/test_runtime_repositories.py`
+  - 当前落地：
+    - 定义了 `CompressionEventRecord`
+    - 定义了 `CompressionEventRepository`
+    - 补齐了 `InMemoryCompressionEventRepository`
+    - repository 测试覆盖了 `fallback_used / affected_entry_ids / affected_artifact_ids` 的基础行为
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_repositories.py`
+    - `python -m compileall src/runtime/repositories.py`
 
 验收：
 
