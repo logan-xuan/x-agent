@@ -281,12 +281,14 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
     channel_protocol = _parse_channel_protocol(request.channel_protocol)
     metadata = dict(request.metadata)
     if request.runtime_timeout_ms is not None:
-        metadata.setdefault("runtime_timeout_ms", request.runtime_timeout_ms)
+        metadata["runtime_timeout_ms"] = request.runtime_timeout_ms
     if request.disable_tools:
-        metadata.setdefault("runtime_disable_tools", True)
-        metadata.setdefault("runtime_disable_skills", True)
+        metadata["runtime_disable_tools"] = True
+        metadata["runtime_disable_skills"] = True
+        metadata["runtime_skip_history_load"] = True
+        metadata["persist_user_message"] = False
     if request.disable_skills:
-        metadata.setdefault("runtime_disable_skills", True)
+        metadata["runtime_disable_skills"] = True
     envelope = Envelope.create_chat(
         content=request.content,
         session_id=request.session_id,

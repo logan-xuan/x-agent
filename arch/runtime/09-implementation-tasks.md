@@ -34,7 +34,8 @@
 - `[x] P3-T10`: 已定位并修复 `LLMRouter.chat` 的预探活阻塞。正常 chat 路径不再额外执行 provider health probe
 - `[x] P3-T12`: 已为 `/api/v1/dev/runtime-turn` 增加 `disable_tools` fast mode，`8s` 调试窗口内可稳定返回最终文本
 - `[x] P3-T13`: 已为 fast mode 增加 `disable_skills`，进一步压缩首 token 延迟
-- `[ ] P3-T14`: 继续压缩 fast mode 首 token 到更短窗口。当前证据：`disable_tools=true` + `disable_skills=true` 下 `8s` 可稳定完成，但 `5s` 预算仍偏紧，首个 `text_chunk` 约在 `4.2s`
+- `[x] P3-T14`: 已将 fast mode 本地开销压缩到近 0ms，并确认剩余瓶颈在 provider 首 chunk
+- `[ ] P3-T15`: 继续收口 provider 侧首 chunk 波动，或为 fast mode 设计明确的 debug fallback 策略
 
 ---
 
@@ -518,17 +519,46 @@
 - `disable_tools=true` 场景在更短超时窗口内也能稳定拿到文本
 - 不影响默认 agent 行为和主聊天路径
 
-#### [ ] P3-T14: 继续压缩 fast mode 首 token 到更短窗口
+#### [x] P3-T14: 继续压缩 fast mode 首 token 到更短窗口
 
 - 目标：
   - 进一步缩短 `disable_tools=true` + `disable_skills=true` 下的首 token 时间
   - 评估是否要继续引入 `minimal_context` / `skip_history_load` / `minimal_system_prompt` 等 debug-only 开关
   - 保持默认聊天路径完全不受影响
 
+- 已完成：
+  - `backend/src/api/v1/dev.py`
+  - `backend/src/gateway/agent_bridge.py`
+  - `backend/tests/unit/test_dev_runtime_turn_api.py`
+  - `backend/tests/unit/test_runtime_gateway_adapter.py`
+  - 关键修复：
+    - `disable_tools=true` 默认同时开启 `runtime_skip_history_load=true`
+    - `disable_tools=true` 默认同时设置 `persist_user_message=false`
+    - fast mode 下 diagnostics 会显式记录 `history_skipped`
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
+    - `curl -X POST http://localhost:8888/api/v1/dev/runtime-turn ... disable_tools=true runtime_timeout_ms=5000/8000`
+  - 当前观测结论：
+    - `agent_created/history_loaded/event_stream_started` 已下降到接近 `0-20ms`
+    - 即使本地 overhead 几乎消失，`5s/8s` fast mode 仍可能在 `agent_start` 后超时
+    - 说明当前剩余瓶颈已不在 runtime 本地链路，而在 provider 首个内容 chunk 的波动
+
 验收：
 
 - fast mode 在更短超时窗口内也能稳定拿到文本
 - 新开关边界清晰，有回归测试和 e2e 验证
+
+#### [ ] P3-T15: 收口 provider 侧首 chunk 波动或提供 debug fallback
+
+- 目标：
+  - 明确 provider streaming 首 chunk 的真实耗时分布
+  - 评估是否需要 provider 参数调优、备用模型、或 debug-only synthetic fallback
+  - 保证 `/api/v1/dev/runtime-turn` 在短超时窗口下也能给出稳定、可解释的结果
+
+验收：
+
+- 能清楚区分 provider 波动与 runtime 本地问题
+- 若采用 fallback，行为必须是显式 debug-only，并有测试与文档
 
 #### [x] P3-T11: 修复前端 agent WebSocket 路径拼接
 

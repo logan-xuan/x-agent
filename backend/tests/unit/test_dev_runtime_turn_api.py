@@ -105,6 +105,8 @@ def test_dev_runtime_turn_endpoint_can_disable_tools():
     metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
     assert metadata["runtime_disable_tools"] is True
     assert metadata["runtime_disable_skills"] is True
+    assert metadata["runtime_skip_history_load"] is True
+    assert metadata["persist_user_message"] is False
 
 
 def test_dev_runtime_turn_endpoint_can_disable_skills():

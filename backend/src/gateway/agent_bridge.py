@@ -411,6 +411,13 @@ class AgentBridge:
         event_agent_name = agent_info.agent_name if agent_info else None
         user_msg_id: str | None = None
         assistant_content: list[str] = []
+        abort_forwarder: asyncio.Task[None] | None = None
+
+        async def forward_abort() -> None:
+            await abort_event.wait()
+            while getattr(agent, "_abort_event", None) is None:
+                await asyncio.sleep(0)
+            agent.abort()
 
         try:
             # 1. 持久化用户消息（仅用户主动发起时）
@@ -422,6 +429,8 @@ class AgentBridge:
                 self._inject_skill_prompt(agent, content)
 
             # 3. 调用 agent.prompt() 并转换事件
+            if abort_event is not None:
+                abort_forwarder = asyncio.create_task(forward_abort())
             async for event in agent.prompt(content, images):
                 gateway_event = self._convert_agent_event(
                     event,
@@ -464,6 +473,8 @@ class AgentBridge:
                 agent_name=event_agent_name,
             )
         finally:
+            if abort_forwarder is not None:
+                abort_forwarder.cancel()
             self._restore_system_prompt(agent)
 
     async def run_runtime_turn(
@@ -588,8 +599,15 @@ class AgentBridge:
                 },
             )
 
-            await self.load_session_history(agent, request.session.session_id)
-            mark_milestone("history_loaded", phase="stream_events", progress="session_history_loaded")
+            if bool(request.metadata.get("runtime_skip_history_load")):
+                mark_milestone(
+                    "history_skipped",
+                    phase="stream_events",
+                    progress="session_history_skipped",
+                )
+            else:
+                await self.load_session_history(agent, request.session.session_id)
+                mark_milestone("history_loaded", phase="stream_events", progress="session_history_loaded")
 
             if timeout_ms is not None:
                 await asyncio.wait_for(consume_events(), timeout=float(timeout_ms) / 1000.0)

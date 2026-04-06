@@ -335,6 +335,34 @@ async def test_agent_bridge_runtime_legacy_path_can_disable_skills():
     assert captured_run_kwargs["disable_skills"] is True
 
 
+@pytest.mark.asyncio
+async def test_agent_bridge_runtime_legacy_path_can_skip_history_load():
+    bridge = AgentBridge()
+    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
+    envelope = Envelope.create_chat(
+        content="runtime execute",
+        session_id="sess-skip-history",
+        channel_type=ChannelType.WEB_CHAT,
+        channel_protocol=ChannelProtocol.WEBSOCKET,
+        metadata={"runtime_skip_history_load": True},
+    )
+    _, request = await adapter.prepare_turn(envelope, metadata={"runtime_skip_history_load": True})
+    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
+    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
+    bridge.run = Mock(  # type: ignore[method-assign]
+        return_value=_gateway_events(
+            GatewayEvent.message_end("runtime execute"),
+        )
+    )
+
+    result = await bridge.run_runtime_turn(request)
+
+    assert result.kind == "final"
+    bridge.load_session_history.assert_not_awaited()
+    diagnostics = result.metadata["runtime_diagnostics"]
+    assert "history_skipped" in diagnostics["milestones_ms"]
+
+
 async def _gateway_events(*events):
     for event in events:
         yield event
