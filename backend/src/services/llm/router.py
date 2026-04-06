@@ -356,12 +356,26 @@ class LLMRouter:
                     
                     ctx = get_current_context()
                     prompt_logger = get_llm_prompt_logger()
+                    stat_service = None
+                    try:
+                        from ..stat_service import get_stat_service
+                        stat_service = get_stat_service()
+                    except Exception as stat_error:
+                        logger.warning(
+                            "Failed to initialize stat service",
+                            extra={
+                                "provider_name": provider.name,
+                                "error": str(stat_error),
+                                "error_type": type(stat_error).__name__,
+                            }
+                        )
                     
                     if stream:
                         # For streaming, wrap to capture response
                         return self._wrap_streaming_with_prompt_log(
                             result, provider, breaker, session_id, messages, latency_ms,
                             ctx.trace_id if ctx else None, prompt_logger,
+                            stat_service=stat_service,
                             tools=kwargs.get("tools"),
                         )
                     else:
@@ -631,6 +645,7 @@ class LLMRouter:
         initial_latency_ms: int,
         trace_id: str | None,
         prompt_logger: Any,
+        stat_service: Any | None = None,
         tools: list[dict] | None = None,
     ) -> AsyncGenerator[StreamingLLMResponse, None]:
         """Wrap streaming response to log prompt interaction.
@@ -711,6 +726,18 @@ class LLMRouter:
                 for msg in prompt_messages:
                     prompt_tokens += self._estimate_tokens(msg.get("content", ""))
                 completion_tokens = self._estimate_tokens(total_content)
+
+                if stat_service is not None:
+                    await stat_service.record_request(
+                        provider_name=provider.name,
+                        model_id=provider.model_id,
+                        success=not has_error,
+                        session_id=session_id,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        latency_ms=total_latency_ms,
+                        error_message=error_message,
+                    )
                 
                 prompt_logger.log_interaction(
                     session_id=session_id,

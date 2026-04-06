@@ -397,6 +397,53 @@ async def test_agent_bridge_runtime_legacy_path_can_skip_history_load():
     assert "history_skipped" in diagnostics["milestones_ms"]
 
 
+@pytest.mark.asyncio
+async def test_agent_bridge_run_propagates_abort_event():
+    bridge = AgentBridge()
+    bridge._inject_skill_prompt = Mock()  # type: ignore[method-assign]
+    bridge._persist_user_message = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    class AbortableAgent:
+        def __init__(self):
+            self._original_system_prompt = "base prompt"
+            self._system_prompt = "base prompt"
+            self._abort_event = None
+            self.abort_calls = 0
+
+        def abort(self):
+            self.abort_calls += 1
+            if self._abort_event is not None:
+                self._abort_event.set()
+
+        async def prompt(self, content, images=None):
+            _ = content
+            _ = images
+            self._abort_event = __import__("asyncio").Event()
+            while not self._abort_event.is_set():
+                await __import__("asyncio").sleep(0.01)
+            if False:
+                yield
+
+    agent = AbortableAgent()
+    abort_event = __import__("asyncio").Event()
+
+    async def _consume():
+        return [event async for event in bridge.run(
+            agent=agent,
+            content="hello",
+            session_id="sess-abort",
+            abort_event=abort_event,
+        )]
+
+    task = __import__("asyncio").create_task(_consume())
+    await __import__("asyncio").sleep(0.02)
+    abort_event.set()
+    events = await task
+
+    assert events == []
+    assert agent.abort_calls == 1
+
+
 async def _gateway_events(*events):
     for event in events:
         yield event
