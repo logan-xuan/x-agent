@@ -77,6 +77,10 @@ class DefaultToolGovernor:
         if current_uses >= policy.max_uses_per_turn:
             return f"tool '{call.tool_name}' exceeded max_uses_per_turn"
 
+        session_uses = state.session_tool_usage.get(call.tool_name, 0) + current_uses
+        if session_uses >= policy.max_uses_per_session:
+            return f"tool '{call.tool_name}' exceeded max_uses_per_session"
+
         signature = ToolCallSignature.from_args(call.tool_name, call.arguments)
         signature_count = state.tool_signature_counts.get(signature, 0)
         if signature_count >= policy.repeat_signature_limit:

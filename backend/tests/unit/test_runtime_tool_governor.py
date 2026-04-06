@@ -92,3 +92,19 @@ def test_tool_governor_blocks_subagent_disallowed_tool_and_records_failure():
     assert plan.calls == []
     assert "disabled in subagent" in plan.warnings[0]
     assert state.repeated_failures[0].fingerprint.startswith("terminal:")
+
+
+def test_tool_governor_blocks_session_level_tool_limit():
+    governor = DefaultToolGovernor(
+        policies_by_name={"web_search": ToolPolicy(max_uses_per_session=3)}
+    )
+    state = _build_state()
+    state.session_tool_usage["web_search"] = 3
+
+    plan = governor.validate_plan(
+        ToolExecutionPlan(calls=[ToolCallSpec(tool_name="web_search", arguments={"q": "x"})]),
+        state,
+    )
+
+    assert plan.calls == []
+    assert "max_uses_per_session" in plan.warnings[0]

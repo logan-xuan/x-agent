@@ -58,6 +58,7 @@ class TurnState:
     active_artifact_refs: list[ArtifactRef] = field(default_factory=list)
     budget: BudgetSnapshot = field(default_factory=BudgetSnapshot)
     tool_usage: dict[str, int] = field(default_factory=dict)
+    session_tool_usage: dict[str, int] = field(default_factory=dict)
     tool_signature_counts: dict[ToolCallSignature, int] = field(default_factory=dict)
     repeated_failures: list[FailureCluster] = field(default_factory=list)
     spawn_count: int = 0
@@ -102,6 +103,7 @@ class TurnState:
             request=request,
             started_at_ms=started_at_ms or _now_ms(),
             budget=snapshot,
+            session_tool_usage=dict(request.metadata.get("session_tool_usage", {})),
         )
 
     @property

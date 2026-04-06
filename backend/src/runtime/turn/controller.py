@@ -10,6 +10,7 @@ from ..types import (
     AssessmentEngine,
     BudgetDecision,
     BudgetManager,
+    GovernedToolPlan,
     ToolExecutionPlan,
     ToolExecutionResult,
     ToolGovernor,
@@ -22,7 +23,7 @@ from .state import ToolCallSignature, TurnState
 from .tool_governor import DefaultToolGovernor
 
 PlannerFn = Callable[[TurnState], Awaitable[ToolExecutionPlan | None]]
-ExecutorFn = Callable[[ToolExecutionPlan, TurnState], Awaitable[list[ToolExecutionResult]]]
+ExecutorFn = Callable[[GovernedToolPlan, TurnState], Awaitable[list[ToolExecutionResult]]]
 CompactFn = Callable[[TurnState, str], Awaitable[TurnState]]
 
 
@@ -33,7 +34,7 @@ async def _default_planner(state: TurnState) -> ToolExecutionPlan | None:
 
 
 async def _default_executor(
-    plan: ToolExecutionPlan,
+    plan: GovernedToolPlan,
     state: TurnState,
 ) -> list[ToolExecutionResult]:
     """Default executor stub used before tool integration lands."""
@@ -59,6 +60,7 @@ class DefaultTurnController:
     planner: PlannerFn = _default_planner
     executor: ExecutorFn = _default_executor
     compact_fn: CompactFn = _default_compact
+    max_no_op_turns: int = 2
 
     async def run(self, request: TurnRequest) -> TurnResult:
         """Run a bounded turn loop until it converges or hits runtime controls."""
@@ -82,10 +84,7 @@ class DefaultTurnController:
                     signature=ToolCallSignature.from_args(call.tool_name, call.arguments),
                 )
 
-            observed = await self.executor(
-                ToolExecutionPlan(calls=governed_plan.calls, allow_parallel=tool_plan.allow_parallel),
-                state,
-            )
+            observed = await self.executor(governed_plan, state)
             for result in observed:
                 self.tool_governor.register_result(state, result)
 
@@ -97,7 +96,10 @@ class DefaultTurnController:
             assessment = self.assessment_engine.assess(state)
             state.last_assessment = assessment
 
-            if state.metadata.get("no_op_turns", 0) >= 1 and assessment.controller_decision == "continue":
+            if (
+                state.metadata.get("no_op_turns", 0) >= self.max_no_op_turns
+                and assessment.controller_decision == "continue"
+            ):
                 assessment.controller_decision = "finish"
                 assessment.finish_reason = "diminishing_returns"
                 assessment.notes.append("controller converted no-op turn into finish")
@@ -113,6 +115,7 @@ class DefaultTurnController:
             if decision == "spawn":
                 return TurnResult(
                     kind="spawn",
+                    output_text=self._resolve_output_text(state),
                     updated_task_frame=state.task_frame,
                     artifact_refs=list(state.active_artifact_refs),
                     spawn_packet=assessment.spawn_packet,
@@ -122,6 +125,7 @@ class DefaultTurnController:
                 return TurnResult(
                     kind="abort",
                     finish_reason=assessment.finish_reason or "controller_abort",
+                    output_text=self._resolve_output_text(state),
                     updated_task_frame=state.task_frame,
                     artifact_refs=list(state.active_artifact_refs),
                     metadata=self._metadata(state, assessment_notes=assessment.notes),
@@ -130,6 +134,7 @@ class DefaultTurnController:
             return TurnResult(
                 kind="final",
                 finish_reason=assessment.finish_reason or "done_definition_satisfied",
+                output_text=self._resolve_output_text(state),
                 updated_task_frame=state.task_frame,
                 artifact_refs=list(state.active_artifact_refs),
                 metadata=self._metadata(state, assessment_notes=assessment.notes),
@@ -139,10 +144,21 @@ class DefaultTurnController:
         return TurnResult(
             kind="final",
             finish_reason=decision.finish_reason or "best_effort_budget_stop",
+            output_text=self._resolve_output_text(state),
             updated_task_frame=state.task_frame,
             artifact_refs=list(state.active_artifact_refs),
             metadata=self._metadata(state, budget_reason=decision.reason, budget_details=decision.details),
         )
+
+    def _resolve_output_text(self, state: TurnState) -> str | None:
+        final_output = state.metadata.get("final_output_text")
+        if isinstance(final_output, str) and final_output:
+            return final_output
+
+        for result in reversed(state.tool_results):
+            if result.success and result.output:
+                return result.output
+        return None
 
     def _metadata(self, state: TurnState, **extra: Any) -> dict[str, Any]:
         metadata: dict[str, Any] = {
