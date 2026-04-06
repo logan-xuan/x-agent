@@ -38,7 +38,8 @@
 - `[x] P3-T15`: 已收口 provider 波动诊断与 debug fallback 标记，剩余问题明确收敛到 provider/base_url/model 侧
 - `[x] P3-T16`: 已验证 provider/base_url 策略，确认当前 key 不能直接切到百炼默认兼容入口
 - `[x] P3-T17`: 已明确当前 debug fast mode fallback policy，默认在短超时窗口下返回 synthetic final
-- `[ ] P3-T18`: 继续评估备用 provider onboarding 策略，判断是否需要引入第二 provider / 第二 key
+- `[x] P3-T18`: 已完成当前 provider/model 可用性探测，确认现有 endpoint 上暂无可直接启用的候选 backup model
+- `[ ] P3-T19`: 继续准备外部依赖与配置方案，评估第二 provider / 第二 key / 第二 endpoint 的引入路径
 
 ---
 
@@ -642,7 +643,7 @@
 - 在当前 provider/base_url/key 约束下，debug fast mode 需要 synthetic final fallback 才能在短超时窗口下稳定收敛
 - 生产主路径仍保留真实 provider 调用，不默认 synthetic final fallback
 
-#### [ ] P3-T18: 评估备用 provider onboarding 策略
+#### [x] P3-T18: 评估备用 provider onboarding 策略
 
 - 目标：
   - 判断是否要在配置层加入第二 provider、第二 key 或备用 base_url
@@ -652,11 +653,30 @@
 - 当前已完成：
   - `llm-stream-probe` 现已支持 `model_override`
   - 可在不改配置的前提下，直接验证候选 model/base_url 组合
+  - 真实验证：
+    - `model_override=glm-5-air` -> `BadRequestError: model not supported`
+    - `model_override=qwen-turbo/qwen-plus/deepseek-v3` -> 全部 `model not supported`
+
+- 当前结论：
+
+- 当前这个 provider/endpoint 上没有现成可切换的候选 backup model
+- 若要引入备用 provider，已不再是简单的 `model_override` 级工作，需要新的 provider 配置或新的 key/endpoint
 
 验收：
 
 - 明确 provider onboarding 方案或明确列出外部依赖阻塞项
 - 若涉及代码或配置变更，有测试与 smoke 验证
+
+#### [ ] P3-T19: 准备第二 provider / 第二 key / 第二 endpoint 方案
+
+- 目标：
+  - 明确备用 provider 的接入前提
+  - 若当前环境无法提供备用 provider，形成清晰的阻塞清单和后续接入步骤
+  - 保持 debug fast mode fallback 作为短期兜底
+
+验收：
+
+- 输出明确的 onboarding 阻塞项或落地方案
 
 验收：
 
