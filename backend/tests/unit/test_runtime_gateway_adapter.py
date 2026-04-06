@@ -296,6 +296,7 @@ async def test_agent_bridge_runtime_fast_mode_timeout_uses_richer_fallback_text(
         'request="runtime execute". bridge ok, waiting for provider content. '
         "phase=timeout, last_event=none, events_seen=0"
     )
+    assert result.metadata["synthetic_fallback"] is True
 
 
 @pytest.mark.asyncio
@@ -331,6 +332,7 @@ async def test_agent_bridge_runtime_fast_mode_timeout_after_agent_start_mentions
         "Try /api/v1/dev/llm-stream-probe or increase runtime_timeout_ms. "
         "phase=timeout, last_event=agent_start, events_seen=1"
     )
+    assert result.metadata["synthetic_fallback"] is True
 
 
 @pytest.mark.asyncio

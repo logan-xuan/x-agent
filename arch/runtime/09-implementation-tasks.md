@@ -564,6 +564,7 @@
   - 关键改动：
     - streaming wrapper 记录 provider 首个内容 chunk 的结构化日志
     - fast mode timeout 在无正文时返回更可解释的 fallback 文本
+    - fast mode timeout metadata 显式标记 `synthetic_fallback=true`
     - 新增 `llm-stream-probe` 端点，直接量化 `create_stream_ms / first_chunk_ms / done_ms`
     - `llm-stream-probe` 支持 `attempts` 批量采样
     - fast mode 新增 `runtime_force_non_streaming` / `runtime_temperature` 调参入口

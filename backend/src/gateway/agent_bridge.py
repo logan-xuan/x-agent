@@ -618,6 +618,11 @@ class AgentBridge:
                 await consume_events()
         except asyncio.TimeoutError:
             mark_milestone("timed_out", phase="timeout", progress="timed_out")
+            used_synthetic_fallback = self._should_mark_synthetic_fallback(
+                final_content,
+                response_parts,
+                diagnostics=diagnostics,
+            )
             logger.warning(
                 "Runtime turn via legacy bridge timed out",
                 extra={
@@ -644,6 +649,7 @@ class AgentBridge:
                     "legacy_bridge": True,
                     "agent_id": diagnostics.get("agent_id"),
                     "timeout_ms": timeout_ms,
+                    "synthetic_fallback": used_synthetic_fallback,
                     "runtime_diagnostics": diagnostics,
                 },
             )
@@ -687,6 +693,11 @@ class AgentBridge:
 
         if error_payload is not None:
             mark_milestone("completed", phase="error", progress="completed_with_error_event")
+            used_synthetic_fallback = self._should_mark_synthetic_fallback(
+                final_content,
+                response_parts,
+                diagnostics=diagnostics,
+            )
             logger.warning(
                 "Runtime turn via legacy bridge completed with error event",
                 extra={
@@ -712,6 +723,7 @@ class AgentBridge:
                     "legacy_bridge": True,
                     "agent_id": diagnostics.get("agent_id"),
                     "error": error_payload,
+                    "synthetic_fallback": used_synthetic_fallback,
                     "runtime_diagnostics": diagnostics,
                 },
             )
@@ -861,6 +873,18 @@ class AgentBridge:
             )
 
         return f"[runtime-turn abort] phase={phase}, last_event={last_event}, events_seen={events_seen}"
+
+    def _should_mark_synthetic_fallback(
+        self,
+        final_content: str | None,
+        response_parts: list[str],
+        *,
+        diagnostics: dict[str, Any],
+    ) -> bool:
+        """Return whether the current timeout/abort result relies on synthetic fallback text."""
+        if final_content or response_parts:
+            return False
+        return bool(diagnostics.get("fast_mode"))
 
     # ------------------------------------------------------------------
     # 内部方法
