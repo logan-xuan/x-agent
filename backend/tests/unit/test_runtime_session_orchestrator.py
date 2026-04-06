@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from src.runtime.session.orchestrator import DefaultSessionOrchestrator
-from src.runtime.types import ChildResult, SessionDescriptor
+from src.runtime.types import ChildResult, SessionDescriptor, SpawnPacket
 
 
 @pytest.mark.asyncio
@@ -101,3 +101,28 @@ async def test_orchestrator_accepts_repository_protocol_implementation():
 
     assert session.session_key == "sess-proto"
     assert repo.puts == ["sess-proto"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_prepare_child_turn_unifies_spawn_and_policy_envelope():
+    orchestrator = DefaultSessionOrchestrator()
+    parent = SessionDescriptor(session_key="parent", session_id="parent")
+
+    envelope = await orchestrator.prepare_child_turn(
+        parent,
+        SpawnPacket(
+            objective="Investigate child work",
+            deliverable="Return findings",
+            selected_artifacts=["artifact-1"],
+            tool_allowlist=["read_file"],
+            timeout_ms=5000,
+        ),
+    )
+
+    stored_child = await orchestrator.session_store.get(envelope.request.session.session_key)
+
+    assert stored_child is not None
+    assert stored_child.parent_session_key == "parent"
+    assert envelope.prompt_mode == "minimal"
+    assert envelope.request.metadata["auto_archive"] is True
+    assert envelope.request.metadata["max_spawns"] == 0

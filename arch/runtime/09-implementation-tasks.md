@@ -919,6 +919,7 @@
     - `DefaultSessionOrchestrator.session_store` 已改为依赖 `SessionRepository` protocol
     - `InMemorySessionStore` 已退化为对 `InMemorySessionRepository` 的兼容别名
     - 新增协议级注入测试，确认 orchestrator 可直接使用自定义 repository 实现
+    - 新增 `DefaultSessionOrchestrator.prepare_child_turn()`，将 child session create + policy envelope 收口为统一入口
   - 验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_session_orchestrator.py tests/unit/test_runtime_child_session_policy.py tests/unit/test_runtime_announcement_manager.py tests/unit/test_runtime_repositories.py`
     - `python -m compileall src/runtime/session src/runtime/repositories.py`
