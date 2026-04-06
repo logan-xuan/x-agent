@@ -14,7 +14,8 @@ from src.gateway.dispatcher import GatewayDispatcher
 from src.gateway.envelope import Envelope
 from src.gateway.response import GatewayEvent, GatewayEventType
 from src.runtime.adapters import GatewayAdapter
-from src.runtime.types import TaskFrame, TurnResult
+from src.runtime.repositories import ResumeSessionState, StateSnapshotRecord, SummaryRecord, TranscriptEntry
+from src.runtime.types import SessionDescriptor, TaskFrame, TurnResult
 
 
 @pytest.mark.asyncio
@@ -52,6 +53,61 @@ async def test_runtime_gateway_adapter_normalizes_none_content_to_empty_string()
 
     assert session.session_id == "sess-none"
     assert request.user_input == ""
+
+
+@pytest.mark.asyncio
+async def test_runtime_gateway_adapter_prepares_resumed_turn_from_snapshot_state():
+    adapter = GatewayAdapter(orchestrator=AgentBridge().runtime_session_orchestrator)
+    resumed_session = SessionDescriptor(
+        session_key="sess-resume",
+        session_id="sess-resume",
+    )
+    adapter.orchestrator.resume_session = AsyncMock(  # type: ignore[method-assign]
+        return_value=ResumeSessionState(
+            session=resumed_session,
+            latest_snapshot=StateSnapshotRecord(
+                snapshot_id="snap-1",
+                session_id="sess-resume",
+                task_frame=TaskFrame(objective="resume objective", active_artifacts=["artifact-1"]),
+            ),
+            latest_summary=SummaryRecord(
+                summary_id="sum-1",
+                session_id="sess-resume",
+                summary_type="collapse",
+                summary="summary",
+            ),
+            summary_chain=[
+                SummaryRecord(
+                    summary_id="sum-1",
+                    session_id="sess-resume",
+                    summary_type="collapse",
+                    summary="summary",
+                )
+            ],
+            recent_entries=[
+                TranscriptEntry(
+                    entry_id="entry-1",
+                    session_id="sess-resume",
+                    turn_index=0,
+                    kind="assistant_message",
+                    text="hello",
+                )
+            ],
+        )
+    )
+
+    session, request = await adapter.prepare_resumed_turn(
+        "sess-resume",
+        {"metadata": {"origin": "resume"}},
+        user_input="continue",
+    )
+
+    assert session.session_id == "sess-resume"
+    assert request.task_frame.objective == "resume objective"
+    assert request.task_frame.active_artifacts == ["artifact-1"]
+    assert request.metadata["resume"] is True
+    assert request.metadata["summary_chain_count"] == 1
+    assert request.metadata["recent_entry_count"] == 1
 
 
 @pytest.mark.asyncio

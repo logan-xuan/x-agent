@@ -52,6 +52,46 @@ class GatewayAdapter:
         )
         return session, request
 
+    async def prepare_resumed_turn(
+        self,
+        session_key: str,
+        event: Any | None = None,
+        *,
+        user_input: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[SessionDescriptor, TurnRequest]:
+        """Build a runtime turn request from persisted resume state."""
+        resumed = await self.orchestrator.resume_session(session_key)
+        if resumed is None:
+            raise KeyError(f"session not found: {session_key}")
+
+        payload = self.build_event_payload(event or {"session_key": session_key, "metadata": {}})
+        route = resumed.session.route or await self.orchestrator.route_resolver.resolve(payload)
+        resumed.session.route = route
+        task_frame = resumed.latest_snapshot.task_frame if resumed.latest_snapshot is not None else TaskFrame(
+            objective=user_input or (resumed.latest_summary.objective if resumed.latest_summary else ""),
+        )
+        artifact_ids = (
+            list(resumed.latest_snapshot.active_artifact_refs)
+            if resumed.latest_snapshot is not None
+            else list(resumed.latest_summary.artifact_refs if resumed.latest_summary else [])
+        )
+        request = self.conversation_adapter.build_turn_request(
+            session=resumed.session,
+            route=route,
+            user_input=user_input,
+            task_frame=task_frame,
+            artifact_ids=artifact_ids,
+            metadata={
+                **dict(payload.get("metadata", {})),
+                **dict(metadata or {}),
+                "resume": True,
+                "summary_chain_count": len(resumed.summary_chain),
+                "recent_entry_count": len(resumed.recent_entries),
+            },
+        )
+        return resumed.session, request
+
     def build_route(self, event: Any) -> RouteMeta:
         """Build a RouteMeta from an event-like payload when orchestration is not needed."""
         payload = self.build_event_payload(event)
