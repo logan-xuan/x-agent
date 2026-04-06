@@ -343,7 +343,6 @@ class LLMRouter:
                             "provider_name": provider.name,
                         }
                     )
-                    await breaker.record_failure(Exception("Health check failed"))
                     continue
                 
                 start_time = time.time()
@@ -627,13 +626,35 @@ class LLMRouter:
         total_latency_ms = initial_latency_ms
         has_error = False
         error_message = None
+        first_content_chunk_logged = False
         
         try:
             start_time = time.time()
             async for chunk in stream:
                 total_content += chunk.content
+                if chunk.content and not first_content_chunk_logged:
+                    first_content_chunk_logged = True
+                    logger.info(
+                        "Streaming provider emitted first content chunk",
+                        extra={
+                            "provider_name": provider.name,
+                            "session_id": session_id,
+                            "first_chunk_latency_ms": int((time.time() - start_time) * 1000)
+                            + initial_latency_ms,
+                            "chunk_chars": len(chunk.content),
+                        },
+                    )
                 yield chunk
             total_latency_ms = int((time.time() - start_time) * 1000) + initial_latency_ms
+            if not first_content_chunk_logged:
+                logger.info(
+                    "Streaming provider completed without content chunk",
+                    extra={
+                        "provider_name": provider.name,
+                        "session_id": session_id,
+                        "total_latency_ms": total_latency_ms,
+                    },
+                )
             
         except Exception as e:
             has_error = True

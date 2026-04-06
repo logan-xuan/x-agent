@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from src.services.llm.circuit_breaker import circuit_breaker_manager
 from src.services.llm.router import LLMRouter
 from src.services.llm.provider import LLMResponse
 
@@ -78,9 +79,12 @@ async def test_llm_router_skips_provider_when_recent_failed_health_is_cached():
     router._providers = {provider.name: provider}
     router._provider_health_ttl_seconds = 30.0
     router._provider_health_cache[provider.name] = (__import__("time").monotonic(), False)
+    breaker = circuit_breaker_manager.get_breaker(provider.name)
+    breaker.reset()
 
     with pytest.raises(RuntimeError, match="All providers failed"):
         await router.chat([{"role": "user", "content": "hello"}], stream=False)
 
     assert provider.health_calls == 0
     assert provider.chat_calls == 0
+    assert breaker.stats.failed_requests == 0
