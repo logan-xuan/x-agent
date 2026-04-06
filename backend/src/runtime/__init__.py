@@ -13,6 +13,9 @@ from .context import (
 )
 from .session import (
     AnnouncementManager,
+    ChildSessionManager,
+    ChildSessionPolicy,
+    ChildTurnEnvelope,
     DefaultRouteResolver,
     DefaultSessionOrchestrator,
     InMemoryLaneScheduler,
@@ -39,9 +42,13 @@ from .types import (
 )
 
 __all__ = [
+    "AnnouncementManager",
     "ArtifactRef",
     "BudgetDecision",
     "BudgetSnapshot",
+    "ChildSessionManager",
+    "ChildSessionPolicy",
+    "ChildTurnEnvelope",
     "ChildResult",
     "CompressionContext",
     "CompressionProfile",
@@ -69,5 +76,4 @@ __all__ = [
     "TurnBudgetProfile",
     "TurnRequest",
     "TurnResult",
-    "AnnouncementManager",
 ]
