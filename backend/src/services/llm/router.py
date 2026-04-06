@@ -618,7 +618,7 @@ class LLMRouter:
                 await stat_service.record_request(
                     provider_name=provider.name,
                     model_id=model,
-                    success=not has_error,
+                    success=completed,
                     session_id=session_id,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
@@ -731,7 +731,7 @@ class LLMRouter:
                     await stat_service.record_request(
                         provider_name=provider.name,
                         model_id=provider.model_id,
-                        success=not has_error,
+                        success=completed,
                         session_id=session_id,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
@@ -752,7 +752,7 @@ class LLMRouter:
                         "completion_tokens": completion_tokens,
                         "total_tokens": prompt_tokens + completion_tokens,
                     },
-                    success=not has_error,
+                    success=completed,
                     error=error_message,
                     tools=tools,
                 )

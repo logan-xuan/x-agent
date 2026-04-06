@@ -1,5 +1,6 @@
 """Developer mode API endpoints for debugging and prompt testing."""
 
+import asyncio
 import json
 import subprocess
 import time
@@ -78,6 +79,7 @@ class RuntimeTurnDebugRequest(BaseModel):
     agent_id: str | None = None
     agent_name: str | None = None
     runtime_timeout_ms: int | None = Field(default=30000, ge=1)
+    runtime_max_tokens: int | None = Field(default=None, ge=1)
     disable_tools: bool = False
     disable_skills: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -91,6 +93,34 @@ class RuntimeTurnDebugResponse(BaseModel):
     finish_reason: str | None = None
     output_text: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LLMStreamProbeRequest(BaseModel):
+    """Debug request for measuring provider streaming latency."""
+
+    content: str
+    system_prompt: str | None = None
+    max_tokens: int = Field(default=64, ge=1)
+    timeout_ms: int = Field(default=10000, ge=1)
+
+
+class LLMStreamProbeResponse(BaseModel):
+    """Measured provider streaming timings for a single probe."""
+
+    create_stream_ms: int
+    first_chunk_ms: int | None = None
+    done_ms: int | None = None
+    timed_out: bool = False
+    chunk_count: int = 0
+    content_preview: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def _get_shared_llm_router() -> LLMRouter:
+    """Resolve the application-scoped LLMRouter when available."""
+    from ...main import get_llm_router
+
+    return get_llm_router()
 
 
 def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
@@ -282,6 +312,8 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
     metadata = dict(request.metadata)
     if request.runtime_timeout_ms is not None:
         metadata["runtime_timeout_ms"] = request.runtime_timeout_ms
+    if request.runtime_max_tokens is not None:
+        metadata["runtime_max_tokens"] = request.runtime_max_tokens
     if request.disable_tools:
         metadata["runtime_disable_tools"] = True
         metadata["runtime_disable_skills"] = True
@@ -309,6 +341,59 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
         finish_reason=result.finish_reason,
         output_text=result.output_text,
         metadata=dict(result.metadata),
+    )
+
+
+@router.post("/llm-stream-probe", response_model=LLMStreamProbeResponse)
+async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamProbeResponse:
+    """Measure shared-provider streaming timings without going through the full agent loop."""
+    router = _get_shared_llm_router()
+    messages: list[dict[str, str]] = []
+    if request.system_prompt:
+        messages.append({"role": "system", "content": request.system_prompt})
+    messages.append({"role": "user", "content": request.content})
+
+    started_at = time.monotonic()
+    stream = await router.chat(messages, stream=True, max_tokens=request.max_tokens)
+    create_stream_ms = int((time.monotonic() - started_at) * 1000)
+    first_chunk_ms: int | None = None
+    chunk_count = 0
+    content_parts: list[str] = []
+    timed_out = False
+    done_ms: int | None = None
+
+    try:
+        async with asyncio.timeout(request.timeout_ms / 1000):
+            async for chunk in stream:
+                if chunk.content:
+                    chunk_count += 1
+                    content_parts.append(chunk.content)
+                    if first_chunk_ms is None:
+                        first_chunk_ms = int((time.monotonic() - started_at) * 1000)
+                if chunk.is_finished:
+                    done_ms = int((time.monotonic() - started_at) * 1000)
+                    break
+    except TimeoutError:
+        timed_out = True
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if callable(aclose):
+            await aclose()
+
+    if done_ms is None and not timed_out:
+        done_ms = int((time.monotonic() - started_at) * 1000)
+
+    return LLMStreamProbeResponse(
+        create_stream_ms=create_stream_ms,
+        first_chunk_ms=first_chunk_ms,
+        done_ms=done_ms,
+        timed_out=timed_out,
+        chunk_count=chunk_count,
+        content_preview="".join(content_parts)[:200],
+        metadata={
+            "max_tokens": request.max_tokens,
+            "message_count": len(messages),
+        },
     )
 
 

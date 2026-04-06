@@ -343,6 +343,29 @@ async def test_agent_bridge_runtime_legacy_path_can_disable_tools():
 
 
 @pytest.mark.asyncio
+async def test_agent_bridge_runtime_fast_mode_honors_max_tokens_override():
+    bridge = AgentBridge()
+    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
+    envelope = Envelope.create_chat(
+        content="runtime execute",
+        session_id="sess-fast-max-tokens",
+        channel_type=ChannelType.WEB_CHAT,
+        channel_protocol=ChannelProtocol.WEBSOCKET,
+        metadata={"runtime_disable_tools": True, "runtime_max_tokens": 48},
+    )
+    _, request = await adapter.prepare_turn(
+        envelope,
+        metadata={"runtime_disable_tools": True, "runtime_max_tokens": 48},
+    )
+
+    runtime_config = bridge._build_runtime_agent_config(request, bridge._resolve_runtime_agent_info(request))
+
+    assert isinstance(runtime_config, AgentCoreConfig)
+    assert runtime_config.max_tokens == 48
+    assert runtime_config.tools is None
+
+
+@pytest.mark.asyncio
 async def test_agent_bridge_runtime_legacy_path_can_disable_skills():
     bridge = AgentBridge()
     adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)

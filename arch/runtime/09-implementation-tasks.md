@@ -558,16 +558,21 @@
 - 当前已完成：
   - `backend/src/services/llm/router.py`
   - `backend/src/gateway/agent_bridge.py`
+  - `backend/src/api/v1/dev.py`
   - `backend/tests/unit/test_runtime_gateway_adapter.py`
+  - `backend/tests/unit/test_dev_runtime_turn_api.py`
   - 关键改动：
     - streaming wrapper 记录 provider 首个内容 chunk 的结构化日志
     - fast mode timeout 在无正文时返回更可解释的 fallback 文本
+    - 新增 `llm-stream-probe` 端点，直接量化 `create_stream_ms / first_chunk_ms / done_ms`
   - 已验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
+    - `POST /api/v1/dev/llm-stream-probe` 真实 probe
 
 - 当前结论：
   - 本地 runtime overhead 已经基本压平
   - provider 首 chunk 仍存在显著波动，极简 prompt 下也可能超过 `8s`
+  - 实测：`content=\"ok\"`, `max_tokens=8`, `timeout_ms=8000` 时，`create_stream_ms=141`、`first_chunk_ms=null`、`timed_out=true`
   - 下一步要么继续 provider 参数/模型侧验证，要么为 debug fast mode 设计更明确的 synthetic fallback
 
 验收：

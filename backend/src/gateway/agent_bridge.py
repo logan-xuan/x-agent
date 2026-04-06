@@ -72,6 +72,7 @@ _RUNTIME_FAST_SYSTEM_PROMPT = (
     "不要调用工具，不要展开额外计划，不要读取长期上下文。"
     "优先在一小段文本内给出结论。"
 )
+_RUNTIME_FAST_MAX_TOKENS = 64
 
 
 # ============================================================================
@@ -752,6 +753,14 @@ class AgentBridge:
             return int(value)
         return None
 
+    def _normalize_runtime_max_tokens(self, value: object) -> int | None:
+        """Normalize optional runtime max_tokens override for debug execution."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+        return None
+
     def _build_runtime_agent_config(
         self,
         request: TurnRequest,
@@ -765,6 +774,9 @@ class AgentBridge:
 
         if disable_tools:
             llm_router = _get_llm_router()
+            runtime_max_tokens = self._normalize_runtime_max_tokens(
+                request.metadata.get("runtime_max_tokens")
+            )
             return AgentCoreConfig(
                 llm=XAgentLLMAdapter(llm_router),
                 tools=None,
@@ -776,7 +788,7 @@ class AgentBridge:
                 enable_experience_learning=False,
                 temperature=0.0,
                 thinking_level="off",
-                max_tokens=64,
+                max_tokens=runtime_max_tokens or _RUNTIME_FAST_MAX_TOKENS,
                 tool_middleware_pipeline=None,
             )
 

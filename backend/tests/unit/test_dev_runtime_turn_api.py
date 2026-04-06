@@ -1,5 +1,6 @@
 """Unit tests for the runtime turn developer API endpoint."""
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -74,6 +75,36 @@ def test_dev_runtime_turn_endpoint_accepts_custom_runtime_timeout():
     assert response.status_code == 200
     metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
     assert metadata["runtime_timeout_ms"] == 1500
+
+
+def test_dev_runtime_turn_endpoint_accepts_runtime_max_tokens():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="final",
+                finish_reason="done_definition_satisfied",
+                output_text="runtime-ok",
+                metadata={},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "runtime_max_tokens": 48,
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["runtime_max_tokens"] == 48
 
 
 def test_dev_runtime_turn_top_level_flags_override_conflicting_metadata():
@@ -197,3 +228,68 @@ def test_dev_runtime_turn_endpoint_rejects_invalid_channel_type():
 
     assert response.status_code == 400
     assert "Unsupported channel_type" in response.json()["detail"]
+
+
+def test_dev_llm_stream_probe_endpoint_reports_timings():
+    client = TestClient(app)
+
+    class FakeRouter:
+        async def chat(self, messages, stream=False, max_tokens=None):
+            assert stream is True
+            assert max_tokens == 32
+            assert messages[-1]["content"] == "probe"
+
+            async def _stream():
+                yield type("Chunk", (), {"content": "hello", "is_finished": False})()
+                yield type("Chunk", (), {"content": " world", "is_finished": True})()
+
+            return _stream()
+
+    with patch("src.api.v1.dev._get_shared_llm_router", return_value=FakeRouter()):
+        response = client.post(
+            "/api/v1/dev/llm-stream-probe",
+            json={
+                "content": "probe",
+                "max_tokens": 32,
+                "timeout_ms": 1000,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["timed_out"] is False
+    assert data["chunk_count"] == 2
+    assert data["content_preview"] == "hello world"
+    assert data["first_chunk_ms"] is not None
+    assert data["done_ms"] is not None
+
+
+def test_dev_llm_stream_probe_endpoint_handles_timeout():
+    client = TestClient(app)
+
+    class FakeRouter:
+        async def chat(self, messages, stream=False, max_tokens=None):
+            _ = messages
+            _ = stream
+            _ = max_tokens
+
+            async def _stream():
+                await asyncio.sleep(0.05)
+                yield type("Chunk", (), {"content": "late", "is_finished": False})()
+
+            return _stream()
+
+    with patch("src.api.v1.dev._get_shared_llm_router", return_value=FakeRouter()):
+        response = client.post(
+            "/api/v1/dev/llm-stream-probe",
+            json={
+                "content": "probe",
+                "timeout_ms": 1,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["timed_out"] is True
+    assert data["first_chunk_ms"] is None
+    assert data["chunk_count"] == 0
