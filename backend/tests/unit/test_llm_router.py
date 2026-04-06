@@ -8,7 +8,7 @@ import pytest
 
 from src.services.llm.circuit_breaker import circuit_breaker_manager
 from src.services.llm.router import LLMRouter
-from src.services.llm.provider import LLMResponse
+from src.services.llm.provider import LLMResponse, StreamingLLMResponse
 
 
 @dataclass
@@ -34,6 +34,28 @@ class FakeProvider:
         _ = stream
         _ = kwargs
         return LLMResponse(content=self.chat_content, model=self.model_id)
+
+
+@dataclass
+class FakeStreamingProvider(FakeProvider):
+    chunks: list[str] | None = None
+
+    async def chat(self, messages, stream=False, **kwargs):
+        self.chat_calls += 1
+        _ = messages
+        _ = kwargs
+        if not stream:
+            return await super().chat(messages, stream=stream, **kwargs)
+
+        async def _stream():
+            for index, chunk in enumerate(self.chunks or ["hello", " world"]):
+                yield StreamingLLMResponse(
+                    content=chunk,
+                    is_finished=index == len((self.chunks or ["hello", " world"])) - 1,
+                    model=self.model_id,
+                )
+
+        return _stream()
 
 
 @pytest.mark.asyncio
@@ -88,3 +110,25 @@ async def test_llm_router_skips_provider_when_recent_failed_health_is_cached():
     assert provider.health_calls == 0
     assert provider.chat_calls == 0
     assert breaker.stats.failed_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_llm_router_records_streaming_success_only_after_consumption():
+    router = LLMRouter(model_configs=[])
+    provider = FakeStreamingProvider()
+    router._primary = provider
+    router._backups = []
+    router._providers = {provider.name: provider}
+    breaker = circuit_breaker_manager.get_breaker(provider.name)
+    breaker.reset()
+
+    stream = await router.chat([{"role": "user", "content": "hello"}], stream=True)
+
+    assert breaker.stats.successful_requests == 0
+    assert router._recent_provider_health(provider.name) is None
+
+    chunks = [chunk async for chunk in stream]
+
+    assert "".join(chunk.content for chunk in chunks) == "hello world"
+    assert breaker.stats.successful_requests == 1
+    assert router._recent_provider_health(provider.name) is True

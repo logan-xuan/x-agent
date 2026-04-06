@@ -336,7 +336,8 @@ async def test_agent_bridge_runtime_legacy_path_can_disable_tools():
     assert runtime_config.context is None
     assert runtime_config.enable_context_compression is False
     assert runtime_config.enable_experience_learning is False
-    assert runtime_config.max_tokens == 256
+    assert runtime_config.temperature == 0.0
+    assert runtime_config.max_tokens == 64
     bridge.create_config.assert_not_called()  # type: ignore[attr-defined]
     assert captured_run_kwargs["disable_skills"] is False
 

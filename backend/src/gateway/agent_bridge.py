@@ -774,8 +774,9 @@ class AgentBridge:
                 system_prompt_port=None,
                 enable_context_compression=False,
                 enable_experience_learning=False,
+                temperature=0.0,
                 thinking_level="off",
-                max_tokens=256,
+                max_tokens=64,
                 tool_middleware_pipeline=None,
             )
 
