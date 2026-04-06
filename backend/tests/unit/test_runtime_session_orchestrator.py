@@ -125,6 +125,21 @@ async def test_orchestrator_load_session_returns_none_when_missing():
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_reconnect_session_reactivates_and_returns_resume_state():
+    orchestrator = DefaultSessionOrchestrator()
+    session = SessionDescriptor(session_key="sess-reconnect", session_id="sess-1", status="idle")
+    await orchestrator.session_store.put(session)
+
+    resumed = await orchestrator.reconnect_session("sess-reconnect", recent_entries_limit=1)
+    stored = await orchestrator.session_store.get("sess-reconnect")
+
+    assert resumed is not None
+    assert resumed.session.status == "active"
+    assert stored is not None
+    assert stored.status == "active"
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_prepare_child_turn_unifies_spawn_and_policy_envelope():
     orchestrator = DefaultSessionOrchestrator()
     parent = SessionDescriptor(session_key="parent", session_id="parent")

@@ -189,6 +189,20 @@ class DefaultSessionOrchestrator:
             recent_entries=recent_entries,
         )
 
+    async def reconnect_session(
+        self,
+        session_key: str,
+        *,
+        recent_entries_limit: int = 20,
+    ) -> ResumeSessionState | None:
+        """Reactivate a stored session and return its resumable state bundle."""
+        session = await self.load_session(session_key)
+        if session is None:
+            return None
+        await self.lifecycle_manager.activate(session)
+        await self.session_store.put(session)
+        return await self.resume_session(session_key, recent_entries_limit=recent_entries_limit)
+
     def _event_value(self, event: Any, key: str) -> str | None:
         if isinstance(event, dict):
             value = event.get(key)
