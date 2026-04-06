@@ -770,12 +770,21 @@
 
 - child 结束后的回传协议稳定
 
-#### [ ] P4-T4: child session 限制落地
+#### [x] P4-T4: child session 限制落地
 
 - 默认 `minimal prompt`
 - 默认 `max_spawns = 0`
 - 默认不暴露 session tools
 - 默认自动 archive
+
+- 已完成：
+  - `backend/src/runtime/session/child_session.py`
+  - `backend/tests/unit/test_runtime_child_session.py`
+  - 当前实现已覆盖：
+    - `prompt_mode="minimal"`
+    - `max_spawns=0`
+    - `session_tools_allowed=false`
+    - `auto_archive=true`
 
 验收：
 

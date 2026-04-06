@@ -32,6 +32,7 @@ def test_child_session_manager_prepares_minimal_child_turn():
     assert envelope.prompt_mode == "minimal"
     assert envelope.request.metadata["max_spawns"] == 0
     assert envelope.request.metadata["session_tools_allowed"] is False
+    assert envelope.request.metadata["auto_archive"] is True
     assert envelope.tool_allowlist == ["web_search"]
 
 
