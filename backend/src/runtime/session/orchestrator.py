@@ -8,10 +8,13 @@ from typing import Any
 
 from ..repositories import (
     ArtifactRepository,
+    CompressionEventRecord,
+    CompressionEventRepository,
     InMemorySessionRepository,
     InMemoryStateSnapshotRepository,
     InMemorySummaryRepository,
     InMemoryArtifactRepository,
+    InMemoryCompressionEventRepository,
     InMemoryTranscriptRepository,
     SessionRepository,
     StateSnapshotRecord,
@@ -38,6 +41,7 @@ class DefaultSessionOrchestrator:
     transcript_repository: TranscriptRepository = field(default_factory=InMemoryTranscriptRepository)
     summary_repository: SummaryRepository = field(default_factory=InMemorySummaryRepository)
     artifact_repository: ArtifactRepository = field(default_factory=InMemoryArtifactRepository)
+    compression_event_repository: CompressionEventRepository = field(default_factory=InMemoryCompressionEventRepository)
     state_snapshot_repository: StateSnapshotRepository = field(default_factory=InMemoryStateSnapshotRepository)
     route_resolver: DefaultRouteResolver = field(default_factory=DefaultRouteResolver)
     lane_scheduler: InMemoryLaneScheduler = field(default_factory=InMemoryLaneScheduler)
@@ -139,6 +143,11 @@ class DefaultSessionOrchestrator:
         """Persist an artifact payload and return its reference."""
         await self.artifact_repository.put(artifact, content)
         return artifact
+
+    async def append_compression_event(self, event: CompressionEventRecord) -> CompressionEventRecord:
+        """Persist one compression telemetry record and return it."""
+        await self.compression_event_repository.append(event)
+        return event
 
     async def record_state_snapshot(self, snapshot: StateSnapshotRecord) -> StateSnapshotRecord:
         """Persist a runtime state snapshot and return it."""

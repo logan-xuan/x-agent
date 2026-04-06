@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from src.runtime.session.orchestrator import DefaultSessionOrchestrator
-from src.runtime.repositories import StateSnapshotRecord, SummaryRecord, TranscriptEntry
+from src.runtime.repositories import CompressionEventRecord, StateSnapshotRecord, SummaryRecord, TranscriptEntry
 from src.runtime.types import ArtifactRef, ChildResult, SessionDescriptor, SpawnPacket, TaskFrame
 
 
@@ -215,3 +215,23 @@ async def test_orchestrator_stores_artifact_via_repository():
 
     assert stored is artifact
     assert round_trip == (artifact, "body")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_appends_compression_event_via_repository():
+    orchestrator = DefaultSessionOrchestrator()
+    event = CompressionEventRecord(
+        event_id="evt-1",
+        session_id="sess-1",
+        turn_index=1,
+        stage="collapse",
+        tokens_before=100,
+        tokens_after=40,
+        freed_tokens=60,
+    )
+
+    stored = await orchestrator.append_compression_event(event)
+    events = await orchestrator.compression_event_repository.list_by_session("sess-1")
+
+    assert stored is event
+    assert [item.event_id for item in events] == ["evt-1"]
