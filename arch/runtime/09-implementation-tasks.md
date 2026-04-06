@@ -577,6 +577,7 @@
   - 批量 probe 显示波动很大：`max_tokens=64` 至少出现过 `first_chunk_ms=6555`, `done_ms=7001`，但同类请求也可能在 `8s` 内完全无正文
   - post-review smoke：`disable_tools=true` + `disable_skills=true`, `runtime_timeout_ms=8000` 时，`first_text_chunk≈4076ms`，`completed≈6865ms`
   - fast mode token 实验：`runtime_max_tokens=16` 在 `8s` 内仅拿到 partial text；`runtime_max_tokens=32` 可在约 `7183ms` 完成 final，说明继续盲目下调 token 上限未必有利
+  - temperature 实验：`max_tokens=64`, `temperature=0.0/0.2`, `attempts=2`, `timeout_ms=8000` 时，`samples[*].first_chunk_ms` 仍全部为 `null`
   - 下一步要么继续 provider 参数/模型侧验证，要么为 debug fast mode 设计更明确的 synthetic fallback
 
 验收：
