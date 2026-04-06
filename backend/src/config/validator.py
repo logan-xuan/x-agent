@@ -116,6 +116,7 @@ class ConfigValidator:
         
         # Check primary model
         primaries = [m for m in config.models if m.is_primary]
+        backups = [m for m in config.models if not m.is_primary]
         if len(primaries) == 0:
             result.issues.append(ValidationIssue(
                 field="models",
@@ -129,6 +130,16 @@ class ConfigValidator:
                 message=f"Multiple primary models found: {[m.name for m in primaries]}",
                 severity=ValidationSeverity.ERROR,
                 suggestion="Only one model should have is_primary: true",
+            ))
+        if len(backups) == 0:
+            result.issues.append(ValidationIssue(
+                field="models",
+                message="No backup model configured",
+                severity=ValidationSeverity.WARNING,
+                suggestion=(
+                    "Add at least one non-primary model for failover, or rely on "
+                    "debug synthetic fallback only for short-timeout runtime probes"
+                ),
             ))
         
         # Validate each model
