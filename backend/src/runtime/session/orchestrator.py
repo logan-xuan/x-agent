@@ -158,6 +158,30 @@ class DefaultSessionOrchestrator:
         """Return the latest stored state snapshot for a session."""
         return await self.state_snapshot_repository.latest_for_session(session_id)
 
+    async def resume_session(
+        self,
+        session_key: str,
+        *,
+        recent_entries_limit: int = 20,
+    ) -> dict[str, object] | None:
+        """Load the minimum persisted state needed to resume a runtime session."""
+        session = await self.session_store.get(session_key)
+        if session is None:
+            return None
+
+        latest_snapshot = await self.latest_state_snapshot(session.session_id)
+        latest_summary = await self.latest_summary(session.session_id)
+        recent_entries = await self.transcript_repository.recent_by_session(
+            session.session_id,
+            recent_entries_limit,
+        )
+        return {
+            "session": session,
+            "latest_snapshot": latest_snapshot,
+            "latest_summary": latest_summary,
+            "recent_entries": recent_entries,
+        }
+
     def _event_value(self, event: Any, key: str) -> str | None:
         if isinstance(event, dict):
             value = event.get(key)

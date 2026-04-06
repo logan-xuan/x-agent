@@ -924,6 +924,7 @@
     - 新增 `record_summary()/latest_summary()` 与 `record_state_snapshot()/latest_state_snapshot()`，把 summary/snapshot 读写入口先统一收进 orchestrator
     - 新增 `append_transcript_entry()` 与 `store_artifact()`，把 transcript/artifact 读写入口也统一收进 orchestrator
     - 新增 `append_compression_event()`，把 compression telemetry 写入口统一收进 orchestrator
+    - 新增 `resume_session()`，将 session + latest snapshot + latest summary + recent transcript 的最小恢复入口统一收进 orchestrator
   - 验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_session_orchestrator.py tests/unit/test_runtime_child_session_policy.py tests/unit/test_runtime_announcement_manager.py tests/unit/test_runtime_repositories.py`
     - `python -m compileall src/runtime/session src/runtime/repositories.py`

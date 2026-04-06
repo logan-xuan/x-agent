@@ -58,6 +58,24 @@ async def test_in_memory_transcript_repository_filters_by_session():
     assert [entry.entry_id for entry in entries] == ["entry-1"]
 
 
+async def test_in_memory_transcript_repository_returns_recent_entries():
+    repo = InMemoryTranscriptRepository()
+    for index in range(3):
+        await repo.append(
+            TranscriptEntry(
+                entry_id=f"entry-{index}",
+                session_id="sess-1",
+                turn_index=index,
+                kind="assistant_message",
+                text=str(index),
+            )
+        )
+
+    entries = await repo.recent_by_session("sess-1", 2)
+
+    assert [entry.entry_id for entry in entries] == ["entry-1", "entry-2"]
+
+
 async def test_in_memory_summary_repository_filters_by_session():
     repo = InMemorySummaryRepository()
     await repo.put(

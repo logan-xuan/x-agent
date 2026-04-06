@@ -127,6 +127,9 @@ class TranscriptRepository(Protocol):
     async def list_by_session(self, session_id: str) -> list[TranscriptEntry]:
         ...
 
+    async def recent_by_session(self, session_id: str, limit: int) -> list[TranscriptEntry]:
+        ...
+
 
 @runtime_checkable
 class SummaryRepository(Protocol):
@@ -208,6 +211,12 @@ class InMemoryTranscriptRepository:
 
     async def list_by_session(self, session_id: str) -> list[TranscriptEntry]:
         return [entry for entry in self._entries if entry.session_id == session_id]
+
+    async def recent_by_session(self, session_id: str, limit: int) -> list[TranscriptEntry]:
+        entries = await self.list_by_session(session_id)
+        if limit <= 0:
+            return []
+        return entries[-limit:]
 
 
 @dataclass

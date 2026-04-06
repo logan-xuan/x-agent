@@ -235,3 +235,53 @@ async def test_orchestrator_appends_compression_event_via_repository():
 
     assert stored is event
     assert [item.event_id for item in events] == ["evt-1"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_resume_session_loads_snapshot_summary_and_recent_entries():
+    orchestrator = DefaultSessionOrchestrator()
+    session = SessionDescriptor(session_key="sess-key", session_id="sess-1")
+    await orchestrator.session_store.put(session)
+    await orchestrator.record_summary(
+        SummaryRecord(
+            summary_id="sum-1",
+            session_id="sess-1",
+            summary_type="collapse",
+            summary="latest",
+            created_at=2.0,
+        )
+    )
+    await orchestrator.record_state_snapshot(
+        StateSnapshotRecord(
+            snapshot_id="snap-1",
+            session_id="sess-1",
+            task_frame=TaskFrame(objective="resume"),
+            created_at=3.0,
+        )
+    )
+    await orchestrator.append_transcript_entry(
+        TranscriptEntry(
+            entry_id="entry-1",
+            session_id="sess-1",
+            turn_index=0,
+            kind="assistant_message",
+            text="older",
+        )
+    )
+    await orchestrator.append_transcript_entry(
+        TranscriptEntry(
+            entry_id="entry-2",
+            session_id="sess-1",
+            turn_index=1,
+            kind="assistant_message",
+            text="newer",
+        )
+    )
+
+    resumed = await orchestrator.resume_session("sess-key", recent_entries_limit=1)
+
+    assert resumed is not None
+    assert resumed["session"] == session
+    assert resumed["latest_summary"] is not None
+    assert resumed["latest_snapshot"] is not None
+    assert [entry.entry_id for entry in resumed["recent_entries"]] == ["entry-2"]
