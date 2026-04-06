@@ -83,7 +83,7 @@ class RuntimeTurnDebugRequest(BaseModel):
     runtime_max_tokens: int | None = Field(default=None, ge=1)
     runtime_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     runtime_force_non_streaming: bool = False
-    timeout_fallback_mode: Literal["abort", "final"] = "abort"
+    timeout_fallback_mode: Literal["abort", "final"] | None = None
     disable_tools: bool = False
     disable_skills: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -327,14 +327,17 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
         metadata["runtime_temperature"] = request.runtime_temperature
     if request.runtime_force_non_streaming:
         metadata["runtime_force_non_streaming"] = True
-    metadata["runtime_timeout_fallback_mode"] = request.timeout_fallback_mode
     if request.disable_tools:
         metadata["runtime_disable_tools"] = True
         metadata["runtime_disable_skills"] = True
         metadata["runtime_skip_history_load"] = True
         metadata["persist_user_message"] = False
+        if request.timeout_fallback_mode is None:
+            metadata["runtime_timeout_fallback_mode"] = "final"
     if request.disable_skills:
         metadata["runtime_disable_skills"] = True
+    if request.timeout_fallback_mode is not None:
+        metadata["runtime_timeout_fallback_mode"] = request.timeout_fallback_mode
     envelope = Envelope.create_chat(
         content=request.content,
         session_id=request.session_id,

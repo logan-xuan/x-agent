@@ -197,6 +197,36 @@ def test_dev_runtime_turn_endpoint_accepts_timeout_fallback_mode():
     assert metadata["runtime_timeout_fallback_mode"] == "final"
 
 
+def test_dev_runtime_turn_endpoint_defaults_fast_mode_timeout_fallback_to_final():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="final",
+                finish_reason="max_wall_time",
+                output_text="runtime-ok",
+                metadata={},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "disable_tools": True,
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["runtime_timeout_fallback_mode"] == "final"
+
+
 def test_dev_runtime_turn_top_level_flags_override_conflicting_metadata():
     client = TestClient(app)
 

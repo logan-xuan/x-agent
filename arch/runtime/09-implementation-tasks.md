@@ -37,7 +37,8 @@
 - `[x] P3-T14`: 已将 fast mode 本地开销压缩到近 0ms，并确认剩余瓶颈在 provider 首 chunk
 - `[x] P3-T15`: 已收口 provider 波动诊断与 debug fallback 标记，剩余问题明确收敛到 provider/base_url/model 侧
 - `[x] P3-T16`: 已验证 provider/base_url 策略，确认当前 key 不能直接切到百炼默认兼容入口
-- `[ ] P3-T17`: 继续收口备用 provider / fallback policy，判断是否需要新增第二 provider 或仅保留 debug synthetic fallback
+- `[x] P3-T17`: 已明确当前 debug fast mode fallback policy，默认在短超时窗口下返回 synthetic final
+- `[ ] P3-T18`: 继续评估备用 provider onboarding 策略，判断是否需要引入第二 provider / 第二 key
 
 ---
 
@@ -616,12 +617,42 @@
 - 至少形成一条可执行的 provider 优化或 fallback 策略
 - 若需要代码改动，有对应测试与 smoke 验证
 
-#### [ ] P3-T17: 评估备用 provider / fallback policy
+#### [x] P3-T17: 评估备用 provider / fallback policy
 
 - 目标：
   - 判断是否要在配置层增加第二 provider 或备用 key/base_url
   - 若短期无法提供备用 provider，则把 debug synthetic fallback 定位为正式策略
   - 明确“生产主路径”和“debug 快速路径”的边界
+
+- 已完成：
+  - `backend/src/api/v1/dev.py`
+  - `backend/src/gateway/agent_bridge.py`
+  - `backend/tests/unit/test_dev_runtime_turn_api.py`
+  - `backend/tests/unit/test_runtime_gateway_adapter.py`
+  - 关键策略：
+    - `disable_tools=true` 的 debug fast mode 默认 `timeout_fallback_mode=final`
+    - provider 无正文时，返回 `kind=final` + `metadata.synthetic_fallback=true`
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
+    - `POST /api/v1/dev/runtime-turn`, `disable_tools=true`, `runtime_timeout_ms=5000`
+    - 返回：`kind=final`, `timeout_fallback_mode=final`, `synthetic_fallback=true`
+
+- 当前结论：
+
+- 在当前 provider/base_url/key 约束下，debug fast mode 需要 synthetic final fallback 才能在短超时窗口下稳定收敛
+- 生产主路径仍保留真实 provider 调用，不默认 synthetic final fallback
+
+#### [ ] P3-T18: 评估备用 provider onboarding 策略
+
+- 目标：
+  - 判断是否要在配置层加入第二 provider、第二 key 或备用 base_url
+  - 若后续要引入备用 provider，需要明确优先级、熔断和配置迁移方案
+  - 保持当前 debug fast mode fallback 作为兜底，而不是替代真实 provider 路径
+
+验收：
+
+- 明确 provider onboarding 方案或明确列出外部依赖阻塞项
+- 若涉及代码或配置变更，有测试与 smoke 验证
 
 验收：
 
