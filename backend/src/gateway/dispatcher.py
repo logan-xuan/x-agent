@@ -537,6 +537,7 @@ class GatewayDispatcher:
             metadata={
                 **dict(metadata or {}),
                 "agent_id": agent_info.agent_id,
+                "persist_user_message": True,
             },
         )
 

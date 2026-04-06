@@ -55,6 +55,7 @@ from ..agent_core.skill_dispatcher import (
 )
 from ..runtime.turn import DefaultTurnController
 from ..runtime.types import TurnRequest, TurnResult
+from ..conversation.dao.models import Agent as AgentORM
 
 try:
     from ..utils.logger import get_logger
@@ -456,8 +457,65 @@ class AgentBridge:
         controller=None,
     ) -> TurnResult:
         """Execute a prepared runtime turn through the bounded runtime controller."""
-        runtime_controller = controller or self.runtime_turn_controller
+        runtime_controller = controller
+        if runtime_controller is None:
+            return await self._run_runtime_turn_via_legacy_bridge(request)
         return await runtime_controller.run(request)
+
+    async def _run_runtime_turn_via_legacy_bridge(self, request: TurnRequest) -> TurnResult:
+        """Fallback runtime execution path that reuses the legacy AgentBridge event stream."""
+        agent_info = self._resolve_runtime_agent_info(request)
+        agent = self.create_agent(agent_info=agent_info)
+        await self.load_session_history(agent, request.session.session_id)
+
+        response_parts: list[str] = []
+        final_content: str | None = None
+        error_payload: dict[str, object] | None = None
+        persist_user_message = bool(request.metadata.get("persist_user_message", True))
+
+        async for event in self.run(
+            agent=agent,
+            content=request.user_input,
+            session_id=request.session.session_id,
+            agent_info=agent_info,
+            persist_user_message=persist_user_message,
+        ):
+            if event.type == GatewayEventType.TEXT_CHUNK:
+                chunk = event.data.get("content", "")
+                if chunk:
+                    response_parts.append(chunk)
+            elif event.type == GatewayEventType.MESSAGE_END:
+                content = event.data.get("content", "")
+                if content:
+                    final_content = content
+            elif event.type == GatewayEventType.ERROR:
+                error_payload = dict(event.data)
+
+        if error_payload is not None:
+            return TurnResult(
+                kind="abort",
+                finish_reason="controller_abort",
+                output_text=final_content or "".join(response_parts) or None,
+                updated_task_frame=request.task_frame,
+                metadata={"legacy_bridge": True, "error": error_payload},
+            )
+
+        return TurnResult(
+            kind="final",
+            finish_reason="done_definition_satisfied",
+            output_text=final_content or "".join(response_parts) or None,
+            updated_task_frame=request.task_frame,
+            metadata={"legacy_bridge": True, "agent_id": agent_info.agent_id},
+        )
+
+    def _resolve_runtime_agent_info(self, request: TurnRequest) -> AgentInfo:
+        """Resolve AgentInfo for runtime execution using request metadata when available."""
+        agent_id = request.metadata.get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            agent = AgentORM.from_config(agent_id)
+            if agent is not None:
+                return AgentInfo.from_orm(agent)
+        return AgentInfo.default()
 
     # ------------------------------------------------------------------
     # 内部方法

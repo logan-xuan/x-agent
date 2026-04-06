@@ -10,6 +10,7 @@ from src.gateway.agent_bridge import AgentBridge
 from src.gateway.agent_invoker import AgentInvoker, InvokeSource
 from src.gateway.dispatcher import GatewayDispatcher
 from src.gateway.envelope import Envelope
+from src.gateway.response import GatewayEvent
 from src.runtime.adapters import GatewayAdapter
 from src.runtime.types import TaskFrame, TurnResult
 
@@ -186,6 +187,39 @@ async def test_agent_bridge_runs_runtime_turn_with_injected_controller():
 
     assert result.kind == "final"
     assert result.output_text == "runtime execute"
+
+
+@pytest.mark.asyncio
+async def test_agent_bridge_runs_runtime_turn_via_legacy_bridge_by_default():
+    bridge = AgentBridge()
+    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
+    envelope = Envelope.create_chat(
+        content="runtime execute",
+        session_id="sess-legacy",
+        channel_type=ChannelType.WEB_CHAT,
+        channel_protocol=ChannelProtocol.WEBSOCKET,
+    )
+    _, request = await adapter.prepare_turn(envelope)
+    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
+    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
+    bridge.run = Mock(  # type: ignore[method-assign]
+        return_value=_gateway_events(
+            GatewayEvent.text_chunk("runtime "),
+            GatewayEvent.message_end("runtime execute"),
+        )
+    )
+
+    result = await bridge.run_runtime_turn(request)
+
+    assert result.kind == "final"
+    assert result.finish_reason == "done_definition_satisfied"
+    assert result.output_text == "runtime execute"
+    assert result.metadata["legacy_bridge"] is True
+
+
+async def _gateway_events(*events):
+    for event in events:
+        yield event
 
 
 @pytest.mark.asyncio

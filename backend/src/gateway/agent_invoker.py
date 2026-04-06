@@ -436,6 +436,7 @@ class AgentInvoker:
                 **context_metadata,
                 "source": source.value,
                 "agent_id": agent_id,
+                "persist_user_message": False,
             },
             "lane": "cron" if source == InvokeSource.CRON else "background_tool",
         }
