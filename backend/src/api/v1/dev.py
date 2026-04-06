@@ -9,10 +9,14 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ...config.manager import ConfigManager
 from ...conversation.context import get_current_context, set_current_context as set_context, AgentContext
+from ...conversation.identity import ChannelProtocol, ChannelType
+from ...gateway.dispatcher import GatewayDispatcher
+from ...gateway.envelope import Envelope
+from ...runtime.types import TurnResult
 from ...services.llm.router import LLMRouter
 from ...tools.builtin import AliyunWebSearchTool
 from ...utils.logger import get_logger
@@ -62,6 +66,28 @@ class PromptLogsResponse(BaseModel):
     """Prompt logs response model."""
     logs: list[PromptLogEntry]
     total: int
+
+
+class RuntimeTurnDebugRequest(BaseModel):
+    """Debug request for exercising the runtime turn bridge over HTTP."""
+
+    content: str
+    session_id: str = "dev-runtime-session"
+    channel_type: str = "web_chat"
+    channel_protocol: str = "rest_api"
+    agent_id: str | None = None
+    agent_name: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeTurnDebugResponse(BaseModel):
+    """Debug response for the runtime turn bridge endpoint."""
+
+    session_id: str
+    kind: str
+    finish_reason: str | None = None
+    output_text: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
@@ -131,6 +157,26 @@ def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
         )
 
     return logs
+
+
+def _parse_channel_type(value: str) -> ChannelType:
+    try:
+        return ChannelType(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported channel_type: {value}",
+        ) from exc
+
+
+def _parse_channel_protocol(value: str) -> ChannelProtocol:
+    try:
+        return ChannelProtocol(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported channel_protocol: {value}",
+        ) from exc
 
 
 @router.get("/prompt-logs", response_model=PromptLogsResponse)
@@ -223,6 +269,34 @@ async def test_prompt(request: PromptTestRequest) -> PromptTestResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Prompt test failed: {str(e)}"
         )
+
+
+@router.post("/runtime-turn", response_model=RuntimeTurnDebugResponse)
+async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDebugResponse:
+    """Execute the experimental runtime bridge over HTTP without changing the default chat path."""
+    channel_type = _parse_channel_type(request.channel_type)
+    channel_protocol = _parse_channel_protocol(request.channel_protocol)
+    envelope = Envelope.create_chat(
+        content=request.content,
+        session_id=request.session_id,
+        channel_type=channel_type,
+        channel_protocol=channel_protocol,
+        agent_id=request.agent_id,
+        agent_name=request.agent_name,
+        metadata=dict(request.metadata),
+    )
+    dispatcher = GatewayDispatcher()
+    result: TurnResult = await dispatcher.execute_runtime_turn(
+        envelope,
+        metadata=dict(request.metadata),
+    )
+    return RuntimeTurnDebugResponse(
+        session_id=request.session_id,
+        kind=result.kind,
+        finish_reason=result.finish_reason,
+        output_text=result.output_text,
+        metadata=dict(result.metadata),
+    )
 
 
 @router.post("/prompt-test/stream")
@@ -640,4 +714,3 @@ async def web_search_debug(request: WebSearchRequest) -> WebSearchResponse:
             results=[],
             error=str(e)
         )
-
