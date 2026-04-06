@@ -61,6 +61,7 @@ class BailianProvider(LLMProvider):
                 api_key=self._api_key,
                 base_url=self._base_url,
                 http_client=http_client,
+                max_retries=self.max_retries,
             )
         return self._client
 

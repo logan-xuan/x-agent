@@ -39,7 +39,8 @@
 - `[x] P3-T16`: 已验证 provider/base_url 策略，确认当前 key 不能直接切到百炼默认兼容入口
 - `[x] P3-T17`: 已明确当前 debug fast mode fallback policy，默认在短超时窗口下返回 synthetic final
 - `[x] P3-T18`: 已完成当前 provider/model 可用性探测，确认现有 endpoint 上暂无可直接启用的候选 backup model
-- `[ ] P3-T19`: 继续准备外部依赖与配置方案，评估第二 provider / 第二 key / 第二 endpoint 的引入路径
+- `[x] P3-T19`: 已补齐第二 provider / 第二 key / 第二 endpoint 的 onboarding 路径，支持用 `llm-stream-probe` + `api_key_override` 先验证候选组合
+- `[~] Post-Plan`: runtime 兼容与稳定性回归。当前 focused matrix：`110 passed`
 - `[x] P5-T1`: 已定义 runtime 仓储层接口和最小记录对象
 
 ---

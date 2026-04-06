@@ -31,6 +31,9 @@ class AgentInfo:
     agent_name: str
     agent_type: str = "main"
     agent_persona: str = ""
+    model_name: str = ""
+    temperature: float | None = None
+    max_tokens: int | None = None
     workspace: str = ""
     feature: str = ""
 
@@ -51,6 +54,9 @@ class AgentInfo:
                 agent_name=agent_orm.get("agent_name", ""),
                 agent_type=agent_orm.get("agent_type", "main"),
                 agent_persona=agent_orm.get("agent_persona", ""),
+                model_name=agent_orm.get("model_name", ""),
+                temperature=agent_orm.get("temperature"),
+                max_tokens=agent_orm.get("max_tokens"),
                 workspace=agent_orm.get("workspace", ""),
                 feature=agent_orm.get("feature", ""),
             )
@@ -60,6 +66,9 @@ class AgentInfo:
             agent_name=getattr(agent_orm, "agent_name", ""),
             agent_type=getattr(agent_orm, "agent_type", "main"),
             agent_persona=getattr(agent_orm, "agent_persona", ""),
+            model_name=getattr(agent_orm, "model_name", ""),
+            temperature=getattr(agent_orm, "temperature", None),
+            max_tokens=getattr(agent_orm, "max_tokens", None),
             workspace=getattr(agent_orm, "workspace", ""),
             feature=getattr(agent_orm, "feature", ""),
         )

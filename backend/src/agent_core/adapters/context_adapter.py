@@ -42,19 +42,21 @@ class XAgentContextAdapter:
         agent_config = AgentCoreConfig(context=adapter)
     """
 
-    def __init__(self, compression_manager: Any) -> None:
+    def __init__(self, compression_manager: Any, context_assembler: Any | None = None) -> None:
         """初始化适配器.
 
         Args:
             compression_manager: ContextCompressionManager 实例
         """
         self._manager = compression_manager
+        self._context_assembler = context_assembler
 
     async def prepare_context(
         self,
         session_id: str,
         messages: list[dict],
         system_prompt: str = "",
+        tools: list[dict] | None = None,
     ) -> PreparedContext:
         """准备 LLM 调用上下文，内部判断是否需要压缩.
 
@@ -68,12 +70,44 @@ class XAgentContextAdapter:
         """
         try:
             # 清洗输入消息，确保 content 字段合法
-            sanitized_messages = _sanitize_messages(messages)
+            sanitized_messages = _truncate_tool_messages(
+                _sanitize_messages(messages),
+                max_chars=getattr(self._manager.config, "max_tool_message_chars", 4000),
+            )
+
+            mode = getattr(self._manager.config, "mode", "legacy")
+            if self._context_assembler is not None and mode in {"hybrid", "stateful"}:
+                from ...services.context.types import ContextBuildRequest
+
+                bundle = await self._context_assembler.build(
+                    ContextBuildRequest(
+                        session_id=session_id,
+                        agent_id="main-agent",
+                        mode=mode,
+                        current_messages=sanitized_messages,
+                        max_prompt_tokens=getattr(self._manager.config, "max_context_tokens", 32000),
+                    )
+                )
+                if mode == "stateful":
+                    final_messages = _sanitize_messages(bundle.messages)
+                    final_tokens = self._manager.token_counter.count_messages(final_messages)
+                    return PreparedContext(
+                        messages=final_messages,
+                        was_compressed=True,
+                        original_tokens=self._manager.token_counter.count_messages(messages),
+                        final_tokens=final_tokens,
+                        summary=bundle.session_state_text,
+                    )
+                sanitized_messages = _truncate_tool_messages(
+                    _sanitize_messages(bundle.messages),
+                    max_chars=getattr(self._manager.config, "max_tool_message_chars", 4000),
+                )
 
             result = await self._manager.prepare_context(
                 session_id=session_id,
                 current_messages=sanitized_messages,
                 system_prompt=system_prompt,
+                tools=tools,
             )
 
             was_compressed = result.summary is not None and result.summary != ""
@@ -155,6 +189,23 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
         else:
             sanitized.append(msg)
     return sanitized
+
+
+def _truncate_tool_messages(messages: list[dict], *, max_chars: int) -> list[dict]:
+    """Truncate oversized tool messages before they go back into prompt assembly."""
+    if max_chars <= 0:
+        return messages
+
+    truncated: list[dict] = []
+    marker = "\n...[tool output truncated]..."
+    for message in messages:
+        content = str(message.get("content", ""))
+        if message.get("role") == "tool" and len(content) > max_chars:
+            head_budget = max(max_chars - len(marker), 0)
+            truncated.append({**message, "content": content[:head_budget] + marker})
+        else:
+            truncated.append(message)
+    return truncated
 
 
 def create_context_adapter(

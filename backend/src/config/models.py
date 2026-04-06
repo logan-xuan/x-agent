@@ -151,6 +151,12 @@ class CompressionConfig(BaseModel):
         le=200,
         description="Number of most recent messages to retain after compression"
     )
+    max_context_tokens: int = Field(default=32000, ge=1000)
+    max_tool_message_chars: int = Field(default=4000, ge=100)
+    mode: str = Field(default="stateful")
+    compression_quality_gate_enabled: bool = Field(default=False)
+    min_compression_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    min_token_savings: int = Field(default=0, ge=0)
 
 
 class PlanConfig(BaseModel):

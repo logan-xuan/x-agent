@@ -319,8 +319,25 @@ class _AgentLoopRunner:
                 session_id=self.session_id,
                 messages=llm_messages,
                 system_prompt=self.current_context.system_prompt,
+                tools=[t.to_llm_tool() for t in self.current_context.tools] if self.current_context.tools else [],
             )
             llm_messages = prepared.messages
+            if self.logger:
+                context_mode = getattr(
+                    getattr(getattr(self.config.context, "_manager", None), "config", None),
+                    "mode",
+                    "legacy",
+                )
+                self.logger.create_log_entry(
+                    trace_id=self.trace_id,
+                    event="context_prepared",
+                    message="Context prepared for LLM call",
+                    category=LogCategory.AGENT_LOOP,
+                    data={
+                        "context_mode": context_mode,
+                        "message_count": len(llm_messages),
+                    },
+                )
 
         # 经验检索: LLM 调用前检索相关历史经验，注入 system prompt
         if self._experience_learner is not None:
@@ -460,6 +477,44 @@ class _AgentLoopRunner:
                 self._last_tool_results.append(result_msg)
                 self.current_context.messages.append(result_msg)
                 self.new_messages.append(result_msg)
+
+                try:
+                    from src.services.context import get_session_state_updater, get_tool_result_archiver
+                except ImportError:
+                    from backend.src.services.context import get_session_state_updater, get_tool_result_archiver  # type: ignore
+
+                archiver = get_tool_result_archiver()
+                updater = get_session_state_updater()
+                archived = {}
+                if archiver is not None and event.result is not None:
+                    text_parts = [
+                        content.text for content in event.result.content if isinstance(content, TextContent)
+                    ]
+                    archived = await archiver.archive(
+                        session_id=self.session_id,
+                        tool_name=event.tool_name,
+                        result_text=" ".join(text_parts),
+                        details=event.result.details,
+                    )
+
+                if updater is not None:
+                    latest_user = ""
+                    for message in reversed(self.current_context.messages):
+                        if getattr(message, "role", None) == "user":
+                            for content in getattr(message, "content", []):
+                                if isinstance(content, TextContent):
+                                    latest_user = content.text
+                                    break
+                            if latest_user:
+                                break
+                    await updater.update_after_turn(
+                        session_id=self.session_id,
+                        agent_id=self.agent_id,
+                        mode="research",
+                        new_messages=[{"role": "user", "content": latest_user}] if latest_user else [],
+                        tool_results=[{"tool_name": event.tool_name, **archived}],
+                        delegate_results=[],
+                    )
 
                 yield MessageStartEvent(message=result_msg)
                 yield MessageEndEvent(message=result_msg)
