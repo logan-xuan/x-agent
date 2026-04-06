@@ -105,6 +105,7 @@ class LLMStreamProbeRequest(BaseModel):
     content: str
     system_prompt: str | None = None
     base_url_override: str | None = None
+    model_override: str | None = None
     max_tokens: int = Field(default=64, ge=1)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout_ms: int = Field(default=10000, ge=1)
@@ -376,6 +377,7 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
                 router=_get_shared_llm_router() if request.base_url_override is None else None,
                 messages=messages,
                 base_url_override=request.base_url_override,
+                model_override=request.model_override,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
                 timeout_ms=request.timeout_ms,
@@ -397,6 +399,7 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
             "base_url_override": request.base_url_override,
+            "model_override": request.model_override,
             "message_count": len(messages),
             "attempts": request.attempts,
         },
@@ -408,6 +411,7 @@ async def _run_llm_stream_probe_once(
     router: LLMRouter | None,
     messages: list[dict[str, str]],
     base_url_override: str | None,
+    model_override: str | None,
     max_tokens: int,
     temperature: float | None,
     timeout_ms: int,
@@ -427,6 +431,7 @@ async def _run_llm_stream_probe_once(
             stream = await _probe_with_base_url_override(
                 base_url_override=base_url_override,
                 messages=messages,
+                model_override=model_override,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -435,6 +440,7 @@ async def _run_llm_stream_probe_once(
             stream = await router.chat(
                 messages,
                 stream=True,
+                model=model_override,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -486,6 +492,7 @@ async def _probe_with_base_url_override(
     *,
     base_url_override: str,
     messages: list[dict[str, str]],
+    model_override: str | None,
     max_tokens: int,
     temperature: float | None,
 ):
@@ -498,7 +505,7 @@ async def _probe_with_base_url_override(
     )
     client = AsyncOpenAI(api_key=api_key, base_url=base_url_override)
     return await client.chat.completions.create(
-        model=config.model_id,
+        model=model_override or config.model_id,
         messages=messages,
         stream=True,
         max_tokens=max_tokens,

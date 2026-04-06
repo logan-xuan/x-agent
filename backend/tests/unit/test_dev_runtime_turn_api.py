@@ -354,8 +354,9 @@ def test_dev_llm_stream_probe_endpoint_reports_timings():
     client = TestClient(app)
 
     class FakeRouter:
-        async def chat(self, messages, stream=False, max_tokens=None, temperature=None):
+        async def chat(self, messages, stream=False, model=None, max_tokens=None, temperature=None):
             assert stream is True
+            assert model is None
             assert max_tokens == 32
             assert temperature is None
             assert messages[-1]["content"] == "probe"
@@ -390,9 +391,10 @@ def test_dev_llm_stream_probe_endpoint_handles_timeout():
     client = TestClient(app)
 
     class FakeRouter:
-        async def chat(self, messages, stream=False, max_tokens=None, temperature=None):
+        async def chat(self, messages, stream=False, model=None, max_tokens=None, temperature=None):
             _ = messages
             _ = stream
+            _ = model
             _ = max_tokens
             _ = temperature
 
@@ -422,9 +424,10 @@ def test_dev_llm_stream_probe_endpoint_supports_multiple_attempts():
     client = TestClient(app)
 
     class FakeRouter:
-        async def chat(self, messages, stream=False, max_tokens=None, temperature=None):
+        async def chat(self, messages, stream=False, model=None, max_tokens=None, temperature=None):
             _ = messages
             _ = stream
+            _ = model
             _ = max_tokens
             _ = temperature
 
@@ -464,3 +467,33 @@ def test_dev_llm_stream_probe_endpoint_reports_override_errors():
     data = response.json()
     assert data["error"] == "RuntimeError: boom"
     assert data["samples"][0]["error"] == "RuntimeError: boom"
+
+
+def test_dev_llm_stream_probe_endpoint_accepts_model_override():
+    client = TestClient(app)
+
+    class FakeRouter:
+        async def chat(self, messages, stream=False, model=None, max_tokens=None, temperature=None):
+            assert stream is True
+            assert model == "glm-5-air"
+            _ = messages
+            _ = max_tokens
+            _ = temperature
+
+            async def _stream():
+                yield type("Chunk", (), {"content": "ok", "is_finished": True})()
+
+            return _stream()
+
+    with patch("src.api.v1.dev._get_shared_llm_router", return_value=FakeRouter()):
+        response = client.post(
+            "/api/v1/dev/llm-stream-probe",
+            json={
+                "content": "probe",
+                "model_override": "glm-5-air",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"]["model_override"] == "glm-5-air"

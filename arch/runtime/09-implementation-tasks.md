@@ -649,6 +649,10 @@
   - 若后续要引入备用 provider，需要明确优先级、熔断和配置迁移方案
   - 保持当前 debug fast mode fallback 作为兜底，而不是替代真实 provider 路径
 
+- 当前已完成：
+  - `llm-stream-probe` 现已支持 `model_override`
+  - 可在不改配置的前提下，直接验证候选 model/base_url 组合
+
 验收：
 
 - 明确 provider onboarding 方案或明确列出外部依赖阻塞项
