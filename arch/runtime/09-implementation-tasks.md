@@ -36,7 +36,8 @@
 - `[x] P3-T13`: 已为 fast mode 增加 `disable_skills`，进一步压缩首 token 延迟
 - `[x] P3-T14`: 已将 fast mode 本地开销压缩到近 0ms，并确认剩余瓶颈在 provider 首 chunk
 - `[x] P3-T15`: 已收口 provider 波动诊断与 debug fallback 标记，剩余问题明确收敛到 provider/base_url/model 侧
-- `[ ] P3-T16`: 继续验证 provider/base_url/model 策略，判断是否需要备用 provider 或显式 fallback policy
+- `[x] P3-T16`: 已验证 provider/base_url 策略，确认当前 key 不能直接切到百炼默认兼容入口
+- `[ ] P3-T17`: 继续收口备用 provider / fallback policy，判断是否需要新增第二 provider 或仅保留 debug synthetic fallback
 
 ---
 
@@ -585,24 +586,47 @@
   - synthetic fallback 已生效：`runtime_timeout_ms=5000` 且 provider 无正文时，会返回包含 request preview 的 debug-only fallback，而不是空文本
   - 下一步要么继续 provider 参数/模型侧验证，要么为 debug fast mode 设计更明确的 synthetic fallback
 
-#### [ ] P3-T16: 验证 provider/base_url/model 策略
+#### [x] P3-T16: 验证 provider/base_url/model 策略
 
 - 目标：
   - 对比当前 `coding.dashscope.aliyuncs.com/v1` 与其他兼容入口/模型策略
   - 判断是否需要备用 provider、备用 base_url，或明确的 provider fallback policy
   - 在不影响默认主路径的前提下，为 runtime debug 提供更稳定的 provider 选择依据
 
-- 当前已完成：
+- 已完成：
   - debug endpoint 新增 `timeout_fallback_mode`
   - `timeout_fallback_mode=final` 已可在 `5s` fast mode 下稳定返回 synthetic final 结果
+  - `llm-stream-probe` 支持 `base_url_override`，可直接验证替代入口
   - 真实验证：
     - `POST /api/v1/dev/runtime-turn`, `disable_tools=true`, `timeout_fallback_mode=final`, `runtime_timeout_ms=5000`
     - 返回：`kind=final`, `finish_reason=max_wall_time`, `metadata.synthetic_fallback=true`
+    - `POST /api/v1/dev/llm-stream-probe`, `base_url_override=https://dashscope.aliyuncs.com/compatible-mode/v1`
+    - 返回：`AuthenticationError: invalid_api_key`
+
+- 当前结论：
+
+- 当前配置的 key 无法直接复用到百炼默认兼容入口
+- 短期内不能通过简单切换 `base_url` 解决首 chunk 波动
+- 当前更可靠的策略仍然是：
+  - 默认主路径继续使用现有 provider 配置
+  - debug fast mode 依赖 synthetic fallback 保证短超时窗口可用结果
 
 验收：
 
 - 至少形成一条可执行的 provider 优化或 fallback 策略
 - 若需要代码改动，有对应测试与 smoke 验证
+
+#### [ ] P3-T17: 评估备用 provider / fallback policy
+
+- 目标：
+  - 判断是否要在配置层增加第二 provider 或备用 key/base_url
+  - 若短期无法提供备用 provider，则把 debug synthetic fallback 定位为正式策略
+  - 明确“生产主路径”和“debug 快速路径”的边界
+
+验收：
+
+- 形成明确的 provider/fallback 方案
+- 若涉及代码或配置变更，有测试、文档和 smoke 验证
 
 验收：
 

@@ -416,3 +416,21 @@ def test_dev_llm_stream_probe_endpoint_supports_multiple_attempts():
     data = response.json()
     assert data["metadata"]["attempts"] == 2
     assert len(data["samples"]) == 2
+
+
+def test_dev_llm_stream_probe_endpoint_reports_override_errors():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev._probe_with_base_url_override", side_effect=RuntimeError("boom")):
+        response = client.post(
+            "/api/v1/dev/llm-stream-probe",
+            json={
+                "content": "probe",
+                "base_url_override": "https://example.com/v1",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["error"] == "RuntimeError: boom"
+    assert data["samples"][0]["error"] == "RuntimeError: boom"

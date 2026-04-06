@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
+from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from ...config.manager import ConfigManager
@@ -103,6 +104,7 @@ class LLMStreamProbeRequest(BaseModel):
 
     content: str
     system_prompt: str | None = None
+    base_url_override: str | None = None
     max_tokens: int = Field(default=64, ge=1)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout_ms: int = Field(default=10000, ge=1)
@@ -118,6 +120,7 @@ class LLMStreamProbeResponse(BaseModel):
     timed_out: bool = False
     chunk_count: int = 0
     content_preview: str = ""
+    error: str | None = None
     samples: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -358,7 +361,6 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
 @router.post("/llm-stream-probe", response_model=LLMStreamProbeResponse)
 async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamProbeResponse:
     """Measure shared-provider streaming timings without going through the full agent loop."""
-    router = _get_shared_llm_router()
     messages: list[dict[str, str]] = []
     if request.system_prompt:
         messages.append({"role": "system", "content": request.system_prompt})
@@ -368,8 +370,9 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
     for _ in range(request.attempts):
         samples.append(
             await _run_llm_stream_probe_once(
-                router=router,
+                router=_get_shared_llm_router() if request.base_url_override is None else None,
                 messages=messages,
+                base_url_override=request.base_url_override,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
                 timeout_ms=request.timeout_ms,
@@ -385,10 +388,12 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
         timed_out=last["timed_out"],
         chunk_count=last["chunk_count"],
         content_preview=last["content_preview"],
+        error=last["error"],
         samples=samples,
         metadata={
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
+            "base_url_override": request.base_url_override,
             "message_count": len(messages),
             "attempts": request.attempts,
         },
@@ -397,26 +402,50 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
 
 async def _run_llm_stream_probe_once(
     *,
-    router: LLMRouter,
+    router: LLMRouter | None,
     messages: list[dict[str, str]],
+    base_url_override: str | None,
     max_tokens: int,
     temperature: float | None,
     timeout_ms: int,
 ) -> dict[str, Any]:
     """Run a single streaming probe attempt against the shared router."""
     started_at = time.monotonic()
-    stream = await router.chat(
-        messages,
-        stream=True,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    create_stream_ms = int((time.monotonic() - started_at) * 1000)
     first_chunk_ms: int | None = None
     chunk_count = 0
     content_parts: list[str] = []
     timed_out = False
     done_ms: int | None = None
+    error: str | None = None
+    stream = None
+
+    try:
+        if base_url_override is not None:
+            stream = await _probe_with_base_url_override(
+                base_url_override=base_url_override,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        else:
+            assert router is not None
+            stream = await router.chat(
+                messages,
+                stream=True,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        create_stream_ms = int((time.monotonic() - started_at) * 1000)
+    except Exception as exc:
+        return {
+            "create_stream_ms": int((time.monotonic() - started_at) * 1000),
+            "first_chunk_ms": None,
+            "done_ms": None,
+            "timed_out": False,
+            "chunk_count": 0,
+            "content_preview": "",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
     try:
         async with asyncio.timeout(timeout_ms / 1000):
@@ -432,7 +461,7 @@ async def _run_llm_stream_probe_once(
     except TimeoutError:
         timed_out = True
     finally:
-        aclose = getattr(stream, "aclose", None)
+        aclose = getattr(stream, "aclose", None) if stream is not None else None
         if callable(aclose):
             await aclose()
 
@@ -446,7 +475,32 @@ async def _run_llm_stream_probe_once(
         "timed_out": timed_out,
         "chunk_count": chunk_count,
         "content_preview": "".join(content_parts)[:200],
+        "error": error,
     }
+
+
+async def _probe_with_base_url_override(
+    *,
+    base_url_override: str,
+    messages: list[dict[str, str]],
+    max_tokens: int,
+    temperature: float | None,
+):
+    """Create a temporary OpenAI-compatible client for direct base_url probing."""
+    config = ConfigManager().config.models[0]
+    api_key = (
+        config.api_key.get_secret_value()
+        if hasattr(config.api_key, "get_secret_value")
+        else str(config.api_key)
+    )
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url_override)
+    return await client.chat.completions.create(
+        model=config.model_id,
+        messages=messages,
+        stream=True,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
 
 
 @router.post("/prompt-test/stream")
