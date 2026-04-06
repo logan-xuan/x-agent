@@ -685,6 +685,7 @@
     - 备用 provider onboarding 需要先用 `llm-stream-probe` 验证 `base_url + model_id + key`
     - 不应假设同一份 key 能跨 endpoint / model 直接复用
     - 当仅配置 primary model、没有 backup model 时，配置校验会给出 warning
+    - 当配置 backup model 时，配置校验会额外给出 onboarding warning，提醒先做 `llm-stream-probe`
 
 验收：
 

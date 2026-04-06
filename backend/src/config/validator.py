@@ -210,6 +210,17 @@ class ConfigValidator:
                 severity=ValidationSeverity.INFO,
                 suggestion="Set explicit priority for predictable failover order",
             ))
+
+        if not model.is_primary:
+            result.issues.append(ValidationIssue(
+                field=f"{prefix}.base_url",
+                message="Backup model onboarding requires probe validation",
+                severity=ValidationSeverity.WARNING,
+                suggestion=(
+                    "Before enabling failover, verify base_url + model_id + API key "
+                    "with /api/v1/dev/llm-stream-probe"
+                ),
+            ))
     
     def _validate_server(self, config: Config, result: ValidationResult) -> None:
         """Validate server configuration."""
