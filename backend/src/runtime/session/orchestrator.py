@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 from typing import Any
 
+from ..repositories import InMemorySessionRepository, SessionRepository
 from ..types import ChildResult, RouteMeta, SessionDescriptor, SpawnPacket, TurnRequest
 from .announcement_manager import AnnouncementManager
 from .child_session import ChildSessionManager
@@ -13,14 +14,13 @@ from .lane_scheduler import InMemoryLaneScheduler
 from .lifecycle import SessionLifecycleManager
 from .route_resolver import DefaultRouteResolver
 from .spawn_manager import SpawnManager
-from .store import InMemorySessionStore
 
 
 @dataclass
 class DefaultSessionOrchestrator:
     """Resolve sessions, schedule work, and manage child-session announcements."""
 
-    session_store: InMemorySessionStore = field(default_factory=InMemorySessionStore)
+    session_store: SessionRepository = field(default_factory=InMemorySessionRepository)
     route_resolver: DefaultRouteResolver = field(default_factory=DefaultRouteResolver)
     lane_scheduler: InMemoryLaneScheduler = field(default_factory=InMemoryLaneScheduler)
     spawn_manager: SpawnManager = field(default_factory=SpawnManager)

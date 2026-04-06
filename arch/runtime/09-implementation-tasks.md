@@ -907,6 +907,18 @@
   - child session 入口
   - resume / reconnect
 
+- 当前进展：
+  - `backend/src/runtime/session/orchestrator.py`
+  - `backend/src/runtime/session/store.py`
+  - `backend/tests/unit/test_runtime_session_orchestrator.py`
+  - 当前已落地：
+    - `DefaultSessionOrchestrator.session_store` 已改为依赖 `SessionRepository` protocol
+    - `InMemorySessionStore` 已退化为对 `InMemorySessionRepository` 的兼容别名
+    - 新增协议级注入测试，确认 orchestrator 可直接使用自定义 repository 实现
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_session_orchestrator.py tests/unit/test_runtime_child_session_policy.py tests/unit/test_runtime_announcement_manager.py tests/unit/test_runtime_repositories.py`
+    - `python -m compileall src/runtime/session src/runtime/repositories.py`
+
 验收：
 
 - 所有关键入口都统一走 orchestrator + controller + context runtime

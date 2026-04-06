@@ -1,5 +1,7 @@
 """Unit tests for runtime session orchestrator child completion behavior."""
 
+from dataclasses import dataclass, field
+
 import pytest
 
 from src.runtime.session.orchestrator import DefaultSessionOrchestrator
@@ -64,3 +66,38 @@ async def test_orchestrator_complete_child_can_leave_child_idle_when_auto_archiv
 
     assert stored_child is not None
     assert stored_child.status == "idle"
+
+
+@dataclass
+class SpySessionRepository:
+    """Small repository stub to verify protocol-based orchestrator wiring."""
+
+    sessions: dict[str, SessionDescriptor] = field(default_factory=dict)
+    puts: list[str] = field(default_factory=list)
+
+    async def get(self, session_key: str) -> SessionDescriptor | None:
+        return self.sessions.get(session_key)
+
+    async def put(self, session: SessionDescriptor) -> None:
+        self.sessions[session.session_key] = session
+        self.puts.append(session.session_key)
+
+    async def patch(self, session_key: str, values: dict[str, object]) -> SessionDescriptor:
+        current = self.sessions[session_key]
+        updated = SessionDescriptor(**{**current.__dict__, **values})
+        self.sessions[session_key] = updated
+        return updated
+
+    async def list(self) -> list[SessionDescriptor]:
+        return list(self.sessions.values())
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_accepts_repository_protocol_implementation():
+    repo = SpySessionRepository()
+    orchestrator = DefaultSessionOrchestrator(session_store=repo)
+
+    session = await orchestrator.resolve_or_create({"session_id": "sess-proto"})
+
+    assert session.session_key == "sess-proto"
+    assert repo.puts == ["sess-proto"]

@@ -2,35 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 
-from ..types import SessionDescriptor
+from ..repositories import InMemorySessionRepository
 
 
 @dataclass
-class InMemorySessionStore:
-    """In-memory session store for early runtime orchestration work."""
-
-    _sessions: dict[str, SessionDescriptor] = field(default_factory=dict)
-
-    async def get(self, session_key: str) -> SessionDescriptor | None:
-        """Return a session descriptor by key."""
-        return self._sessions.get(session_key)
-
-    async def put(self, session: SessionDescriptor) -> None:
-        """Persist or replace a session descriptor."""
-        self._sessions[session.session_key] = session
-
-    async def patch(self, session_key: str, values: dict[str, object]) -> SessionDescriptor:
-        """Patch selected fields on a stored session descriptor."""
-        current = self._sessions[session_key]
-        updated = replace(current, **values)
-        self._sessions[session_key] = updated
-        return updated
-
-    async def list(self) -> list[SessionDescriptor]:
-        """Return all stored sessions."""
-        return list(self._sessions.values())
+class InMemorySessionStore(InMemorySessionRepository):
+    """Backward-compatible alias for the runtime in-memory session repository."""
 
 
 __all__ = ["InMemorySessionStore"]
