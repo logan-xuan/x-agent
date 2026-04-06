@@ -817,6 +817,13 @@ class AgentBridge:
         if finish_reason == "max_wall_time":
             timeout_suffix = f" after {timeout_ms}ms" if timeout_ms else ""
             if fast_mode and not streamed:
+                if last_event == "agent_start":
+                    return (
+                        f"[runtime fast mode timeout{timeout_suffix}] "
+                        "bridge ok, provider emitted no content chunk before timeout. "
+                        "Try /api/v1/dev/llm-stream-probe or increase runtime_timeout_ms. "
+                        f"phase={phase}, last_event={last_event}, events_seen={events_seen}"
+                    )
                 return (
                     f"[runtime fast mode timeout{timeout_suffix}] "
                     f"bridge ok, waiting for provider content. "

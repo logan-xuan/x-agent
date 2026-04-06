@@ -102,6 +102,7 @@ class LLMStreamProbeRequest(BaseModel):
     system_prompt: str | None = None
     max_tokens: int = Field(default=64, ge=1)
     timeout_ms: int = Field(default=10000, ge=1)
+    attempts: int = Field(default=1, ge=1, le=5)
 
 
 class LLMStreamProbeResponse(BaseModel):
@@ -113,6 +114,7 @@ class LLMStreamProbeResponse(BaseModel):
     timed_out: bool = False
     chunk_count: int = 0
     content_preview: str = ""
+    samples: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -353,8 +355,45 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
         messages.append({"role": "system", "content": request.system_prompt})
     messages.append({"role": "user", "content": request.content})
 
+    samples: list[dict[str, Any]] = []
+    for _ in range(request.attempts):
+        samples.append(
+            await _run_llm_stream_probe_once(
+                router=router,
+                messages=messages,
+                max_tokens=request.max_tokens,
+                timeout_ms=request.timeout_ms,
+            )
+        )
+
+    last = samples[-1]
+
+    return LLMStreamProbeResponse(
+        create_stream_ms=last["create_stream_ms"],
+        first_chunk_ms=last["first_chunk_ms"],
+        done_ms=last["done_ms"],
+        timed_out=last["timed_out"],
+        chunk_count=last["chunk_count"],
+        content_preview=last["content_preview"],
+        samples=samples,
+        metadata={
+            "max_tokens": request.max_tokens,
+            "message_count": len(messages),
+            "attempts": request.attempts,
+        },
+    )
+
+
+async def _run_llm_stream_probe_once(
+    *,
+    router: LLMRouter,
+    messages: list[dict[str, str]],
+    max_tokens: int,
+    timeout_ms: int,
+) -> dict[str, Any]:
+    """Run a single streaming probe attempt against the shared router."""
     started_at = time.monotonic()
-    stream = await router.chat(messages, stream=True, max_tokens=request.max_tokens)
+    stream = await router.chat(messages, stream=True, max_tokens=max_tokens)
     create_stream_ms = int((time.monotonic() - started_at) * 1000)
     first_chunk_ms: int | None = None
     chunk_count = 0
@@ -363,7 +402,7 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
     done_ms: int | None = None
 
     try:
-        async with asyncio.timeout(request.timeout_ms / 1000):
+        async with asyncio.timeout(timeout_ms / 1000):
             async for chunk in stream:
                 if chunk.content:
                     chunk_count += 1
@@ -383,18 +422,14 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
     if done_ms is None and not timed_out:
         done_ms = int((time.monotonic() - started_at) * 1000)
 
-    return LLMStreamProbeResponse(
-        create_stream_ms=create_stream_ms,
-        first_chunk_ms=first_chunk_ms,
-        done_ms=done_ms,
-        timed_out=timed_out,
-        chunk_count=chunk_count,
-        content_preview="".join(content_parts)[:200],
-        metadata={
-            "max_tokens": request.max_tokens,
-            "message_count": len(messages),
-        },
-    )
+    return {
+        "create_stream_ms": create_stream_ms,
+        "first_chunk_ms": first_chunk_ms,
+        "done_ms": done_ms,
+        "timed_out": timed_out,
+        "chunk_count": chunk_count,
+        "content_preview": "".join(content_parts)[:200],
+    }
 
 
 @router.post("/prompt-test/stream")

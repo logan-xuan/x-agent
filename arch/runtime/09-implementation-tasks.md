@@ -572,7 +572,8 @@
 - 当前结论：
   - 本地 runtime overhead 已经基本压平
   - provider 首 chunk 仍存在显著波动，极简 prompt 下也可能超过 `8s`
-  - 实测：`content=\"ok\"`, `max_tokens=8`, `timeout_ms=8000` 时，`create_stream_ms=141`、`first_chunk_ms=null`、`timed_out=true`
+  - 实测：`content=\"ok\"`, `timeout_ms=8000`, `max_tokens=8/16/64` 时，`first_chunk_ms` 均为 `null`
+  - post-review smoke：`disable_tools=true` + `disable_skills=true`, `runtime_timeout_ms=8000` 时，`first_text_chunk≈4076ms`，`completed≈6865ms`
   - 下一步要么继续 provider 参数/模型侧验证，要么为 debug fast mode 设计更明确的 synthetic fallback
 
 验收：

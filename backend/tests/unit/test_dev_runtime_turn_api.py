@@ -262,6 +262,7 @@ def test_dev_llm_stream_probe_endpoint_reports_timings():
     assert data["content_preview"] == "hello world"
     assert data["first_chunk_ms"] is not None
     assert data["done_ms"] is not None
+    assert data["samples"] and len(data["samples"]) == 1
 
 
 def test_dev_llm_stream_probe_endpoint_handles_timeout():
@@ -293,3 +294,32 @@ def test_dev_llm_stream_probe_endpoint_handles_timeout():
     assert data["timed_out"] is True
     assert data["first_chunk_ms"] is None
     assert data["chunk_count"] == 0
+
+
+def test_dev_llm_stream_probe_endpoint_supports_multiple_attempts():
+    client = TestClient(app)
+
+    class FakeRouter:
+        async def chat(self, messages, stream=False, max_tokens=None):
+            _ = messages
+            _ = stream
+            _ = max_tokens
+
+            async def _stream():
+                yield type("Chunk", (), {"content": "ok", "is_finished": True})()
+
+            return _stream()
+
+    with patch("src.api.v1.dev._get_shared_llm_router", return_value=FakeRouter()):
+        response = client.post(
+            "/api/v1/dev/llm-stream-probe",
+            json={
+                "content": "probe",
+                "attempts": 2,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"]["attempts"] == 2
+    assert len(data["samples"]) == 2
