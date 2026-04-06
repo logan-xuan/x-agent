@@ -117,6 +117,15 @@ class AgentInvoker:
             orchestrator=self._bridge.runtime_session_orchestrator,
         )
 
+    def _sanitize_runtime_metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
+        """Drop reserved runtime/context keys before splatting metadata into context constructors."""
+        reserved = {"source", "agent_id", "session_id", "channel_type"}
+        return {
+            key: value
+            for key, value in dict(metadata or {}).items()
+            if key not in reserved
+        }
+
     async def invoke(
         self,
         content: str,
@@ -165,12 +174,13 @@ class AgentInvoker:
             )
 
             # 2. 构建 Identity + AgentContext
+            context_metadata = self._sanitize_runtime_metadata(metadata)
             context = AgentContext.for_internal(
                 session_id=resolved_session_id,
                 source=source.value,
                 agent_id=agent_id,
                 channel_type=channel_type,
-                **(metadata or {}),
+                **context_metadata,
             )
             set_current_context(context)
 
@@ -405,12 +415,13 @@ class AgentInvoker:
     ):
         """Prepare a runtime turn request for internal triggers without invoking legacy agent_loop."""
         resolved_session_id = await self._resolve_session(session_id, agent_id, channel_type)
+        context_metadata = self._sanitize_runtime_metadata(metadata)
         context = AgentContext.for_internal(
             session_id=resolved_session_id,
             source=source.value,
             agent_id=agent_id,
             channel_type=channel_type,
-            **(metadata or {}),
+            **context_metadata,
         )
         set_current_context(context)
         agent_info = self._resolve_agent_info(agent_id)
@@ -422,9 +433,9 @@ class AgentInvoker:
             "user_id": None,
             "channel_id": None,
             "metadata": {
+                **context_metadata,
                 "source": source.value,
                 "agent_id": agent_id,
-                **(metadata or {}),
             },
             "lane": "cron" if source == InvokeSource.CRON else "background_tool",
         }

@@ -535,8 +535,8 @@ class GatewayDispatcher:
         return await self._runtime_gateway_adapter.prepare_turn(
             envelope,
             metadata={
-                "agent_id": agent_info.agent_id,
                 **dict(metadata or {}),
+                "agent_id": agent_info.agent_id,
             },
         )
 

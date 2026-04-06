@@ -42,6 +42,16 @@ async def test_runtime_gateway_adapter_prepares_turn_from_envelope():
 
 
 @pytest.mark.asyncio
+async def test_runtime_gateway_adapter_normalizes_none_content_to_empty_string():
+    adapter = GatewayAdapter(orchestrator=AgentBridge().runtime_session_orchestrator)
+
+    session, request = await adapter.prepare_turn({"session_id": "sess-none", "content": None})
+
+    assert session.session_id == "sess-none"
+    assert request.user_input == ""
+
+
+@pytest.mark.asyncio
 async def test_gateway_dispatcher_prepare_runtime_turn_returns_runtime_request():
     dispatcher = GatewayDispatcher(bridge=AgentBridge())
     dispatcher._resolve_agent = AsyncMock(  # type: ignore[method-assign]
@@ -68,6 +78,30 @@ async def test_gateway_dispatcher_prepare_runtime_turn_returns_runtime_request()
     assert request.metadata["agent_id"] == "agent-1"
     dispatcher.ensure_session.assert_awaited_once()
     dispatcher.touch_session.assert_awaited_once_with("sess-2")
+
+
+@pytest.mark.asyncio
+async def test_gateway_dispatcher_prepare_runtime_turn_overrides_spoofed_agent_id():
+    dispatcher = GatewayDispatcher(bridge=AgentBridge())
+    dispatcher._resolve_agent = AsyncMock(  # type: ignore[method-assign]
+        return_value=type(
+            "AgentInfoStub",
+            (),
+            {"agent_id": "agent-real", "agent_name": "Agent Real", "agent_type": "main"},
+        )()
+    )
+    dispatcher.ensure_session = AsyncMock()  # type: ignore[method-assign]
+    dispatcher.touch_session = AsyncMock()  # type: ignore[method-assign]
+    envelope = Envelope.create_chat(
+        content="runtime path",
+        session_id="sess-2b",
+        channel_type=ChannelType.WEB_CHAT,
+        channel_protocol=ChannelProtocol.WEBSOCKET,
+    )
+
+    _, request = await dispatcher.prepare_runtime_turn(envelope, metadata={"agent_id": "agent-spoofed"})
+
+    assert request.metadata["agent_id"] == "agent-real"
 
 
 @pytest.mark.asyncio
@@ -104,6 +138,35 @@ async def test_agent_invoker_prepare_runtime_turn_uses_internal_metadata():
 
 
 @pytest.mark.asyncio
+async def test_agent_invoker_prepare_runtime_turn_strips_reserved_metadata_keys():
+    clear_current_context()
+    invoker = AgentInvoker(bridge=AgentBridge())
+    invoker._resolve_session = AsyncMock(return_value="sess-3b")  # type: ignore[method-assign]
+    invoker._resolve_agent_info = Mock(  # type: ignore[method-assign]
+        return_value=type(
+            "AgentInfoStub",
+            (),
+            {"agent_id": "agent-cron", "agent_name": "Agent Cron", "agent_type": "main"},
+        )()
+    )
+    invoker._dispatcher.ensure_session = AsyncMock()  # type: ignore[method-assign]
+
+    session, request = await invoker.prepare_runtime_turn(
+        "scheduled task",
+        agent_id="agent-cron",
+        channel_type=ChannelType.CLI,
+        source=InvokeSource.CRON,
+        metadata={"job": "daily", "source": "override", "agent_id": "spoofed"},
+    )
+
+    assert session.session_id == "sess-3b"
+    assert request.metadata["source"] == "cron"
+    assert request.metadata["agent_id"] == "agent-cron"
+    assert request.metadata["job"] == "daily"
+    clear_current_context()
+
+
+@pytest.mark.asyncio
 async def test_agent_bridge_runs_runtime_turn_with_injected_controller():
     bridge = AgentBridge()
     adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
@@ -123,6 +186,33 @@ async def test_agent_bridge_runs_runtime_turn_with_injected_controller():
 
     assert result.kind == "final"
     assert result.output_text == "runtime execute"
+
+
+@pytest.mark.asyncio
+async def test_agent_bridge_restores_system_prompt_after_runtime_error():
+    bridge = AgentBridge()
+
+    class ExplodingAgent:
+        def __init__(self):
+            self._original_system_prompt = "base prompt"
+            self._system_prompt = "base prompt"
+
+        async def prompt(self, content, images=None):
+            _ = content
+            _ = images
+            raise RuntimeError("boom")
+            yield  # pragma: no cover
+
+    agent = ExplodingAgent()
+    bridge._inject_skill_prompt = lambda agent, content: setattr(agent, "_system_prompt", "mutated prompt")  # type: ignore[method-assign]
+    bridge._persist_user_message = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    bridge._persist_partial_response = AsyncMock()  # type: ignore[method-assign]
+
+    events = [event async for event in bridge.run(agent=agent, content="hello", session_id="sess-err")]
+
+    assert agent._system_prompt == "base prompt"
+    assert len(events) == 1
+    assert events[0].type == "error"
 
 
 @pytest.mark.asyncio

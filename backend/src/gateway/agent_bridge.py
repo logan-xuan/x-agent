@@ -446,6 +446,8 @@ class AgentBridge:
                 agent_id=event_agent_id,
                 agent_name=event_agent_name,
             )
+        finally:
+            self._restore_system_prompt(agent)
 
     async def run_runtime_turn(
         self,

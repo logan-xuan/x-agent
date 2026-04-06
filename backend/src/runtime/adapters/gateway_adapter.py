@@ -42,7 +42,7 @@ class GatewayAdapter:
         request = self.conversation_adapter.build_turn_request(
             session=session,
             route=route,
-            user_input=user_input or str(payload.get("content", "")),
+            user_input=user_input if user_input is not None else self._content_text(payload.get("content")),
             task_frame=task_frame,
             artifact_ids=artifact_ids,
             metadata={
@@ -101,6 +101,11 @@ class GatewayAdapter:
 
     def _optional(self, value: Any) -> str | None:
         return str(value) if value not in {None, ""} else None
+
+    def _content_text(self, value: Any) -> str:
+        if value in {None, ""}:
+            return ""
+        return str(value)
 
 
 __all__ = ["GatewayAdapter"]
