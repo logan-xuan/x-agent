@@ -8,6 +8,7 @@ from typing import Any
 
 from ..types import ChildResult, RouteMeta, SessionDescriptor, SpawnPacket, TurnRequest
 from .announcement_manager import AnnouncementManager
+from .child_session import ChildSessionManager
 from .lane_scheduler import InMemoryLaneScheduler
 from .lifecycle import SessionLifecycleManager
 from .route_resolver import DefaultRouteResolver
@@ -23,6 +24,7 @@ class DefaultSessionOrchestrator:
     route_resolver: DefaultRouteResolver = field(default_factory=DefaultRouteResolver)
     lane_scheduler: InMemoryLaneScheduler = field(default_factory=InMemoryLaneScheduler)
     spawn_manager: SpawnManager = field(default_factory=SpawnManager)
+    child_session_manager: ChildSessionManager = field(default_factory=ChildSessionManager)
     announcement_manager: AnnouncementManager = field(default_factory=AnnouncementManager)
     lifecycle_manager: SessionLifecycleManager = field(default_factory=SessionLifecycleManager)
 
@@ -73,7 +75,10 @@ class DefaultSessionOrchestrator:
 
         payload = await self.announcement_manager.build(parent, child, result)
         await self.announcement_manager.enqueue(payload)
-        await self.lifecycle_manager.mark_idle(child)
+        if self.child_session_manager.policy.auto_archive:
+            await self.lifecycle_manager.archive(child)
+        else:
+            await self.lifecycle_manager.mark_idle(child)
         await self.session_store.put(child)
         return payload
 

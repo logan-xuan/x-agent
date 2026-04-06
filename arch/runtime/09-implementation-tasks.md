@@ -779,12 +779,22 @@
 
 - 已完成：
   - `backend/src/runtime/session/child_session.py`
+  - `backend/src/runtime/session/announcement_manager.py`
+  - `backend/src/runtime/session/orchestrator.py`
   - `backend/tests/unit/test_runtime_child_session.py`
+  - `backend/tests/unit/test_runtime_child_session_policy.py`
+  - `backend/tests/unit/test_runtime_announcement_manager.py`
+  - `backend/tests/unit/test_runtime_session_orchestrator.py`
   - 当前实现已覆盖：
     - `prompt_mode="minimal"`
     - `max_spawns=0`
     - `session_tools_allowed=false`
     - `auto_archive=true`
+    - child completion announcement 包含 `usage` 与 `duration_ms`
+    - orchestrator 默认在 child 完成后自动 archive，关闭策略时才回到 `idle`
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_child_session_policy.py tests/unit/test_runtime_announcement_manager.py tests/unit/test_runtime_session_orchestrator.py`
+    - `python -m compileall src/runtime/session`
 
 验收：
 

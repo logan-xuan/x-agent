@@ -22,6 +22,8 @@ class AnnouncementManager:
             "summary": result.summary,
             "unresolved": list(result.unresolved),
             "artifact_refs": list(result.artifact_refs),
+            "usage": dict(result.usage),
+            "duration_ms": result.duration_ms,
             "stats_line": f"duration={result.duration_ms}ms",
         }
 

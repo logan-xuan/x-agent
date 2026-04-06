@@ -15,6 +15,7 @@ class ChildSessionPolicy:
     prompt_mode: PromptMode = "minimal"
     max_spawns: int = 0
     allow_session_tools: bool = False
+    auto_archive: bool = True
 
 
 @dataclass
@@ -61,6 +62,7 @@ class ChildSessionManager:
                 "session_tools_allowed": self.policy.allow_session_tools,
                 "max_spawns": self.policy.max_spawns,
                 "child_timeout_ms": packet.timeout_ms,
+                "auto_archive": self.policy.auto_archive,
             },
         )
         return ChildTurnEnvelope(
@@ -70,6 +72,7 @@ class ChildSessionManager:
             metadata={
                 "session_tools_allowed": self.policy.allow_session_tools,
                 "max_spawns": self.policy.max_spawns,
+                "auto_archive": self.policy.auto_archive,
             },
         )
 
