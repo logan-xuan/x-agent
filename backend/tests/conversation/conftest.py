@@ -5,9 +5,15 @@
 """
 
 import pytest
+from typing import Any
 
 from src.services.storage import StorageService
 from src.conversation.dao.dao import UserDAO
+
+try:
+    from src.conversation.dao.dao import AgentDAO, ChannelDAO, ChatSessionDAO
+except ImportError:  # 配置驱动改造后，这些 DAO 已不再默认提供
+    AgentDAO = ChannelDAO = ChatSessionDAO = Any  # type: ignore
 
 
 @pytest.fixture

@@ -8,8 +8,12 @@ import yaml
 from pathlib import Path
 from typing import Any
 
-from ..models.skill import SkillMetadata
-from ..utils.logger import get_logger
+try:
+    from ..models.skill import SkillMetadata
+    from ..utils.logger import get_logger
+except ImportError:  # 顶层 services.* 导入兼容
+    from models.skill import SkillMetadata  # type: ignore
+    from utils.logger import get_logger  # type: ignore
 
 logger = get_logger(__name__)
 

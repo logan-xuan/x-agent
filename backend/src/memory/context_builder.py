@@ -10,17 +10,30 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .md_sync import MarkdownSync
-from .models import (
-    ContextBundle,
-    DailyLog,
-    IdentityConfig,
-    OwnerProfile,
-    SpiritConfig,
-    ToolDefinition,
-)
-from .spirit_loader import SpiritLoader
-from ..utils.logger import get_logger
+try:
+    from .md_sync import MarkdownSync
+    from .models import (
+        ContextBundle,
+        DailyLog,
+        IdentityConfig,
+        OwnerProfile,
+        SpiritConfig,
+        ToolDefinition,
+    )
+    from .spirit_loader import SpiritLoader
+    from ..utils.logger import get_logger
+except ImportError:  # 顶层 memory.* 导入兼容
+    from memory.md_sync import MarkdownSync  # type: ignore
+    from memory.models import (  # type: ignore
+        ContextBundle,
+        DailyLog,
+        IdentityConfig,
+        OwnerProfile,
+        SpiritConfig,
+        ToolDefinition,
+    )
+    from memory.spirit_loader import SpiritLoader  # type: ignore
+    from utils.logger import get_logger  # type: ignore
 
 logger = get_logger(__name__)
 

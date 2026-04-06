@@ -10,9 +10,14 @@ This module provides:
 from pathlib import Path
 from typing import Any
 
-from .md_sync import MarkdownSync, get_md_sync
-from .models import OwnerProfile, SpiritConfig
-from ..utils.logger import get_logger
+try:
+    from .md_sync import MarkdownSync, get_md_sync
+    from .models import OwnerProfile, SpiritConfig
+    from ..utils.logger import get_logger
+except ImportError:  # 顶层 memory.* 导入兼容
+    from memory.md_sync import MarkdownSync, get_md_sync  # type: ignore
+    from memory.models import OwnerProfile, SpiritConfig  # type: ignore
+    from utils.logger import get_logger  # type: ignore
 
 logger = get_logger(__name__)
 

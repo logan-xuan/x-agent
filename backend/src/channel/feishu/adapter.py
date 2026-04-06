@@ -42,6 +42,7 @@ class FeishuChannelAdapter(ChannelAdapter):
         self._running = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ws_thread: threading.Thread | None = None
+        self._ws_task: threading.Thread | None = None
 
         self._event_parser = FeishuEventParser(channel_id)
         self._message_client = FeishuMessageClient(lambda: self._client)
@@ -74,8 +75,12 @@ class FeishuChannelAdapter(ChannelAdapter):
         """Start the Feishu WebSocket connection."""
         try:
             import lark_oapi as lark
-            from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
             from lark_oapi.ws import Client as WsClient
+
+            try:
+                from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
+            except ImportError:
+                EventDispatcherHandler = None  # type: ignore[assignment]
 
             self._loop = asyncio.get_running_loop()
             self._client = (
@@ -89,14 +94,16 @@ class FeishuChannelAdapter(ChannelAdapter):
             def on_message(event: Any) -> None:
                 self._handle_message_sync(event)
 
-            event_handler = (
-                EventDispatcherHandler.builder(
-                    encrypt_key="",
-                    verification_token="",
+            event_handler = None
+            if EventDispatcherHandler is not None:
+                event_handler = (
+                    EventDispatcherHandler.builder(
+                        encrypt_key="",
+                        verification_token="",
+                    )
+                    .register_p2_im_message_receive_v1(on_message)
+                    .build()
                 )
-                .register_p2_im_message_receive_v1(on_message)
-                .build()
-            )
 
             self._ws_client = WsClient(
                 app_id=self._app_id,
@@ -117,6 +124,7 @@ class FeishuChannelAdapter(ChannelAdapter):
                 daemon=True,
             )
             self._ws_thread.start()
+            self._ws_task = self._ws_thread
         except ImportError as exc:
             logger.error(
                 "Failed to import lark_oapi, please ensure lark-oapi is installed",
@@ -135,7 +143,12 @@ class FeishuChannelAdapter(ChannelAdapter):
     async def stop(self) -> None:
         """Stop the Feishu WebSocket connection."""
         self._running = False
+        if self._ws_client is not None:
+            stop = getattr(self._ws_client, "stop", None)
+            if callable(stop):
+                stop()
         self._ws_thread = None
+        self._ws_task = None
         logger.info(
             "Feishu WebSocket client stopped",
             extra={"channel_id": self._channel_id},

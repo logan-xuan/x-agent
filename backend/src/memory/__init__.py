@@ -1,33 +1,4 @@
-"""Memory system for AI Agent.
-
-This module provides self-awareness and memory evolution capabilities:
-- MemoryManager: Unified entry point for all memory operations
-- SpiritLoader: Load and parse SPIRIT.md (AI personality) and OWNER.md (user profile)
-- ContextBuilder: Context data loading (identity, tools, memory)
-- VectorStore: sqlite-vss based vector storage
-- HybridSearch: Semantic + keyword search (0.7 vector + 0.3 text)
-- FileWatcher: Hot-reload and bidirectional sync
-- MdSync: Markdown ↔ Vector storage synchronization
-- Embedder: Text embedding generation
-"""
-
-from .models import (
-    SpiritConfig,
-    OwnerProfile,
-    ToolDefinition,
-    MemoryEntry,
-    MemoryContentType,
-)
-from .spirit_loader import SpiritLoader
-from .manager import MemoryManager, get_memory_manager, init_memory_manager
-
-# ContextBuilder imported lazily to avoid circular imports
-# from .context_builder import ContextBuilder
-
-def get_context_builder(*args, **kwargs):
-    """Lazy import to avoid circular imports."""
-    from .context_builder import ContextBuilder
-    return ContextBuilder(*args, **kwargs)
+"""Memory system for AI Agent."""
 
 __all__ = [
     "MemoryManager",
@@ -41,3 +12,39 @@ __all__ = [
     "SpiritLoader",
     "get_context_builder",
 ]
+
+
+def __getattr__(name: str):
+    if name in {
+        "SpiritConfig",
+        "OwnerProfile",
+        "ToolDefinition",
+        "MemoryEntry",
+        "MemoryContentType",
+    }:
+        from .models import MemoryContentType, MemoryEntry, OwnerProfile, SpiritConfig, ToolDefinition
+
+        return {
+            "SpiritConfig": SpiritConfig,
+            "OwnerProfile": OwnerProfile,
+            "ToolDefinition": ToolDefinition,
+            "MemoryEntry": MemoryEntry,
+            "MemoryContentType": MemoryContentType,
+        }[name]
+    if name == "SpiritLoader":
+        from .spirit_loader import SpiritLoader
+
+        return SpiritLoader
+    if name in {"MemoryManager", "get_memory_manager", "init_memory_manager"}:
+        from .manager import MemoryManager, get_memory_manager, init_memory_manager
+
+        return {
+            "MemoryManager": MemoryManager,
+            "get_memory_manager": get_memory_manager,
+            "init_memory_manager": init_memory_manager,
+        }[name]
+    if name == "get_context_builder":
+        from .context_builder import ContextBuilder
+
+        return lambda *args, **kwargs: ContextBuilder(*args, **kwargs)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

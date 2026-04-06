@@ -18,9 +18,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ..models.skill import SkillMetadata
-from .skill_parser import SkillParser, SkillParseError
-from ..utils.logger import get_logger
+try:
+    from ..models.skill import SkillMetadata
+    from .skill_parser import SkillParser, SkillParseError
+    from ..utils.logger import get_logger
+except ImportError:  # 兼容 tests 直接把 src/ 加到 sys.path 顶层导入 services.*
+    from models.skill import SkillMetadata  # type: ignore
+    from services.skill_parser import SkillParser, SkillParseError  # type: ignore
+    from utils.logger import get_logger  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -73,7 +78,10 @@ class SkillRegistry:
         
         # Load user skills directory from configuration
         try:
-            from ..config.manager import ConfigManager
+            try:
+                from ..config.manager import ConfigManager
+            except ImportError:  # 顶层 services.* 导入兼容
+                from config.manager import ConfigManager  # type: ignore
             config = ConfigManager().config
             self.user_skills_dir = config.workspace.skills_dir
         except Exception as e:

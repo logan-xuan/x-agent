@@ -13,15 +13,26 @@ from typing import Any
 
 import frontmatter
 
-from .models import (
-    DailyLog,
-    MemoryContentType,
-    MemoryEntry,
-    OwnerProfile,
-    SpiritConfig,
-    ToolDefinition,
-)
-from ..utils.logger import get_logger
+try:
+    from .models import (
+        DailyLog,
+        MemoryContentType,
+        MemoryEntry,
+        OwnerProfile,
+        SpiritConfig,
+        ToolDefinition,
+    )
+    from ..utils.logger import get_logger
+except ImportError:  # 顶层 memory.* 导入兼容
+    from memory.models import (  # type: ignore
+        DailyLog,
+        MemoryContentType,
+        MemoryEntry,
+        OwnerProfile,
+        SpiritConfig,
+        ToolDefinition,
+    )
+    from utils.logger import get_logger  # type: ignore
 
 logger = get_logger(__name__)
 
