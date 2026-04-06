@@ -80,6 +80,7 @@ class RuntimeTurnDebugRequest(BaseModel):
     agent_name: str | None = None
     runtime_timeout_ms: int | None = Field(default=30000, ge=1)
     runtime_max_tokens: int | None = Field(default=None, ge=1)
+    runtime_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     disable_tools: bool = False
     disable_skills: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -101,6 +102,7 @@ class LLMStreamProbeRequest(BaseModel):
     content: str
     system_prompt: str | None = None
     max_tokens: int = Field(default=64, ge=1)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout_ms: int = Field(default=10000, ge=1)
     attempts: int = Field(default=1, ge=1, le=5)
 
@@ -316,6 +318,8 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
         metadata["runtime_timeout_ms"] = request.runtime_timeout_ms
     if request.runtime_max_tokens is not None:
         metadata["runtime_max_tokens"] = request.runtime_max_tokens
+    if request.runtime_temperature is not None:
+        metadata["runtime_temperature"] = request.runtime_temperature
     if request.disable_tools:
         metadata["runtime_disable_tools"] = True
         metadata["runtime_disable_skills"] = True
@@ -362,6 +366,7 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
                 router=router,
                 messages=messages,
                 max_tokens=request.max_tokens,
+                temperature=request.temperature,
                 timeout_ms=request.timeout_ms,
             )
         )
@@ -378,6 +383,7 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
         samples=samples,
         metadata={
             "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
             "message_count": len(messages),
             "attempts": request.attempts,
         },
@@ -389,11 +395,17 @@ async def _run_llm_stream_probe_once(
     router: LLMRouter,
     messages: list[dict[str, str]],
     max_tokens: int,
+    temperature: float | None,
     timeout_ms: int,
 ) -> dict[str, Any]:
     """Run a single streaming probe attempt against the shared router."""
     started_at = time.monotonic()
-    stream = await router.chat(messages, stream=True, max_tokens=max_tokens)
+    stream = await router.chat(
+        messages,
+        stream=True,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
     create_stream_ms = int((time.monotonic() - started_at) * 1000)
     first_chunk_ms: int | None = None
     chunk_count = 0
