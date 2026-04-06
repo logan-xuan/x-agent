@@ -35,6 +35,7 @@ from ..agent_core.adapters.tool_adapter import XAgentToolAdapter
 from ..agent_core.adapters.system_prompt_adapter import create_system_prompt_adapter
 # 新增 Adapter 导入
 from ..agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
+from ..runtime.session import DefaultSessionOrchestrator
 from ..agent_core.types import (
     AgentEndEvent,
     AgentStartEvent,
@@ -52,6 +53,8 @@ from ..agent_core.skill_dispatcher import (
     SkillInvocation,
     build_skill_command_specs,
 )
+from ..runtime.turn import DefaultTurnController
+from ..runtime.types import TurnRequest, TurnResult
 
 try:
     from ..utils.logger import get_logger
@@ -252,6 +255,10 @@ class AgentBridge:
     5. 持久化用户消息和 assistant 消息
     """
 
+    def __init__(self) -> None:
+        self.runtime_session_orchestrator = DefaultSessionOrchestrator()
+        self.runtime_turn_controller = DefaultTurnController()
+
     def create_config(self, agent_info: AgentInfo | None = None) -> AgentCoreConfig:
         """创建 Agent 配置。
 
@@ -439,6 +446,16 @@ class AgentBridge:
                 agent_id=event_agent_id,
                 agent_name=event_agent_name,
             )
+
+    async def run_runtime_turn(
+        self,
+        request: TurnRequest,
+        *,
+        controller=None,
+    ) -> TurnResult:
+        """Execute a prepared runtime turn through the bounded runtime controller."""
+        runtime_controller = controller or self.runtime_turn_controller
+        return await runtime_controller.run(request)
 
     # ------------------------------------------------------------------
     # 内部方法

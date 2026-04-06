@@ -25,6 +25,7 @@ from typing import Optional
 
 from .agent_bridge import AgentBridge
 from .agent_info import AgentInfo
+from ..runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
 
 from ..agent_core.agent import Agent
 from .envelope import Envelope, EnvelopeIntent
@@ -93,6 +94,9 @@ class GatewayDispatcher:
 
     def __init__(self, bridge: AgentBridge | None = None) -> None:
         self._bridge = bridge or AgentBridge()
+        self._runtime_gateway_adapter = RuntimeGatewayAdapter(
+            orchestrator=self._bridge.runtime_session_orchestrator,
+        )
 
     async def dispatch(
         self,
@@ -510,3 +514,39 @@ class GatewayDispatcher:
                 agent_id=agent_info.agent_id,
                 agent_name=agent_info.agent_name,
             )
+
+    async def prepare_runtime_turn(
+        self,
+        envelope: Envelope,
+        *,
+        metadata: dict[str, object] | None = None,
+    ):
+        """Prepare runtime session + turn request without replacing the legacy dispatch path."""
+        agent_info = await self._resolve_agent(envelope)
+        context = self._build_context(envelope, agent_info)
+        set_current_context(context)
+        await self.ensure_session(
+            envelope.session_id,
+            agent_info,
+            user_id=envelope.user_id,
+            channel_id=envelope.channel_id,
+        )
+        await self.touch_session(envelope.session_id)
+        return await self._runtime_gateway_adapter.prepare_turn(
+            envelope,
+            metadata={
+                "agent_id": agent_info.agent_id,
+                **dict(metadata or {}),
+            },
+        )
+
+    async def execute_runtime_turn(
+        self,
+        envelope: Envelope,
+        *,
+        metadata: dict[str, object] | None = None,
+        controller=None,
+    ):
+        """Prepare and execute a runtime turn without switching the default dispatch path."""
+        _, request = await self.prepare_runtime_turn(envelope, metadata=metadata)
+        return await self._bridge.run_runtime_turn(request, controller=controller)

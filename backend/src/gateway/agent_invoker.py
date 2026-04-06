@@ -35,6 +35,7 @@ from .dispatcher import GatewayDispatcher
 from .message_bus import MessageBus, OutboundMessage, get_message_bus
 from .response import GatewayEvent, GatewayEventType
 from .session_resolver import ActiveSessionResolver
+from ..runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
 
 from ..conversation.identity import ChannelType, ChannelProtocol
 from ..conversation.context import AgentContext, set_current_context
@@ -112,6 +113,9 @@ class AgentInvoker:
     ) -> None:
         self._bridge = bridge or AgentBridge()
         self._dispatcher = dispatcher or GatewayDispatcher(self._bridge)
+        self._runtime_gateway_adapter = RuntimeGatewayAdapter(
+            orchestrator=self._bridge.runtime_session_orchestrator,
+        )
 
     async def invoke(
         self,
@@ -388,3 +392,62 @@ class AgentInvoker:
 
         result = await bus.send(session_id, outbound)
         return result.delivered, result.queued
+
+    async def prepare_runtime_turn(
+        self,
+        content: str,
+        *,
+        agent_id: str,
+        session_id: str | None = None,
+        channel_type: ChannelType = ChannelType.WEB_CHAT,
+        source: InvokeSource = InvokeSource.CRON,
+        metadata: dict[str, Any] | None = None,
+    ):
+        """Prepare a runtime turn request for internal triggers without invoking legacy agent_loop."""
+        resolved_session_id = await self._resolve_session(session_id, agent_id, channel_type)
+        context = AgentContext.for_internal(
+            session_id=resolved_session_id,
+            source=source.value,
+            agent_id=agent_id,
+            channel_type=channel_type,
+            **(metadata or {}),
+        )
+        set_current_context(context)
+        agent_info = self._resolve_agent_info(agent_id)
+        await self._dispatcher.ensure_session(resolved_session_id, agent_info)
+        payload = {
+            "session_id": resolved_session_id,
+            "content": content,
+            "channel": channel_type.value,
+            "user_id": None,
+            "channel_id": None,
+            "metadata": {
+                "source": source.value,
+                "agent_id": agent_id,
+                **(metadata or {}),
+            },
+            "lane": "cron" if source == InvokeSource.CRON else "background_tool",
+        }
+        return await self._runtime_gateway_adapter.prepare_turn(payload, user_input=content)
+
+    async def execute_runtime_turn(
+        self,
+        content: str,
+        *,
+        agent_id: str,
+        session_id: str | None = None,
+        channel_type: ChannelType = ChannelType.WEB_CHAT,
+        source: InvokeSource = InvokeSource.CRON,
+        metadata: dict[str, Any] | None = None,
+        controller=None,
+    ):
+        """Prepare and execute a runtime turn for internal triggers."""
+        _, request = await self.prepare_runtime_turn(
+            content,
+            agent_id=agent_id,
+            session_id=session_id,
+            channel_type=channel_type,
+            source=source,
+            metadata=metadata,
+        )
+        return await self._bridge.run_runtime_turn(request, controller=controller)
