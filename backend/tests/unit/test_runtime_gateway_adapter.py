@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.agent_core.adapters.llm_adapter import XAgentLLMAdapter
 from src.agent_core.config import AgentCoreConfig
 from src.conversation.context import clear_current_context, get_current_context
 from src.conversation.identity import ChannelProtocol, ChannelType
@@ -398,6 +399,52 @@ async def test_agent_bridge_runtime_fast_mode_honors_max_tokens_override():
     assert isinstance(runtime_config, AgentCoreConfig)
     assert runtime_config.max_tokens == 48
     assert runtime_config.tools is None
+
+
+@pytest.mark.asyncio
+async def test_agent_bridge_runtime_fast_mode_honors_temperature_override():
+    bridge = AgentBridge()
+    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
+    envelope = Envelope.create_chat(
+        content="runtime execute",
+        session_id="sess-fast-temperature",
+        channel_type=ChannelType.WEB_CHAT,
+        channel_protocol=ChannelProtocol.WEBSOCKET,
+        metadata={"runtime_disable_tools": True, "runtime_temperature": 0.2},
+    )
+    _, request = await adapter.prepare_turn(
+        envelope,
+        metadata={"runtime_disable_tools": True, "runtime_temperature": 0.2},
+    )
+
+    runtime_config = bridge._build_runtime_agent_config(request, bridge._resolve_runtime_agent_info(request))
+
+    assert isinstance(runtime_config, AgentCoreConfig)
+    assert runtime_config.temperature == 0.2
+    assert runtime_config.tools is None
+
+
+@pytest.mark.asyncio
+async def test_agent_bridge_runtime_fast_mode_can_force_non_streaming():
+    bridge = AgentBridge()
+    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
+    envelope = Envelope.create_chat(
+        content="runtime execute",
+        session_id="sess-fast-non-stream",
+        channel_type=ChannelType.WEB_CHAT,
+        channel_protocol=ChannelProtocol.WEBSOCKET,
+        metadata={"runtime_disable_tools": True, "runtime_force_non_streaming": True},
+    )
+    _, request = await adapter.prepare_turn(
+        envelope,
+        metadata={"runtime_disable_tools": True, "runtime_force_non_streaming": True},
+    )
+
+    runtime_config = bridge._build_runtime_agent_config(request, bridge._resolve_runtime_agent_info(request))
+
+    assert isinstance(runtime_config, AgentCoreConfig)
+    assert isinstance(runtime_config.llm, XAgentLLMAdapter)
+    assert runtime_config.llm._force_non_streaming is True  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

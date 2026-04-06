@@ -107,6 +107,66 @@ def test_dev_runtime_turn_endpoint_accepts_runtime_max_tokens():
     assert metadata["runtime_max_tokens"] == 48
 
 
+def test_dev_runtime_turn_endpoint_accepts_runtime_temperature():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="final",
+                finish_reason="done_definition_satisfied",
+                output_text="runtime-ok",
+                metadata={},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "runtime_temperature": 0.2,
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["runtime_temperature"] == 0.2
+
+
+def test_dev_runtime_turn_endpoint_accepts_force_non_streaming():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="final",
+                finish_reason="done_definition_satisfied",
+                output_text="runtime-ok",
+                metadata={},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "runtime_force_non_streaming": True,
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["runtime_force_non_streaming"] is True
+
+
 def test_dev_runtime_turn_top_level_flags_override_conflicting_metadata():
     client = TestClient(app)
 

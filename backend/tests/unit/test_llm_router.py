@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from src.agent_core.adapters.llm_adapter import XAgentLLMAdapter
 from src.services.llm.circuit_breaker import circuit_breaker_manager
 from src.services.llm.router import LLMRouter
 from src.services.llm.provider import LLMResponse, StreamingLLMResponse
@@ -132,3 +133,29 @@ async def test_llm_router_records_streaming_success_only_after_consumption():
     assert "".join(chunk.content for chunk in chunks) == "hello world"
     assert breaker.stats.successful_requests == 1
     assert router._recent_provider_health(provider.name) is True
+
+
+@pytest.mark.asyncio
+async def test_llm_adapter_force_non_streaming_uses_non_streaming_chat():
+    class FakeRouter:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def chat(self, messages, stream=False, **kwargs):
+            self.calls.append({"messages": messages, "stream": stream, **kwargs})
+            return LLMResponse(content="fast", model="fake-model", finish_reason="stop")
+
+    router = FakeRouter()
+    adapter = XAgentLLMAdapter(router, force_non_streaming=True)
+
+    chunks = [
+        chunk async for chunk in adapter.stream(
+            system_prompt="",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    ]
+
+    assert router.calls and router.calls[0]["stream"] is False
+    assert chunks[0].type.value == "text_delta"
+    assert chunks[0].delta == "fast"
+    assert chunks[1].type.value == "done"

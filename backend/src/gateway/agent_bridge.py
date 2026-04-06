@@ -764,6 +764,14 @@ class AgentBridge:
             return int(value)
         return None
 
+    def _normalize_runtime_temperature(self, value: object) -> float | None:
+        """Normalize optional runtime temperature override for debug execution."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)) and 0.0 <= float(value) <= 2.0:
+            return float(value)
+        return None
+
     def _build_runtime_agent_config(
         self,
         request: TurnRequest,
@@ -777,11 +785,15 @@ class AgentBridge:
 
         if disable_tools:
             llm_router = _get_llm_router()
+            force_non_streaming = bool(request.metadata.get("runtime_force_non_streaming"))
             runtime_max_tokens = self._normalize_runtime_max_tokens(
                 request.metadata.get("runtime_max_tokens")
             )
+            runtime_temperature = self._normalize_runtime_temperature(
+                request.metadata.get("runtime_temperature")
+            )
             return AgentCoreConfig(
-                llm=XAgentLLMAdapter(llm_router),
+                llm=XAgentLLMAdapter(llm_router, force_non_streaming=force_non_streaming),
                 tools=None,
                 logger=_get_agent_logger(),
                 context=None,
@@ -789,7 +801,7 @@ class AgentBridge:
                 system_prompt_port=None,
                 enable_context_compression=False,
                 enable_experience_learning=False,
-                temperature=0.0,
+                temperature=runtime_temperature if runtime_temperature is not None else 0.0,
                 thinking_level="off",
                 max_tokens=runtime_max_tokens or _RUNTIME_FAST_MAX_TOKENS,
                 tool_middleware_pipeline=None,

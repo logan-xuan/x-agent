@@ -81,6 +81,7 @@ class RuntimeTurnDebugRequest(BaseModel):
     runtime_timeout_ms: int | None = Field(default=30000, ge=1)
     runtime_max_tokens: int | None = Field(default=None, ge=1)
     runtime_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    runtime_force_non_streaming: bool = False
     disable_tools: bool = False
     disable_skills: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -320,6 +321,8 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
         metadata["runtime_max_tokens"] = request.runtime_max_tokens
     if request.runtime_temperature is not None:
         metadata["runtime_temperature"] = request.runtime_temperature
+    if request.runtime_force_non_streaming:
+        metadata["runtime_force_non_streaming"] = True
     if request.disable_tools:
         metadata["runtime_disable_tools"] = True
         metadata["runtime_disable_skills"] = True

@@ -566,6 +566,7 @@
     - fast mode timeout 在无正文时返回更可解释的 fallback 文本
     - 新增 `llm-stream-probe` 端点，直接量化 `create_stream_ms / first_chunk_ms / done_ms`
     - `llm-stream-probe` 支持 `attempts` 批量采样
+    - fast mode 新增 `runtime_force_non_streaming` / `runtime_temperature` 调参入口
   - 已验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
     - `POST /api/v1/dev/llm-stream-probe` 真实 probe

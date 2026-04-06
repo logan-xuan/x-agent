@@ -49,13 +49,15 @@ class XAgentLLMAdapter:
         config = AgentCoreConfig(llm=adapter)
     """
 
-    def __init__(self, router: Any) -> None:
+    def __init__(self, router: Any, *, force_non_streaming: bool = False) -> None:
         """初始化适配器.
         
         Args:
             router: X-Agent LLMRouter 实例
+            force_non_streaming: 是否强制走非流式模式并合成 StreamChunk
         """
         self._router = router
+        self._force_non_streaming = force_non_streaming
 
     async def stream(
         self,
@@ -90,6 +92,9 @@ class XAgentLLMAdapter:
                 async for chunk in self._non_streaming_with_tools(
                     full_messages, openai_tools
                 ):
+                    yield chunk
+            elif self._force_non_streaming:
+                async for chunk in self._non_streaming_text(full_messages):
                     yield chunk
             else:
                 # === 无工具: 流式路径 ===
@@ -163,5 +168,18 @@ class XAgentLLMAdapter:
                 yield StreamChunk.tool(tool_call_id, name, arguments)
 
         # 输出完成
+        stop_reason = _map_finish_reason(response.finish_reason)
+        yield StreamChunk.done(stop_reason, response.usage)
+
+    async def _non_streaming_text(
+        self,
+        messages: list[dict],
+    ) -> AsyncIterator[StreamChunk]:
+        """非流式文本路径（无工具，但强制跳过 streaming）。"""
+        response = await self._router.chat(messages, stream=False)
+
+        if response.content:
+            yield StreamChunk.text(response.content)
+
         stop_reason = _map_finish_reason(response.finish_reason)
         yield StreamChunk.done(stop_reason, response.usage)
