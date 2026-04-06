@@ -41,7 +41,7 @@
 - `[x] P3-T18`: 已完成当前 provider/model 可用性探测，确认现有 endpoint 上暂无可直接启用的候选 backup model
 - `[x] P3-T19`: 已补齐第二 provider / 第二 key / 第二 endpoint 的 onboarding 路径，支持用 `llm-stream-probe` + `api_key_override` 先验证候选组合
 - `[~] Post-Plan`: runtime 兼容与稳定性回归。当前 focused matrix：`110 passed`
-- `[~] Post-Plan`: runtime 兼容与稳定性回归。当前 focused matrix：`110 passed`，并已新增 `tests/integration/test_runtime_resume_flow.py`
+- `[~] Post-Plan`: runtime 兼容与稳定性回归。当前 focused matrix：`110 passed`，并已新增 `tests/integration/test_runtime_resume_flow.py` / `tests/integration/test_runtime_child_flow.py`
 - `[x] P5-T1`: 已定义 runtime 仓储层接口和最小记录对象
 
 ---
