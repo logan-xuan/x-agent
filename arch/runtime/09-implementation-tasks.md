@@ -35,7 +35,8 @@
 - `[x] P3-T12`: 已为 `/api/v1/dev/runtime-turn` 增加 `disable_tools` fast mode，`8s` 调试窗口内可稳定返回最终文本
 - `[x] P3-T13`: 已为 fast mode 增加 `disable_skills`，进一步压缩首 token 延迟
 - `[x] P3-T14`: 已将 fast mode 本地开销压缩到近 0ms，并确认剩余瓶颈在 provider 首 chunk
-- `[~] P3-T15`: 正在收口 provider 侧首 chunk 波动，并为 fast mode 补充更可解释的 timeout fallback
+- `[x] P3-T15`: 已收口 provider 波动诊断与 debug fallback 标记，剩余问题明确收敛到 provider/base_url/model 侧
+- `[ ] P3-T16`: 继续验证 provider/base_url/model 策略，判断是否需要备用 provider 或显式 fallback policy
 
 ---
 
@@ -548,7 +549,7 @@
 - fast mode 在更短超时窗口内也能稳定拿到文本
 - 新开关边界清晰，有回归测试和 e2e 验证
 
-#### [~] P3-T15: 收口 provider 侧首 chunk 波动或提供 debug fallback
+#### [x] P3-T15: 收口 provider 侧首 chunk 波动或提供 debug fallback
 
 - 目标：
   - 明确 provider streaming 首 chunk 的真实耗时分布
@@ -583,6 +584,18 @@
   - non-streaming 实验：`runtime_force_non_streaming=true` 在 fast mode 下劣于默认 streaming，`12s` 窗口内仍可能无返回
   - synthetic fallback 已生效：`runtime_timeout_ms=5000` 且 provider 无正文时，会返回包含 request preview 的 debug-only fallback，而不是空文本
   - 下一步要么继续 provider 参数/模型侧验证，要么为 debug fast mode 设计更明确的 synthetic fallback
+
+#### [ ] P3-T16: 验证 provider/base_url/model 策略
+
+- 目标：
+  - 对比当前 `coding.dashscope.aliyuncs.com/v1` 与其他兼容入口/模型策略
+  - 判断是否需要备用 provider、备用 base_url，或明确的 provider fallback policy
+  - 在不影响默认主路径的前提下，为 runtime debug 提供更稳定的 provider 选择依据
+
+验收：
+
+- 至少形成一条可执行的 provider 优化或 fallback 策略
+- 若需要代码改动，有对应测试与 smoke 验证
 
 验收：
 
