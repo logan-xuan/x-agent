@@ -704,12 +704,15 @@
   - `backend/x-agent.yaml.example`
   - `arch/runtime/06-config-schema.md`
   - `backend/src/config/validator.py`
+  - `backend/src/api/v1/dev.py`
   - `backend/tests/unit/test_config_validator.py`
+  - `backend/tests/unit/test_dev_runtime_turn_api.py`
   - 已明确写入：
     - 备用 provider onboarding 需要先用 `llm-stream-probe` 验证 `base_url + model_id + key`
     - 不应假设同一份 key 能跨 endpoint / model 直接复用
     - 当仅配置 primary model、没有 backup model 时，配置校验会给出 warning
     - 当配置 backup model 时，配置校验会额外给出 onboarding warning，提醒先做 `llm-stream-probe`
+    - `llm-stream-probe` 现已支持 `api_key_override`，可直接验证第二 key，而不必先改主配置
 
 验收：
 
@@ -928,7 +931,7 @@
 
 - 压缩调参具备数据支撑
 
-#### [ ] P5-T4: 完成执行链路对齐
+#### [x] P5-T4: 完成执行链路对齐
 
 - 对齐：
   - 用户入口

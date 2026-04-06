@@ -526,3 +526,34 @@ def test_dev_llm_stream_probe_endpoint_accepts_model_override():
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"]["model_override"] == "glm-5-air"
+
+
+def test_dev_llm_stream_probe_endpoint_accepts_api_key_override_without_echoing_key():
+    client = TestClient(app)
+
+    async def fake_probe(**kwargs):
+        assert kwargs["api_key_override"] == "sk-test-override"
+        return {
+            "create_stream_ms": 1,
+            "first_chunk_ms": None,
+            "done_ms": None,
+            "timed_out": True,
+            "chunk_count": 0,
+            "content_preview": "",
+            "error": None,
+        }
+
+    with patch("src.api.v1.dev._probe_with_base_url_override", side_effect=fake_probe):
+        response = client.post(
+            "/api/v1/dev/llm-stream-probe",
+            json={
+                "content": "probe",
+                "base_url_override": "https://example.com/v1",
+                "api_key_override": "sk-test-override",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"]["api_key_override_supplied"] is True
+    assert "api_key_override" not in data["metadata"]

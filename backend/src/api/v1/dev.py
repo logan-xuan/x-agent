@@ -106,6 +106,7 @@ class LLMStreamProbeRequest(BaseModel):
     system_prompt: str | None = None
     base_url_override: str | None = None
     model_override: str | None = None
+    api_key_override: str | None = None
     max_tokens: int = Field(default=64, ge=1)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout_ms: int = Field(default=10000, ge=1)
@@ -378,6 +379,7 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
                 messages=messages,
                 base_url_override=request.base_url_override,
                 model_override=request.model_override,
+                api_key_override=request.api_key_override,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
                 timeout_ms=request.timeout_ms,
@@ -400,6 +402,7 @@ async def debug_llm_stream_probe(request: LLMStreamProbeRequest) -> LLMStreamPro
             "temperature": request.temperature,
             "base_url_override": request.base_url_override,
             "model_override": request.model_override,
+            "api_key_override_supplied": request.api_key_override is not None,
             "message_count": len(messages),
             "attempts": request.attempts,
         },
@@ -412,6 +415,7 @@ async def _run_llm_stream_probe_once(
     messages: list[dict[str, str]],
     base_url_override: str | None,
     model_override: str | None,
+    api_key_override: str | None,
     max_tokens: int,
     temperature: float | None,
     timeout_ms: int,
@@ -432,6 +436,7 @@ async def _run_llm_stream_probe_once(
                 base_url_override=base_url_override,
                 messages=messages,
                 model_override=model_override,
+                api_key_override=api_key_override,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -495,12 +500,13 @@ async def _probe_with_base_url_override(
     base_url_override: str,
     messages: list[dict[str, str]],
     model_override: str | None,
+    api_key_override: str | None,
     max_tokens: int,
     temperature: float | None,
 ):
     """Create a temporary OpenAI-compatible client for direct base_url probing."""
     config = ConfigManager().config.models[0]
-    api_key = (
+    api_key = api_key_override or (
         config.api_key.get_secret_value()
         if hasattr(config.api_key, "get_secret_value")
         else str(config.api_key)
