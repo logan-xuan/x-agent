@@ -565,6 +565,7 @@
     - streaming wrapper 记录 provider 首个内容 chunk 的结构化日志
     - fast mode timeout 在无正文时返回更可解释的 fallback 文本
     - 新增 `llm-stream-probe` 端点，直接量化 `create_stream_ms / first_chunk_ms / done_ms`
+    - `llm-stream-probe` 支持 `attempts` 批量采样
   - 已验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_llm_router.py tests/unit/test_runtime_gateway_adapter.py tests/unit/test_dev_runtime_turn_api.py`
     - `POST /api/v1/dev/llm-stream-probe` 真实 probe
@@ -573,6 +574,7 @@
   - 本地 runtime overhead 已经基本压平
   - provider 首 chunk 仍存在显著波动，极简 prompt 下也可能超过 `8s`
   - 实测：`content=\"ok\"`, `timeout_ms=8000`, `max_tokens=8/16/64` 时，`first_chunk_ms` 均为 `null`
+  - 批量 probe 显示波动很大：`max_tokens=64` 至少出现过 `first_chunk_ms=6555`, `done_ms=7001`，但同类请求也可能在 `8s` 内完全无正文
   - post-review smoke：`disable_tools=true` + `disable_skills=true`, `runtime_timeout_ms=8000` 时，`first_text_chunk≈4076ms`，`completed≈6865ms`
   - 下一步要么继续 provider 参数/模型侧验证，要么为 debug fast mode 设计更明确的 synthetic fallback
 
