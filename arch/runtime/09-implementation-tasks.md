@@ -674,6 +674,13 @@
   - 若当前环境无法提供备用 provider，形成清晰的阻塞清单和后续接入步骤
   - 保持 debug fast mode fallback 作为短期兜底
 
+- 当前已完成：
+  - `backend/x-agent.yaml.example`
+  - `arch/runtime/06-config-schema.md`
+  - 已明确写入：
+    - 备用 provider onboarding 需要先用 `llm-stream-probe` 验证 `base_url + model_id + key`
+    - 不应假设同一份 key 能跨 endpoint / model 直接复用
+
 验收：
 
 - 输出明确的 onboarding 阻塞项或落地方案

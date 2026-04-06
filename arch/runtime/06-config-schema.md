@@ -41,6 +41,12 @@
 - 很多参数是“单点参数”，没有 profile 概念
 - 无法很好表达主 agent 与 child agent 的差异化限制
 
+补充约束：
+
+- `config.models` 虽然已支持 primary / backup provider，但备用 provider onboarding 不能只改 `model_id`
+- 同一份 key 在不同 `base_url` / endpoint 上未必可用
+- 进入生产配置前，应先通过 `/api/v1/dev/llm-stream-probe` 验证候选 `base_url + model_id + key` 组合
+
 ---
 
 ## 3. 新配置树

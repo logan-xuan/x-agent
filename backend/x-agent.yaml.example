@@ -3,6 +3,15 @@
 # 复制此文件为 x-agent.yaml 并填写实际值
 
 models:
+  # 说明:
+  # 1. LLMRouter 已支持 primary/backup failover
+  # 2. 备用 provider 不要假设“同一份 key + 随便换 base_url/model”就可用
+  # 3. 在切换前先用 /api/v1/dev/llm-stream-probe 验证:
+  #    - 目标 base_url
+  #    - 目标 model_id
+  #    - 当前 key 是否真能访问该组合
+  # 4. 如果 probe 返回 invalid_api_key / model not supported，应视为外部依赖未就绪
+
   # 主模型配置
   - name: primary
     provider: openai
@@ -14,6 +23,9 @@ models:
     max_retries: 2
   
   # 备用模型配置 (阿里云百炼)
+  # 注意:
+  # - 某些 DashScope endpoint 只支持特定 key / model 组合
+  # - onboarding 前请先用 llm-stream-probe 做真实验证
   - name: backup-bailian
     provider: bailian
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
