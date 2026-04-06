@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 import pytest
 
 from src.runtime.session.orchestrator import DefaultSessionOrchestrator
-from src.runtime.types import ChildResult, SessionDescriptor, SpawnPacket
+from src.runtime.repositories import StateSnapshotRecord, SummaryRecord
+from src.runtime.types import ChildResult, SessionDescriptor, SpawnPacket, TaskFrame
 
 
 @pytest.mark.asyncio
@@ -126,3 +127,59 @@ async def test_orchestrator_prepare_child_turn_unifies_spawn_and_policy_envelope
     assert envelope.prompt_mode == "minimal"
     assert envelope.request.metadata["auto_archive"] is True
     assert envelope.request.metadata["max_spawns"] == 0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_records_and_reads_latest_summary():
+    orchestrator = DefaultSessionOrchestrator()
+
+    await orchestrator.record_summary(
+        SummaryRecord(
+            summary_id="sum-1",
+            session_id="sess-1",
+            summary_type="collapse",
+            summary="older",
+            created_at=1.0,
+        )
+    )
+    await orchestrator.record_summary(
+        SummaryRecord(
+            summary_id="sum-2",
+            session_id="sess-1",
+            summary_type="collapse",
+            summary="newer",
+            created_at=2.0,
+        )
+    )
+
+    latest = await orchestrator.latest_summary("sess-1")
+
+    assert latest is not None
+    assert latest.summary_id == "sum-2"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_records_and_reads_latest_state_snapshot():
+    orchestrator = DefaultSessionOrchestrator()
+
+    await orchestrator.record_state_snapshot(
+        StateSnapshotRecord(
+            snapshot_id="snap-1",
+            session_id="sess-1",
+            task_frame=TaskFrame(objective="older"),
+            created_at=1.0,
+        )
+    )
+    await orchestrator.record_state_snapshot(
+        StateSnapshotRecord(
+            snapshot_id="snap-2",
+            session_id="sess-1",
+            task_frame=TaskFrame(objective="newer"),
+            created_at=2.0,
+        )
+    )
+
+    latest = await orchestrator.latest_state_snapshot("sess-1")
+
+    assert latest is not None
+    assert latest.snapshot_id == "snap-2"

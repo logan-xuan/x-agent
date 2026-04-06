@@ -6,7 +6,16 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 from typing import Any
 
-from ..repositories import InMemorySessionRepository, SessionRepository
+from ..repositories import (
+    InMemorySessionRepository,
+    InMemoryStateSnapshotRepository,
+    InMemorySummaryRepository,
+    SessionRepository,
+    StateSnapshotRecord,
+    StateSnapshotRepository,
+    SummaryRecord,
+    SummaryRepository,
+)
 from ..types import ChildResult, RouteMeta, SessionDescriptor, SpawnPacket, TurnRequest
 from .announcement_manager import AnnouncementManager
 from .child_session import ChildSessionManager, ChildTurnEnvelope
@@ -21,6 +30,8 @@ class DefaultSessionOrchestrator:
     """Resolve sessions, schedule work, and manage child-session announcements."""
 
     session_store: SessionRepository = field(default_factory=InMemorySessionRepository)
+    summary_repository: SummaryRepository = field(default_factory=InMemorySummaryRepository)
+    state_snapshot_repository: StateSnapshotRepository = field(default_factory=InMemoryStateSnapshotRepository)
     route_resolver: DefaultRouteResolver = field(default_factory=DefaultRouteResolver)
     lane_scheduler: InMemoryLaneScheduler = field(default_factory=InMemoryLaneScheduler)
     spawn_manager: SpawnManager = field(default_factory=SpawnManager)
@@ -102,6 +113,24 @@ class DefaultSessionOrchestrator:
             return
         archived = await self.lifecycle_manager.archive(session)
         await self.session_store.put(archived)
+
+    async def record_summary(self, summary: SummaryRecord) -> SummaryRecord:
+        """Persist a runtime summary and return it."""
+        await self.summary_repository.put(summary)
+        return summary
+
+    async def latest_summary(self, session_id: str) -> SummaryRecord | None:
+        """Return the latest stored summary for a session when available."""
+        return await self.summary_repository.latest_for_session(session_id)
+
+    async def record_state_snapshot(self, snapshot: StateSnapshotRecord) -> StateSnapshotRecord:
+        """Persist a runtime state snapshot and return it."""
+        await self.state_snapshot_repository.put(snapshot)
+        return snapshot
+
+    async def latest_state_snapshot(self, session_id: str) -> StateSnapshotRecord | None:
+        """Return the latest stored state snapshot for a session."""
+        return await self.state_snapshot_repository.latest_for_session(session_id)
 
     def _event_value(self, event: Any, key: str) -> str | None:
         if isinstance(event, dict):
