@@ -951,6 +951,7 @@
     - 新增 `resume_session()`，将 session + latest snapshot + latest summary + recent transcript 的最小恢复入口统一收进 orchestrator
     - `resume_session()` 已改为返回结构化 `ResumeSessionState`，不再暴露裸 dict
     - `resume_session()` 已补齐 `summary_chain`，进一步贴近设计里的 reconnect/resume 时序
+    - 新增 `load_session()` 显式入口，对齐设计里的 `SessionOrchestrator.load(session_key)`
   - 验证：
     - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_session_orchestrator.py tests/unit/test_runtime_child_session_policy.py tests/unit/test_runtime_announcement_manager.py tests/unit/test_runtime_repositories.py`
     - `python -m compileall src/runtime/session src/runtime/repositories.py`

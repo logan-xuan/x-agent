@@ -105,6 +105,26 @@ async def test_orchestrator_accepts_repository_protocol_implementation():
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_load_session_returns_existing_session():
+    orchestrator = DefaultSessionOrchestrator()
+    session = SessionDescriptor(session_key="sess-load", session_id="sess-load")
+    await orchestrator.session_store.put(session)
+
+    loaded = await orchestrator.load_session("sess-load")
+
+    assert loaded == session
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_load_session_returns_none_when_missing():
+    orchestrator = DefaultSessionOrchestrator()
+
+    loaded = await orchestrator.load_session("missing")
+
+    assert loaded is None
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_prepare_child_turn_unifies_spawn_and_policy_envelope():
     orchestrator = DefaultSessionOrchestrator()
     parent = SessionDescriptor(session_key="parent", session_id="parent")

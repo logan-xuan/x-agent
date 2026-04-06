@@ -72,6 +72,10 @@ class DefaultSessionOrchestrator:
         await self.session_store.put(session)
         return session
 
+    async def load_session(self, session_key: str) -> SessionDescriptor | None:
+        """Load a session descriptor by key without mutating lifecycle state."""
+        return await self.session_store.get(session_key)
+
     async def enqueue_turn(self, session: SessionDescriptor, request: TurnRequest) -> TurnRequest:
         """Schedule a turn request into the correct lane and return it after execution."""
         async def run() -> TurnRequest:
