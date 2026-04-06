@@ -292,7 +292,7 @@ async def test_agent_bridge_runtime_fast_mode_timeout_uses_richer_fallback_text(
     assert result.kind == "abort"
     assert result.output_text == (
         "[runtime fast mode timeout after 1ms] "
-        "bridge ok, waiting for provider content. "
+        'request="runtime execute". bridge ok, waiting for provider content. '
         "phase=timeout, last_event=none, events_seen=0"
     )
 
@@ -326,7 +326,7 @@ async def test_agent_bridge_runtime_fast_mode_timeout_after_agent_start_mentions
     assert result.kind == "abort"
     assert result.output_text == (
         "[runtime fast mode timeout after 1ms] "
-        "bridge ok, provider emitted no content chunk before timeout. "
+        'request="runtime execute". provider emitted no content chunk before timeout. '
         "Try /api/v1/dev/llm-stream-probe or increase runtime_timeout_ms. "
         "phase=timeout, last_event=agent_start, events_seen=1"
     )

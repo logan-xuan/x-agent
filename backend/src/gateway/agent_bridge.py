@@ -637,6 +637,7 @@ class AgentBridge:
                     response_parts,
                     diagnostics=diagnostics,
                     finish_reason="max_wall_time",
+                    user_input=request.user_input,
                 ),
                 updated_task_frame=request.task_frame,
                 metadata={
@@ -670,6 +671,7 @@ class AgentBridge:
                         "message": str(exc),
                         "error_type": type(exc).__name__,
                     },
+                    user_input=request.user_input,
                 ),
                 updated_task_frame=request.task_frame,
                 metadata={
@@ -703,6 +705,7 @@ class AgentBridge:
                     diagnostics=diagnostics,
                     finish_reason="controller_abort",
                     error_payload=error_payload,
+                    user_input=request.user_input,
                 ),
                 updated_task_frame=request.task_frame,
                 metadata={
@@ -802,6 +805,7 @@ class AgentBridge:
         diagnostics: dict[str, Any],
         finish_reason: str,
         error_payload: dict[str, object] | None = None,
+        user_input: str = "",
     ) -> str | None:
         """Return streamed output when available, otherwise synthesize a compact debug summary."""
         streamed = final_content or "".join(response_parts) or None
@@ -817,16 +821,18 @@ class AgentBridge:
         if finish_reason == "max_wall_time":
             timeout_suffix = f" after {timeout_ms}ms" if timeout_ms else ""
             if fast_mode and not streamed:
+                request_preview = " ".join(user_input.split())[:48] or "(empty)"
                 if last_event == "agent_start":
                     return (
                         f"[runtime fast mode timeout{timeout_suffix}] "
-                        "bridge ok, provider emitted no content chunk before timeout. "
+                        f"request=\"{request_preview}\". "
+                        "provider emitted no content chunk before timeout. "
                         "Try /api/v1/dev/llm-stream-probe or increase runtime_timeout_ms. "
                         f"phase={phase}, last_event={last_event}, events_seen={events_seen}"
                     )
                 return (
                     f"[runtime fast mode timeout{timeout_suffix}] "
-                    f"bridge ok, waiting for provider content. "
+                    f"request=\"{request_preview}\". bridge ok, waiting for provider content. "
                     f"phase={phase}, last_event={last_event}, events_seen={events_seen}"
                 )
             return (

@@ -234,9 +234,10 @@ def test_dev_llm_stream_probe_endpoint_reports_timings():
     client = TestClient(app)
 
     class FakeRouter:
-        async def chat(self, messages, stream=False, max_tokens=None):
+        async def chat(self, messages, stream=False, max_tokens=None, temperature=None):
             assert stream is True
             assert max_tokens == 32
+            assert temperature is None
             assert messages[-1]["content"] == "probe"
 
             async def _stream():
@@ -269,10 +270,11 @@ def test_dev_llm_stream_probe_endpoint_handles_timeout():
     client = TestClient(app)
 
     class FakeRouter:
-        async def chat(self, messages, stream=False, max_tokens=None):
+        async def chat(self, messages, stream=False, max_tokens=None, temperature=None):
             _ = messages
             _ = stream
             _ = max_tokens
+            _ = temperature
 
             async def _stream():
                 await asyncio.sleep(0.05)
@@ -300,10 +302,11 @@ def test_dev_llm_stream_probe_endpoint_supports_multiple_attempts():
     client = TestClient(app)
 
     class FakeRouter:
-        async def chat(self, messages, stream=False, max_tokens=None):
+        async def chat(self, messages, stream=False, max_tokens=None, temperature=None):
             _ = messages
             _ = stream
             _ = max_tokens
+            _ = temperature
 
             async def _stream():
                 yield type("Chunk", (), {"content": "ok", "is_finished": True})()
