@@ -53,12 +53,36 @@ async def test_in_memory_transcript_repository_filters_by_session():
 
 async def test_in_memory_summary_repository_filters_by_session():
     repo = InMemorySummaryRepository()
-    await repo.put(SummaryRecord(summary_id="sum-1", session_id="sess-1", summary_type="collapse", summary="a"))
-    await repo.put(SummaryRecord(summary_id="sum-2", session_id="sess-2", summary_type="collapse", summary="b"))
+    await repo.put(
+        SummaryRecord(
+            summary_id="sum-1",
+            session_id="sess-1",
+            summary_type="collapse",
+            based_on_entry_ids=["entry-1"],
+            objective="old",
+            summary="a",
+            decisions=["decide-a"],
+        )
+    )
+    await repo.put(
+        SummaryRecord(
+            summary_id="sum-2",
+            session_id="sess-2",
+            summary_type="collapse",
+            based_on_entry_ids=["entry-2"],
+            objective="new",
+            summary="b",
+            open_questions=["q1"],
+            modified_files=["app.py"],
+        )
+    )
 
     summaries = await repo.list_by_session("sess-2")
 
     assert [summary.summary_id for summary in summaries] == ["sum-2"]
+    assert summaries[0].objective == "new"
+    assert summaries[0].open_questions == ["q1"]
+    assert summaries[0].modified_files == ["app.py"]
 
 
 async def test_in_memory_artifact_repository_round_trips_content():
@@ -77,7 +101,10 @@ async def test_in_memory_state_snapshot_repository_returns_latest_snapshot():
         StateSnapshotRecord(
             snapshot_id="snap-1",
             session_id="sess-1",
+            turn_index=1,
             task_frame=TaskFrame(objective="old"),
+            unresolved=["a"],
+            active_artifact_refs=["artifact-1"],
             created_at=1.0,
         )
     )
@@ -85,7 +112,12 @@ async def test_in_memory_state_snapshot_repository_returns_latest_snapshot():
         StateSnapshotRecord(
             snapshot_id="snap-2",
             session_id="sess-1",
+            turn_index=2,
             task_frame=TaskFrame(objective="new"),
+            unresolved=["b"],
+            active_artifact_refs=["artifact-2"],
+            tool_usage_json={"read_file": 2},
+            last_finish_reason="done_definition_satisfied",
             created_at=2.0,
         )
     )
@@ -94,3 +126,8 @@ async def test_in_memory_state_snapshot_repository_returns_latest_snapshot():
 
     assert latest is not None
     assert latest.snapshot_id == "snap-2"
+    assert latest.turn_index == 2
+    assert latest.unresolved == ["b"]
+    assert latest.active_artifact_refs == ["artifact-2"]
+    assert latest.tool_usage_json == {"read_file": 2}
+    assert latest.last_finish_reason == "done_definition_satisfied"

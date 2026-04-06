@@ -851,12 +851,23 @@
 
 - runtime 逻辑不再直接依赖 ORM model
 
-#### [ ] P5-T2: 新增状态快照与摘要链存储
+#### [x] P5-T2: 新增状态快照与摘要链存储
 
 - 新增：
   - `session_state_snapshots`
   - `summary_records`
   - `artifact_records`
+
+- 已完成：
+  - `backend/src/runtime/repositories.py`
+  - `backend/tests/unit/test_runtime_repositories.py`
+  - 当前落地：
+    - `SummaryRecord` 已补齐 `based_on_entry_ids / objective / decisions / open_questions / read_files / modified_files / recent_failures`
+    - `StateSnapshotRecord` 已补齐 `turn_index / unresolved / active_artifact_refs / tool_usage_json / last_finish_reason`
+    - in-memory repository 测试已固定 richer summary/snapshot 字段行为
+  - 验证：
+    - `python -m pytest --override-ini addopts='' tests/unit/test_runtime_repositories.py`
+    - `python -m compileall src/runtime/repositories.py`
 
 验收：
 

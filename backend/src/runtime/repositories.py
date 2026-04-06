@@ -44,6 +44,13 @@ class SummaryRecord:
         "child_result",
     ]
     summary: str
+    based_on_entry_ids: list[str] = field(default_factory=list)
+    objective: str = ""
+    decisions: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    read_files: list[str] = field(default_factory=list)
+    modified_files: list[str] = field(default_factory=list)
+    recent_failures: list[str] = field(default_factory=list)
     artifact_refs: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = 0.0
@@ -56,7 +63,12 @@ class StateSnapshotRecord:
     snapshot_id: str
     session_id: str
     task_frame: TaskFrame
+    turn_index: int = 0
+    unresolved: list[str] = field(default_factory=list)
+    active_artifact_refs: list[str] = field(default_factory=list)
     budget_snapshot: dict[str, Any] = field(default_factory=dict)
+    tool_usage_json: dict[str, int] = field(default_factory=dict)
+    last_finish_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = 0.0
 
