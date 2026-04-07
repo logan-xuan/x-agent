@@ -100,17 +100,19 @@ class ActiveSessionResolver:
             NoActiveSessionError: auto_create=False 且无有效 session。
         """
         from ..conversation.session import SessionManager
+        from ..config.manager import get_config
 
         session_manager = SessionManager()
+        canonical_agent_id = get_config().multi_agent.resolve_agent_id(agent_id) or agent_id
 
         # 1. 查找最新的 ACTIVE session（新系统 sessions 表）
-        active_session = await session_manager.get_active_session_by_agent(agent_id)
+        active_session = await session_manager.get_active_session_by_agent(canonical_agent_id)
 
         if active_session:
             logger.debug(
                 "Active session resolved",
                 extra={
-                    "agent_id": agent_id,
+                    "agent_id": canonical_agent_id,
                     "channel_type": channel_type.value,
                     "session_id": active_session.id,
                 },
@@ -119,22 +121,22 @@ class ActiveSessionResolver:
 
         # 2. 没有有效 session
         if not auto_create:
-            raise NoActiveSessionError(agent_id, channel_type)
+            raise NoActiveSessionError(canonical_agent_id, channel_type)
 
         # 3. 自动创建新 session（新系统 sessions 表）
         # 使用 Agent 名称作为会话标题
         from ..conversation.dao.models import Agent
-        agent = Agent.from_config(agent_id)
+        agent = Agent.from_config(canonical_agent_id)
         title = f"{agent.agent_name} 对话" if agent else f"Auto-created for {channel_type.value}"
         new_session = await session_manager.create_session(
             title=title,
-            agent_id=agent_id,
+            agent_id=canonical_agent_id,
         )
 
         logger.info(
             "Auto-created session for notification",
             extra={
-                "agent_id": agent_id,
+                "agent_id": canonical_agent_id,
                 "channel_type": channel_type.value,
                 "session_id": new_session.id,
             },

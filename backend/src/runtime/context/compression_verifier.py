@@ -47,6 +47,10 @@ class DefaultCompressionVerifier:
             preserved["objective"] = False
             reasons.append("compressed output no longer preserves the task objective")
 
+        if not self._objective_snapshot_consistent(request):
+            preserved["objective"] = False
+            reasons.append("objective_mismatch")
+
         original_artifact_ids = {artifact.id for artifact in request.original_artifacts}
         compressed_artifact_ids = {artifact.id for artifact in request.compressed_artifacts}
         if not original_artifact_ids.issubset(compressed_artifact_ids):
@@ -85,6 +89,23 @@ class DefaultCompressionVerifier:
             if role in {"tool", "tool_result"} and not seen_assistant:
                 return False
         return True
+
+    def _objective_snapshot_consistent(self, request: CompressionVerifyRequest) -> bool:
+        before = str(
+            request.metadata.get(
+                "objective_before",
+                request.metadata.get("before_objective", ""),
+            )
+        ).strip()
+        after = str(
+            request.metadata.get(
+                "objective_after",
+                request.metadata.get("after_objective", ""),
+            )
+        ).strip()
+        if not before or not after:
+            return True
+        return before == after
 
     def _objective_preserved(self, request: CompressionVerifyRequest) -> bool:
         if request.metadata.get("objective_out_of_band") is True:

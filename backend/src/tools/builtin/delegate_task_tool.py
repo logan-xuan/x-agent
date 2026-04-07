@@ -153,6 +153,7 @@ class DelegateTaskTool(BaseTool):
             ToolResult with the delegated task's response or status.
         """
         try:
+            canonical_agent_id = self._canonicalize_agent_id(agent_id)
             from src.gateway.agent_invoker import AgentInvoker, InvokeSource
             from src.agent_core.api.dev_routes import get_logger as get_agent_logger
             from src.agent_core.types import LogCategory, LogLevel
@@ -168,6 +169,7 @@ class DelegateTaskTool(BaseTool):
                 "DelegateTaskTool executing",
                 extra={
                     "target_agent_id": agent_id,
+                    "canonical_target_agent_id": canonical_agent_id,
                     "task_length": len(task),
                     "session_id": session_id,
                     "wait_for_result": wait_for_result,
@@ -209,12 +211,12 @@ class DelegateTaskTool(BaseTool):
 
                 target_session = await self._resolve_target_session(
                     session_manager=session_manager,
-                    agent_id=agent_id,
+                    agent_id=canonical_agent_id,
                 )
                 if target_session is None:
                     target_session = await session_manager.create_session(
-                        title=f"{agent_id} 对话",
-                        agent_id=agent_id,
+                        title=f"{canonical_agent_id} 对话",
+                        agent_id=canonical_agent_id,
                         close_existing=False,
                     )
 
@@ -229,7 +231,7 @@ class DelegateTaskTool(BaseTool):
                 invoker = AgentInvoker()
                 _runtime_session, child_request = await invoker.prepare_runtime_turn(
                     task,
-                    agent_id=agent_id,
+                    agent_id=canonical_agent_id,
                     session_id=target_session.id,
                     channel_type=target_channel_type,
                     source=InvokeSource.AGENT,
@@ -249,7 +251,7 @@ class DelegateTaskTool(BaseTool):
                 child_context = self._build_child_context(
                     parent_context=parent_context,
                     child_session_id=target_session.id,
-                    agent_id=agent_id,
+                    agent_id=canonical_agent_id,
                 )
                 child_trace_ref["trace_id"] = child_context.trace_id
                 return {
@@ -465,7 +467,7 @@ class DelegateTaskTool(BaseTool):
                     loop.create_task(
                         invoker.invoke(
                             content=task,
-                            agent_id=agent_id,
+                            agent_id=canonical_agent_id,
                             session_id=session_id,
                             source=InvokeSource.AGENT,
                         )
@@ -513,7 +515,7 @@ class DelegateTaskTool(BaseTool):
                 result = await asyncio.wait_for(
                     invoker.invoke(
                         content=task,
-                        agent_id=agent_id,
+                        agent_id=canonical_agent_id,
                         session_id=session_id,
                         source=InvokeSource.AGENT,
                     ),
@@ -626,6 +628,12 @@ class DelegateTaskTool(BaseTool):
             return "delegate-default"
         return runtime_services.default_turn_profile
 
+    def _canonicalize_agent_id(self, agent_id: str) -> str:
+        """将传入的 Agent ID 归一化为配置中的标准 ID。"""
+        from src.config.manager import get_config
+
+        return get_config().multi_agent.resolve_agent_id(agent_id) or agent_id
+
     async def _resolve_target_session(
         self,
         *,
@@ -636,16 +644,17 @@ class DelegateTaskTool(BaseTool):
         from src.gateway.connection_registry import get_connection_registry
 
         registry = get_connection_registry()
+        canonical_agent_id = self._canonicalize_agent_id(agent_id)
         for connected_session_id in registry.get_all_session_ids():
             connected_session = await session_manager.get_session(connected_session_id)
             if connected_session is None:
                 continue
-            if connected_session.agent_id != agent_id:
+            if self._canonicalize_agent_id(connected_session.agent_id) != canonical_agent_id:
                 continue
             if connected_session.status != "active":
                 continue
             return connected_session
-        return await session_manager.get_active_session_by_agent(agent_id)
+        return await session_manager.get_active_session_by_agent(canonical_agent_id)
 
     def _build_child_context(
         self,

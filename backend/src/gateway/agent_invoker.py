@@ -126,6 +126,12 @@ class AgentInvoker:
             if key not in reserved
         }
 
+    def _canonicalize_agent_id(self, agent_id: str) -> str:
+        """将别名 Agent ID 归一化为配置中的标准 ID。"""
+        from ..config.manager import get_config
+
+        return get_config().multi_agent.resolve_agent_id(agent_id) or agent_id
+
     async def invoke(
         self,
         content: str,
@@ -155,12 +161,13 @@ class AgentInvoker:
             触发结果。
         """
         trace_id = str(uuid4())
+        canonical_agent_id = self._canonicalize_agent_id(agent_id)
 
         logger.info(
             "AgentInvoker.invoke started",
             extra={
                 "content_length": len(content),
-                "agent_id": agent_id,
+                "agent_id": canonical_agent_id,
                 "channel_type": channel_type.value,
                 "source": source.value,
                 "trace_id": trace_id,
@@ -170,7 +177,7 @@ class AgentInvoker:
         try:
             # 1. Session 解析
             resolved_session_id = await self._resolve_session(
-                session_id, agent_id, channel_type,
+                session_id, canonical_agent_id, channel_type,
             )
 
             # 2. 构建 Identity + AgentContext
@@ -178,14 +185,14 @@ class AgentInvoker:
             context = AgentContext.for_internal(
                 session_id=resolved_session_id,
                 source=source.value,
-                agent_id=agent_id,
+                agent_id=canonical_agent_id,
                 channel_type=channel_type,
                 **context_metadata,
             )
             set_current_context(context)
 
             # 3. 从配置精准加载目标 Agent 的完整信息
-            agent_info = self._resolve_agent_info(agent_id)
+            agent_info = self._resolve_agent_info(canonical_agent_id)
 
             # 4. 确保 Session 存在
             await self._dispatcher.ensure_session(
@@ -246,6 +253,7 @@ class AgentInvoker:
                 "AgentInvoker.invoke failed",
                 extra={
                     "agent_id": agent_id,
+                    "canonical_agent_id": canonical_agent_id,
                     "source": source.value,
                     "error": str(exc),
                 },
@@ -414,17 +422,18 @@ class AgentInvoker:
         metadata: dict[str, Any] | None = None,
     ):
         """Prepare a runtime turn request for internal triggers without invoking legacy agent_loop."""
-        resolved_session_id = await self._resolve_session(session_id, agent_id, channel_type)
+        canonical_agent_id = self._canonicalize_agent_id(agent_id)
+        resolved_session_id = await self._resolve_session(session_id, canonical_agent_id, channel_type)
         context_metadata = self._sanitize_runtime_metadata(metadata)
         context = AgentContext.for_internal(
             session_id=resolved_session_id,
             source=source.value,
-            agent_id=agent_id,
+            agent_id=canonical_agent_id,
             channel_type=channel_type,
             **context_metadata,
         )
         set_current_context(context)
-        agent_info = self._resolve_agent_info(agent_id)
+        agent_info = self._resolve_agent_info(canonical_agent_id)
         await self._dispatcher.ensure_session(resolved_session_id, agent_info)
         payload = {
             "session_id": resolved_session_id,
@@ -435,7 +444,7 @@ class AgentInvoker:
             "metadata": {
                 **context_metadata,
                 "source": source.value,
-                "agent_id": agent_id,
+                "agent_id": canonical_agent_id,
                 "persist_user_message": False,
             },
             "lane": "cron" if source == InvokeSource.CRON else "background_tool",

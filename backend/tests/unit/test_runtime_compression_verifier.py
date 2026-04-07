@@ -65,3 +65,23 @@ def test_compression_verifier_rejects_missing_recent_failures():
 
     assert result.ok is False
     assert result.preserved_fields["recent_failures"] is False
+
+
+def test_compression_verifier_rejects_inconsistent_objective_snapshot_authenticity():
+    verifier = DefaultCompressionVerifier()
+    request = CompressionVerifyRequest(
+        task_frame=TaskFrame(objective="Ship runtime"),
+        original_messages=[{"role": "user", "content": "do the work"}],
+        compressed_messages=[{"role": "system", "content": "[Collapsed history]"}],
+        metadata={
+            "objective_out_of_band": True,
+            "objective_before": "Ship runtime",
+            "objective_after": "Ship auth",
+        },
+    )
+
+    result = verifier.verify(request)
+
+    assert result.ok is False
+    assert result.preserved_fields["objective"] is False
+    assert any("objective" in reason for reason in result.reasons)

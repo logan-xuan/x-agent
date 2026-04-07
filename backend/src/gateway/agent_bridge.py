@@ -1630,7 +1630,11 @@ class AgentBridge:
                         freed_tokens=freed_tokens,
                         affected_artifact_ids=affected_artifacts,
                         fallback_used=normalized_stage == "emergency",
-                        metadata={"operations": list(result.operations)},
+                        metadata={
+                            "operations": list(result.operations),
+                            "rollback_applied": bool(getattr(result, "rollback_applied", False)),
+                            "rollback_reason": getattr(result, "rollback_reason", None),
+                        },
                         created_at=time.time(),
                     )
                 )

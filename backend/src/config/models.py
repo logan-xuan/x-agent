@@ -699,6 +699,7 @@ class AgentConfig(BaseModel):
     """Agent configuration - defines an AI agent."""
     
     id: str = Field(..., description="Unique agent identifier")
+    aliases: list[str] = Field(default_factory=list, description="向后兼容用的 Agent 别名列表")
     name: str = Field(..., description="Display name")
     type: Literal["main", "specialized"] = Field(default="main", description="Agent type")
     persona: str = Field(default="", description="System prompt/persona description")
@@ -763,9 +764,14 @@ class MultiAgentConfig(BaseModel):
     def get_agent(self, agent_id: str) -> AgentConfig | None:
         """Get agent by ID."""
         for agent in self.agents:
-            if agent.id == agent_id:
+            if agent.id == agent_id or agent_id in agent.aliases:
                 return agent
         return None
+
+    def resolve_agent_id(self, agent_id: str) -> str | None:
+        """将 Agent ID 或别名解析为配置中的标准 ID。"""
+        agent = self.get_agent(agent_id)
+        return agent.id if agent is not None else None
     
     def get_agent_by_name(self, name: str) -> AgentConfig | None:
         """Get agent by name."""
@@ -776,7 +782,12 @@ class MultiAgentConfig(BaseModel):
     
     def get_channels_for_agent(self, agent_id: str) -> list[ChannelConfig]:
         """Get all channels for a specific agent (backward compatible)."""
-        return [ch for ch in self.channels if ch.agent_id == agent_id]
+        canonical_agent_id = self.resolve_agent_id(agent_id) or agent_id
+        return [
+            ch
+            for ch in self.channels
+            if (self.resolve_agent_id(ch.agent_id) if ch.agent_id else None) == canonical_agent_id
+        ]
     
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
         """Get channel by ID."""
@@ -809,7 +820,7 @@ class MultiAgentConfig(BaseModel):
         
         # Priority 1: Check channel.agent_id (backward compatibility)
         if channel and channel.agent_id:
-            return channel.agent_id
+            return self.resolve_agent_id(channel.agent_id) or channel.agent_id
         
         # Priority 2: Match bindings
         for binding in self.bindings:
@@ -819,7 +830,7 @@ class MultiAgentConfig(BaseModel):
             # Check peer match
             if binding.match.peer.kind == peer_kind:
                 if binding.match.peer.id == "*" or binding.match.peer.id == peer_id:
-                    return binding.agent_id
+                    return self.resolve_agent_id(binding.agent_id) or binding.agent_id
         
         return None
     
@@ -831,15 +842,29 @@ class MultiAgentConfig(BaseModel):
     def validate_agent_references(self) -> "MultiAgentConfig":
         """Ensure all channel agent_id and binding agent_id references exist."""
         agent_ids = {agent.id for agent in self.agents}
+        alias_owners: dict[str, str] = {}
+
+        for agent in self.agents:
+            for alias in agent.aliases:
+                if alias == agent.id:
+                    raise ValueError(f"Agent '{agent.id}' alias duplicates its canonical id")
+                if alias in agent_ids:
+                    raise ValueError(f"Agent alias '{alias}' conflicts with an existing agent id")
+                owner = alias_owners.get(alias)
+                if owner is not None and owner != agent.id:
+                    raise ValueError(
+                        f"Agent alias '{alias}' is defined by both '{owner}' and '{agent.id}'"
+                    )
+                alias_owners[alias] = agent.id
         
         # Validate channel.agent_id references
         for channel in self.channels:
-            if channel.agent_id and channel.agent_id not in agent_ids:
+            if channel.agent_id and self.resolve_agent_id(channel.agent_id) is None:
                 raise ValueError(f"Channel '{channel.id}' references unknown agent '{channel.agent_id}'")
         
         # Validate binding agent_id references
         for binding in self.bindings:
-            if binding.agent_id not in agent_ids:
+            if self.resolve_agent_id(binding.agent_id) is None:
                 raise ValueError(f"Binding references unknown agent '{binding.agent_id}'")
             
             # Validate binding channel reference

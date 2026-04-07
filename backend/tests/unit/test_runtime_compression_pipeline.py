@@ -205,6 +205,8 @@ async def test_compression_pipeline_sets_rollback_metadata_when_verification_fai
         "applied": True,
         "reason": "forced failure",
     }
+    assert result.metadata["rollback_applied"] is True
+    assert result.metadata["rollback_reason"] == "forced failure"
 
 
 @pytest.mark.asyncio
