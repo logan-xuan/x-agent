@@ -121,8 +121,11 @@ def convert_gateway_event_to_ws(event: GatewayEvent) -> dict[str, Any] | None:
         return {
             "type": "tool_result",
             "tool_call_id": event.data.get("tool_call_id", ""),
+            "name": event.data.get("name", ""),
             "result": event.data.get("result", ""),
             "is_error": event.data.get("is_error", False),
+            "details": event.data.get("details", {}),
+            "duration_ms": event.data.get("duration_ms"),
         }
 
     if event.type == GatewayEventType.ERROR:
@@ -246,6 +249,7 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
         from ...conversation.session import SessionManager as _ReactivateSessionManager
         _reactivate_mgr = _ReactivateSessionManager()
         await _reactivate_mgr.reactivate_session(session_id)
+        await _reactivate_mgr.touch_session(session_id)
     except Exception as reactivate_error:
         logger.warning(
             "Failed to reactivate session on WebSocket connect",

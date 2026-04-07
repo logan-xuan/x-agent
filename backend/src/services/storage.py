@@ -35,6 +35,8 @@ class StorageService:
     
     async def initialize(self) -> None:
         """Initialize database tables."""
+        from .. import models as _models  # noqa: F401  # Ensure model metadata is registered.
+
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
     

@@ -1,10 +1,12 @@
 """Unit tests for the runtime turn controller skeleton."""
 
 from src.runtime.turn.assessment import DefaultAssessmentEngine
+from src.runtime.types import BudgetDecision
 from src.runtime.turn.controller import DefaultTurnController
 from src.runtime.turn.state import TurnState
 from src.runtime.turn.tool_governor import DefaultToolGovernor
 from src.runtime.types import (
+    ToolPolicy,
     GovernedToolPlan,
     LoopAssessment,
     RouteMeta,
@@ -14,6 +16,7 @@ from src.runtime.types import (
     ToolCallSpec,
     ToolExecutionPlan,
     ToolExecutionResult,
+    TurnBudgetProfile,
     TurnRequest,
 )
 
@@ -124,3 +127,70 @@ def test_turn_controller_passes_governed_plan_to_executor():
 
     assert observed["max_parallelism"] == 1
     assert observed["rejected_calls"] == 0
+
+
+def test_turn_controller_budget_stop_uses_best_effort_summary_not_raw_last_tool_payload():
+    controller = DefaultTurnController()
+    state = TurnState.from_request(_request())
+    state.tool_results.extend(
+        [
+            ToolExecutionResult(
+                tool_name="web_search",
+                success=True,
+                output="first useful evidence about market trends",
+            ),
+            ToolExecutionResult(
+                tool_name="fetch_web_content",
+                success=False,
+                error="redirect error from source site",
+            ),
+        ]
+    )
+
+    result = controller._finish_from_budget(
+        state,
+        BudgetDecision.stop("token budget exhausted", "max_tokens"),
+    )
+
+    assert result.output_text is not None
+    assert "最佳努力结果" in result.output_text
+    assert "web_search" in result.output_text
+    assert "fetch_web_content" in result.output_text
+
+
+def test_turn_controller_requests_synthesis_when_all_planned_search_calls_are_rejected():
+    async def planner(state: TurnState) -> ToolExecutionPlan:
+        if state.metadata.get("runtime_synthesis_instruction"):
+            state.metadata["final_output_text"] = "synthesized final answer"
+            state.metadata["final_candidate_ready"] = True
+            return ToolExecutionPlan()
+        return ToolExecutionPlan(
+            calls=[
+                ToolCallSpec(tool_name="web_search", arguments={"q": "multi-agent"}),
+            ]
+        )
+
+    async def executor(plan: GovernedToolPlan, state: TurnState) -> list[ToolExecutionResult]:
+        _ = plan, state
+        return []
+
+    request = _request()
+    request.metadata["_runtime_budget_profile"] = TurnBudgetProfile(max_total_tokens=120000)
+    controller = DefaultTurnController(
+        planner=planner,
+        executor=executor,
+        tool_governor=DefaultToolGovernor(
+            policies_by_name={
+                "web_search": ToolPolicy(
+                    max_uses_per_turn=0,
+                    repeat_signature_limit=1,
+                )
+            }
+        ),
+    )
+
+    result = __import__("asyncio").run(controller.run(request))
+
+    assert result.kind == "final"
+    assert result.output_text == "synthesized final answer"
+    assert result.finish_reason == "done_definition_satisfied"

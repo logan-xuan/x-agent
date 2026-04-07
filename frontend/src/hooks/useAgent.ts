@@ -171,6 +171,23 @@ export function useAgent({
                 // 完整消息
                 if (msg.is_finished) {
                     const finalContent = (msg.content as string) || streamingContent;
+                    const finalizedToolCalls = pendingToolCallsRef.current.size > 0
+                        ? Array.from(pendingToolCallsRef.current.values())
+                        : undefined;
+                    const hasMeaningfulPayload = Boolean(
+                        finalContent.trim() ||
+                        streamingThinking.trim() ||
+                        (finalizedToolCalls && finalizedToolCalls.length > 0)
+                    );
+
+                    if (!hasMeaningfulPayload) {
+                        setStreamingContent('');
+                        setStreamingThinking('');
+                        setStreamingModel('');
+                        setIsLoading(false);
+                        pendingToolCallsRef.current.clear();
+                        break;
+                    }
 
                     const assistantMessage: AgentMessage = {
                         id: `assistant-${Date.now()}`,
@@ -182,9 +199,7 @@ export function useAgent({
                         provider: msg.provider as string | undefined,
                         stopReason: msg.stop_reason as string | undefined,
                         usage: msg.usage as { inputTokens?: number; outputTokens?: number } | undefined,
-                        toolCalls: pendingToolCallsRef.current.size > 0
-                            ? Array.from(pendingToolCallsRef.current.values())
-                            : undefined,
+                        toolCalls: finalizedToolCalls,
                         thinking: streamingThinking || undefined,
                     };
 
@@ -365,7 +380,15 @@ export function useAgent({
         try {
             const { messages: historyMessages } = await getSession(sid);
             const agentMessages: AgentMessage[] = historyMessages
-                .filter((msg: Message) => msg.role === 'user' || msg.role === 'assistant')
+                .filter((msg: Message) => {
+                    if (msg.role !== 'user' && msg.role !== 'assistant') {
+                        return false;
+                    }
+                    if (msg.role === 'assistant' && !msg.content.trim()) {
+                        return false;
+                    }
+                    return true;
+                })
                 .map((msg: Message) => ({
                     id: msg.id,
                     sessionId: msg.session_id,

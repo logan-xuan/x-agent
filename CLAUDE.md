@@ -89,6 +89,9 @@ cd backend && pip install -e ".[dev]"
 # Start all services
 ./start.sh
 
+# Start all services with PM2
+./pm2.sh start
+
 # Start services separately
 ./start-backend.sh  # Backend on http://localhost:8888
 ./start-frontend.sh # Frontend on http://localhost:5177

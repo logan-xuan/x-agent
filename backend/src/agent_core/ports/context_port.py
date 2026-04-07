@@ -36,6 +36,7 @@ class PreparedContext:
         original_tokens: 原始 token 数
         final_tokens: 最终 token 数
         summary: 压缩摘要（仅压缩时有值）
+        system_prompt_override: 可选的系统提示词覆盖值
     """
 
     messages: list[dict] = field(default_factory=list)
@@ -43,6 +44,7 @@ class PreparedContext:
     original_tokens: int = 0
     final_tokens: int = 0
     summary: str = ""
+    system_prompt_override: str | None = None
 
 
 class ContextPort(Protocol):

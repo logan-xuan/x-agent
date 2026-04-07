@@ -75,39 +75,38 @@ function App() {
         // 使用默认 agent_id 确保 session 始终绑定到正确的 agent
         const savedAgentId = localStorage.getItem('x-agent-current-agent-id') || DEFAULT_AGENT_ID;
 
-        // 1. 优先从按 agent_id 存储的 key 里恢复 session
+        // 1. 优先恢复当前 agent 已保存的 session，避免切 agent 时被“最新 active”劫持
         const savedSessionId = getStoredSessionId(savedAgentId)
           || localStorage.getItem(AGENT_SESSION_STORAGE_KEY);
 
         if (savedSessionId) {
           try {
             await agentLoadHistory(savedSessionId);
+            storeSessionId(savedAgentId, savedSessionId);
             setAgentSessionId(savedSessionId);
-            // 确保 localStorage 中有 agent_id
             localStorage.setItem('x-agent-current-agent-id', savedAgentId);
             setIsAgentInitialized(true);
             return;
           } catch (error) {
-            console.warn('Failed to load saved agent session, will try active session lookup:', error);
+            console.warn('Failed to load saved agent session, will try backend active session:', error);
             localStorage.removeItem(agentSessionKey(savedAgentId));
             localStorage.removeItem(AGENT_SESSION_STORAGE_KEY);
           }
         }
 
-        // 2. 尝试查找当前 agent 已有的 active session（避免创建重复 session）
+        // 2. 再查询当前 agent 的 active session，兼容首次打开 delegated agent 窗口
         try {
           const existingSession = await getActiveSessionByAgent(savedAgentId);
           if (existingSession) {
             await agentLoadHistory(existingSession.id);
             storeSessionId(savedAgentId, existingSession.id);
             setAgentSessionId(existingSession.id);
-            // 确保 localStorage 中有 agent_id
             localStorage.setItem('x-agent-current-agent-id', savedAgentId);
             setIsAgentInitialized(true);
             return;
           }
         } catch (error) {
-          console.warn('Failed to find active session for agent, creating new one:', error);
+          console.warn('Failed to find active session for agent, will try stored session:', error);
         }
 
         // 3. 没有可复用的 session，创建新 session（始终带 agent_id）
@@ -138,7 +137,7 @@ function App() {
       localStorage.setItem('x-agent-current-agent-id', agent.agent_id);
       agentClearMessages();
 
-      // 1. 优先从 localStorage 恢复该 agent 的 session（最快路径，无需网络请求）
+      // 1. 优先恢复当前 agent 已保存的 session，保持会话连续性
       const storedSessionId = getStoredSessionId(agent.agent_id);
       if (storedSessionId) {
         try {
@@ -147,12 +146,12 @@ function App() {
           setAgentSessionId(storedSessionId);
           return;
         } catch (error) {
-          console.warn('Stored session no longer valid, looking up active session:', error);
+          console.warn('Stored session no longer valid, creating new one:', error);
           localStorage.removeItem(agentSessionKey(agent.agent_id));
         }
       }
 
-      // 2. 查询后端该 agent 的 active session
+      // 2. 再查询后端该 agent 的 active session，兼容首次打开 delegated agent 窗口
       const existingSession = await getActiveSessionByAgent(agent.agent_id);
       if (existingSession) {
         await agentLoadHistory(existingSession.id);

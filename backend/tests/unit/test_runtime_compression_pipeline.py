@@ -146,9 +146,65 @@ async def test_compression_pipeline_skips_post_check_when_disabled():
 
     result = await pipeline.run(ctx)
 
-    assert "rollback" not in result.operations
     assert verifier.calls == 0
-    assert result.metadata["verification"] is None
+    assert "rollback" not in result.operations
+
+
+@pytest.mark.asyncio
+async def test_compression_pipeline_exposes_verifier_result_contract_fields():
+    pipeline = DefaultCompressionPipeline()
+    ctx = CompressionContext(
+        session_key="s1",
+        turn=1,
+        task_frame=TaskFrame(objective="Task"),
+        profile=CompressionProfile(),
+        model_context_window=1000,
+        estimated_input_tokens=100,
+        messages=[{"role": "user", "content": "hello"}],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run(ctx)
+
+    assert isinstance(result.operations, list)
+    assert result.verifier_result is not None
+    assert result.rollback_applied is False
+    assert result.rollback_reason is None
+
+
+@pytest.mark.asyncio
+async def test_compression_pipeline_sets_rollback_metadata_when_verification_fails():
+    from src.runtime.context.compression_verifier import CompressionPostCheck
+
+    class RejectingVerifier:
+        def verify(self, request):
+            _ = request
+            return CompressionPostCheck(ok=False, reasons=["forced failure"])
+
+    pipeline = DefaultCompressionPipeline(verifier=RejectingVerifier())  # type: ignore[arg-type]
+    ctx = CompressionContext(
+        session_key="s1",
+        turn=1,
+        task_frame=TaskFrame(objective="Task"),
+        profile=CompressionProfile(),
+        model_context_window=1000,
+        estimated_input_tokens=100,
+        messages=[{"role": "user", "content": "hello"}],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run(ctx)
+
+    assert result.operations[-1] == "rollback"
+    assert result.verifier_result is not None
+    assert result.rollback_applied is True
+    assert result.rollback_reason == "forced failure"
+    assert result.metadata["rollback"] == {
+        "applied": True,
+        "reason": "forced failure",
+    }
 
 
 @pytest.mark.asyncio
@@ -257,6 +313,59 @@ async def test_compression_pipeline_applies_profile_preview_sizes():
     preview = result.active_artifacts[0].preview
     assert "abcdefghijklmnopqrstuvwxyz" not in preview
     assert "[21 chars omitted]" in preview
+
+
+@pytest.mark.asyncio
+async def test_compression_pipeline_microcompacts_large_tool_results_before_collapse():
+    pipeline = DefaultCompressionPipeline()
+    profile = CompressionProfile()
+    profile.microcompact.trigger_pct = 0.10
+    profile.pruning.soft_trim_max_chars = 30
+    profile.pruning.soft_trim_head_chars = 10
+    profile.pruning.soft_trim_tail_chars = 10
+    ctx = CompressionContext(
+        session_key="s1",
+        turn=1,
+        task_frame=TaskFrame(objective="Task"),
+        profile=profile,
+        model_context_window=100,
+        estimated_input_tokens=800,
+        messages=[
+            {"role": "assistant", "content": "calling tool"},
+            {"role": "tool", "content": "x" * 120},
+        ],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run(ctx)
+
+    assert "microcompact" in result.operations
+    assert "...[microcompact]..." in result.messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_compression_pipeline_autocompacts_when_pressure_remains_high():
+    pipeline = DefaultCompressionPipeline()
+    profile = CompressionProfile()
+    profile.collapse.enabled = False
+    profile.autocompact.trigger_pct = 0.30
+    ctx = CompressionContext(
+        session_key="s1",
+        turn=2,
+        task_frame=TaskFrame(objective="Task"),
+        profile=profile,
+        model_context_window=100,
+        estimated_input_tokens=90,
+        messages=[{"role": "user", "content": f"message {i} " + ("x" * 60)} for i in range(12)],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run(ctx)
+
+    assert "autocompact" in result.operations
+    assert any(message["content"].startswith("[Auto-compacted history]") for message in result.messages)
 
 
 @pytest.mark.asyncio

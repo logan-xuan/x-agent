@@ -29,7 +29,7 @@ from ..runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
 
 from ..agent_core.agent import Agent
 from .envelope import Envelope, EnvelopeIntent
-from .response import GatewayEvent
+from .response import GatewayEvent, GatewayEventType
 from .errors import (
     AgentNotFoundError,
     DispatchError,
@@ -47,6 +47,7 @@ from ..conversation.identity import (
 )
 from ..conversation.context import (
     AgentContext,
+    get_current_context,
     set_current_context,
 )
 from ..conversation.dao import (
@@ -450,54 +451,13 @@ class GatewayDispatcher:
         abort_event: asyncio.Event | None = None,
         agent: Optional[Agent] = None,
     ) -> AsyncGenerator[GatewayEvent, None]:
-        """分发 CHAT 意图的请求。
-
-        完整流程：
-        1. 确保 Session 存在
-        2. 更新 Session 活跃时间
-        3. 获取 Agent 实例（复用已有或新建并加载历史）
-        4. 调用 AgentBridge.run() 产出 GatewayEvent
-
-        有状态协议（如 WebSocket）在连接级别创建 Agent 并缓存，
-        通过 agent 参数传入已有实例，跳过创建和历史加载。
-        无状态协议（如 REST/SSE）不传 agent，每次请求新建实例。
-
-        Args:
-            envelope: 消息信封。
-            agent_info: 目标 Agent 信息。
-            abort_event: 中止事件。
-            agent: 可选的已有 Agent 实例，有状态协议复用。
-
-        Yields:
-            GatewayEvent 事件流。
-        """
+        """分发 CHAT 意图的请求，默认走 runtime controller 主链路。"""
         try:
-            # 1. 确保 Session 存在
-            await self.ensure_session(
-                envelope.session_id,
-                agent_info,
-                user_id=envelope.user_id,
-                channel_id=envelope.channel_id,
+            result = await self.execute_runtime_turn(
+                envelope,
+                metadata={"persist_user_message": True},
             )
-
-            # 2. 更新活跃时间
-            await self.touch_session(envelope.session_id)
-
-            # 3. 获取 Agent 实例
-            if agent is None:
-                # 无状态协议：每次请求创建新 Agent 并加载历史
-                agent = self._bridge.create_agent(agent_info=agent_info)
-                await self._bridge.load_session_history(agent, envelope.session_id)
-
-            # 4. 调用 AgentBridge.run()
-            async for event in self._bridge.run(
-                agent=agent,
-                content=envelope.content,
-                session_id=envelope.session_id,
-                agent_info=agent_info,
-                images=envelope.images if envelope.images else None,
-                abort_event=abort_event,
-            ):
+            async for event in self._turn_result_events(result, agent_info=agent_info):
                 yield event
 
         except Exception as exc:
@@ -515,6 +475,86 @@ class GatewayDispatcher:
                 agent_name=agent_info.agent_name,
             )
 
+    async def _turn_result_events(
+        self,
+        result,
+        *,
+        agent_info: AgentInfo,
+    ) -> AsyncGenerator[GatewayEvent, None]:
+        """Convert a runtime TurnResult into gateway events for clients."""
+        current_context = get_current_context()
+        if current_context is not None and current_context.trace_id:
+            yield GatewayEvent.agent_start(
+                trace_id=current_context.trace_id,
+                agent_id=agent_info.agent_id,
+                agent_name=agent_info.agent_name,
+            )
+
+        for runtime_event in list(result.metadata.get("runtime_event_timeline", []) or []):
+            if not isinstance(runtime_event, dict):
+                continue
+            event_type = runtime_event.get("type")
+            payload = runtime_event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if event_type == "tool_call":
+                yield GatewayEvent.tool_call(
+                    tool_call_id=str(payload.get("tool_call_id", "")),
+                    name=str(payload.get("name", "")),
+                    arguments=dict(payload.get("arguments", {}) or {}),
+                    agent_id=agent_info.agent_id,
+                    agent_name=agent_info.agent_name,
+                )
+            elif event_type == "tool_result":
+                yield GatewayEvent(
+                    type=GatewayEventType.TOOL_RESULT,
+                    data={
+                        "tool_call_id": str(payload.get("tool_call_id", "")),
+                        "name": str(payload.get("name", "")),
+                        "result": str(payload.get("result", "")),
+                        "is_error": bool(payload.get("is_error", False)),
+                        "details": dict(payload.get("details", {}) or {}),
+                        "duration_ms": payload.get("duration_ms"),
+                    },
+                    agent_id=agent_info.agent_id,
+                    agent_name=agent_info.agent_name,
+                )
+
+        output_text = result.output_text or ""
+        if output_text:
+            yield GatewayEvent.message_end(
+                content=output_text,
+                model=str(result.metadata.get("model", "")),
+                stop_reason=result.finish_reason or "",
+                agent_id=agent_info.agent_id,
+                agent_name=agent_info.agent_name,
+            )
+        elif result.kind == "abort":
+            yield GatewayEvent.error(
+                message=result.finish_reason or "runtime turn aborted",
+                error_type="RuntimeTurnAbort",
+                agent_id=agent_info.agent_id,
+                agent_name=agent_info.agent_name,
+            )
+
+        if current_context is not None and current_context.trace_id:
+            yield GatewayEvent.agent_end(
+                trace_id=current_context.trace_id,
+                total_duration_ms=float(
+                    result.metadata.get("budget", {}).get("elapsed_ms", 0)
+                    or result.metadata.get("runtime_diagnostics", {})
+                    .get("milestones_ms", {})
+                    .get("completed", 0)
+                    or result.metadata.get("runtime_diagnostics", {})
+                    .get("milestones_ms", {})
+                    .get("timed_out", 0)
+                    or 0
+                ),
+                message_count=1 if output_text else 0,
+                agent_id=agent_info.agent_id,
+                agent_name=agent_info.agent_name,
+            )
+
     async def prepare_runtime_turn(
         self,
         envelope: Envelope,
@@ -523,8 +563,14 @@ class GatewayDispatcher:
     ):
         """Prepare runtime session + turn request without replacing the legacy dispatch path."""
         agent_info = await self._resolve_agent(envelope)
-        context = self._build_context(envelope, agent_info)
-        set_current_context(context)
+        current_context = get_current_context()
+        if (
+            current_context is None
+            or current_context.session_id != envelope.session_id
+            or current_context.agent_id != agent_info.agent_id
+        ):
+            context = self._build_context(envelope, agent_info)
+            set_current_context(context)
         await self.ensure_session(
             envelope.session_id,
             agent_info,
@@ -549,5 +595,6 @@ class GatewayDispatcher:
         controller=None,
     ):
         """Prepare and execute a runtime turn without switching the default dispatch path."""
-        _, request = await self.prepare_runtime_turn(envelope, metadata=metadata)
+        session, request = await self.prepare_runtime_turn(envelope, metadata=metadata)
+        request = await self._runtime_gateway_adapter.enqueue(session, request)
         return await self._bridge.run_runtime_turn(request, controller=controller)

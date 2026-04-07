@@ -532,7 +532,7 @@ if __name__ == "__main__":
     config = get_config_manager().config
 
     uvicorn.run(
-        "src.main:app",
+        app,
         host=config.server.host,
         port=config.server.port,
         reload=config.server.reload,

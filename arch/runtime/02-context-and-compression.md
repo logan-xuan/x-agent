@@ -16,37 +16,39 @@
 
 ---
 
-## 2. 当前代码映射
+## 2. 当前代码映射（已对齐 runtime 实现）
 
 当前相关能力主要分布在：
 
-- `backend/src/conversation/system_prompt_builder.py`
-- `backend/src/conversation/context_loader.py`
-- `backend/src/conversation/session.py`
-- `backend/src/services/context/`
-- `backend/src/services/compression/`
-- `backend/src/memory/manager.py`
-- `backend/src/memory/context_builder.py`
+- `backend/src/runtime/context/builder.py`
+- `backend/src/runtime/context/history_view.py`
+- `backend/src/runtime/context/artifact_store.py`
+- `backend/src/runtime/context/compression_pipeline.py`
+- `backend/src/runtime/context/compression_verifier.py`
+- `backend/src/runtime/context/profile_provider.py`
+- `backend/src/runtime/context/memory_flush.py`
+- `backend/src/gateway/agent_bridge.py`（`_runtime_prepare_model_input` 触发压缩）
+- `backend/src/runtime/session/orchestrator.py`
+- `backend/src/runtime/repositories.py`
 
-现状问题：
+现状说明：
 
-- prompt build、history、memory、compression 的职责边界还不够清晰
-- 历史消息和 active context 还不完全是两套视图
-- 压缩逻辑需要收敛为统一 pipeline
+- prompt build、history view、compression pipeline 已收敛到 `runtime/context`。
+- 压缩触发与 emergency fallback 在 runtime turn 主链路中生效。
+- memory flush 目前仍为 `NoopMemoryFlusher` 占位实现。
 
 ---
 
 ## 3. 目标模块结构
 
 ```text
-context_runtime/
-├── system_prompt_builder_v2.py
-├── context_builder.py
-├── history_view_builder.py
+backend/src/runtime/context/
+├── builder.py
+├── history_view.py
 ├── artifact_store.py
 ├── compression_pipeline.py
-├── compression_profile.py
 ├── compression_verifier.py
+├── profile_provider.py
 └── memory_flush.py
 ```
 
@@ -250,25 +252,18 @@ type CompressionContext = {
 }
 ```
 
-### 7.4 CompressionStage
+### 7.5 真实触发与持久化链路（代码现状）
 
-```ts
-type CompressionStage = {
-  name:
-    | "persist"
-    | "aggregate_budget"
-    | "ttl_prune"
-    | "microcompact"
-    | "collapse"
-    | "autocompact"
-    | "memory_flush"
+当前压缩主链路为：
 
-  shouldRun(ctx: CompressionContext): boolean
-  run(ctx: CompressionContext): Promise<CompressionStageResult>
-}
-```
+1. `gateway/dispatcher.py` 进入 runtime turn（`execute_runtime_turn`）。
+2. `gateway/agent_bridge.py::_runtime_prepare_model_input` 组装 `CompressionContext` 并执行 `DefaultCompressionPipeline.run(...)`。
+3. 若常规压缩后仍超限，则执行 `run_emergency(...)`。
+4. `compression_verifier.py` 对压缩结果做 post-check；若失败且 profile 允许，则回滚到原始 messages/artifacts。
+5. 压缩操作通过 orchestrator/repository 记录为 compression events，并与 transcript/snapshot/summary 一并持久化。
 
----
+说明：`runtime_event_timeline` 回放在网关层由 `gateway/dispatcher.py` 完成。
+
 
 ## 8. 信息保留等级
 
@@ -342,23 +337,21 @@ async function runCompressionPipeline(input: CompressionContext): Promise<Compre
 
 ---
 
-## 10. Emergency Compression
+## 10. Emergency Compression（当前实现）
 
-正常 pipeline 后仍过长，或者命中 `prompt_too_long/context_overflow` 时：
+当常规 pipeline 后仍过长时，当前实现会执行 `run_emergency(...)`，行为是：
 
-1. 强制启用 collapse + autocompact
-2. 缩窄保留范围到 `P0/P1`
-3. 生成 fallback summary
-4. 仍失败则 reset session / best effort 结束
+1. 保留开头 system（若存在）
+2. 插入一条 `[Emergency context summary]` 的 system 摘要（包含 objective / unresolved / artifact ids）
+3. 保留最近 `retain_recent_messages` 尾部消息
+4. 返回 `operations=["emergency_compact"]`
 
-禁止：
-
-- 在坏上下文上无限重复 compact
-- compact 失败后继续追加新大结果
+说明：当前 emergency 路径并不会在该层直接做 session reset；它提供 fallback summary 与可回滚标记，后续处置由上层 runtime 控制流决定。
 
 ---
 
 ## 11. Compression Verifier
+
 
 ```ts
 type CompressionPostCheck = {
@@ -388,43 +381,26 @@ post-check 失败时：
 
 ---
 
-## 12. 与现有代码的改造方式
+## 12. 与现有代码的一致性结论（2026-04）
 
-### Phase 2A: Prompt Build 收敛
+### 12.1 已落地
 
-从：
+- Prompt Build / Context Build 已落地到 `runtime/context/builder.py`。
+- Active History View 已落地到 `runtime/context/history_view.py`。
+- Artifact Store 已落地到 `runtime/context/artifact_store.py`。
+- Compression Pipeline / Verifier / Profile Provider 已落地到 `runtime/context/` 目录。
+- Gateway -> Runtime 的压缩触发已接入主链路（`gateway/agent_bridge.py`）。
 
-- `conversation/system_prompt_builder.py`
-- `conversation/context_loader.py`
+### 12.2 尚未完全收口
 
-抽出新的 `SystemPromptBuilderV2` 与 `ContextBuilder`。
+- `memory_flush.py` 当前是 noop 实现（`NoopMemoryFlusher`），仅保留扩展点。
+- WebSocket 端点仍保留部分 session/outbox/cached-agent 协调逻辑，协议层与编排层边界仍可继续收敛。
+- profile 选择仍依赖 metadata 约定，类型化契约仍可加强。
 
-### Phase 2B: Artifact Store 收敛
+### 12.3 测试证据
 
-将：
-
-- `services/context/`
-- 未来的大结果持久化逻辑
-
-统一收敛成 `ArtifactStore`。
-
-### Phase 2C: CompressionPipeline 收敛
-
-从：
-
-- `services/compression/manager.py`
-- `services/compression/compressor.py`
-- `memory/manager.py`
-
-中抽出统一 pipeline。
-
-### Phase 2D: Active History View 收敛
-
-把 `conversation/session.py` 中与原始历史/当前上下文混杂的部分拆开，形成：
-
-- raw transcript
-- summary chain
-- active history view
+- `backend/tests/unit/test_runtime_compression_pipeline.py` 覆盖了 persist、collapse、autocompact、emergency、post-check 开关等核心行为。
+- `backend/tests/unit/test_runtime_compression_verifier.py` 覆盖了 role ordering、artifact refs、objective、recent failures 等不变量校验。
 
 ---
 

@@ -302,8 +302,13 @@ class LLMRouter:
         Raises:
             RuntimeError: If no provider is available
         """
+        preferred_provider = kwargs.pop("preferred_provider", None)
+
         providers_to_try = [self._primary] + self._backups if self._primary else self._backups
         providers_to_try = [p for p in providers_to_try if p is not None]
+
+        if isinstance(preferred_provider, str) and preferred_provider:
+            providers_to_try.sort(key=lambda provider: 0 if provider.name == preferred_provider else 1)
         
         if not providers_to_try:
             raise RuntimeError("No LLM providers available")
@@ -587,6 +592,24 @@ class LLMRouter:
         except Exception as e:
             has_error = True
             error_message = str(e)
+            total_latency_ms = int((time.time() - start_time) * 1000) + initial_latency_ms
+            if total_content:
+                logger.warning(
+                    "Streaming provider ended with partial content; converting to best-effort completion",
+                    extra={
+                        "provider_name": provider.name,
+                        "session_id": session_id,
+                        "latency_ms": total_latency_ms,
+                        "error": error_message,
+                    },
+                )
+                completed = True
+                yield StreamingLLMResponse(
+                    content="",
+                    is_finished=True,
+                    model=provider.model_id,
+                )
+                return
             raise
         
         finally:
@@ -702,6 +725,24 @@ class LLMRouter:
         except Exception as e:
             has_error = True
             error_message = str(e)
+            total_latency_ms = int((time.time() - start_time) * 1000) + initial_latency_ms
+            if total_content:
+                logger.warning(
+                    "Streaming provider ended with partial content; converting to best-effort completion",
+                    extra={
+                        "provider_name": provider.name,
+                        "session_id": session_id,
+                        "latency_ms": total_latency_ms,
+                        "error": error_message,
+                    },
+                )
+                completed = True
+                yield StreamingLLMResponse(
+                    content="",
+                    is_finished=True,
+                    model=provider.model_id,
+                )
+                return
             raise
         
         finally:

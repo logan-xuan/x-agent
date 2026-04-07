@@ -15,6 +15,7 @@ from src.agent_core.types import AgentTool, StreamChunk, TextContent, ToolParame
 from src.agent_core.types import LogCategory
 from src.agent_core.adapters.llm_adapter import XAgentLLMAdapter
 from src.agent_core.adapters.context_adapter import XAgentContextAdapter
+from src.agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
 from src.agent_core.types import StreamChunkType
 from src.config.models import CompressionConfig
 from src.conversation.context import AgentContext as RequestAgentContext
@@ -276,6 +277,225 @@ class TestRuntimeBudgetControls:
 
         manager._compress_context.assert_awaited_once()
         assert result.summary == "compressed summary"
+
+    @pytest.mark.asyncio
+    async def test_tool_budget_middleware_blocks_excessive_web_search_calls(self):
+        adapter = create_tool_middleware_adapter(
+            enable_timing=False,
+            enable_logging=False,
+            max_tool_calls_total=10,
+            max_tool_calls_by_name={"web_search": 3},
+            default_repeat_signature_limit=2,
+            repeat_signature_limit_by_name={"web_search": 3},
+        )
+        req_ctx = RequestAgentContext.for_websocket(
+            session_id="session-budget",
+            agent_id="main-agent",
+        )
+        req_ctx.trace_id = "trace-budget-web-search"
+        set_current_context(req_ctx)
+
+        async def tool_executor(tool_name: str, arguments: dict[str, object]):
+            return {"tool_name": tool_name, "arguments": arguments}
+
+        for index in range(3):
+            result, is_error, metadata = await adapter.execute(
+                tool_name="web_search",
+                tool_call_id=f"tool-{index}",
+                arguments={"query": f"query-{index}", "max_results": 5},
+                tool_executor=tool_executor,
+            )
+            assert is_error is False
+            assert metadata["tool_budget_per_tool_calls"]["web_search"] == index + 1
+
+        result, is_error, metadata = await adapter.execute(
+            tool_name="web_search",
+            tool_call_id="tool-blocked",
+            arguments={"query": "query-4", "max_results": 5},
+            tool_executor=tool_executor,
+        )
+
+        assert is_error is True
+        assert "budget exhausted" in str(result["error"])
+        assert metadata["force_finalize"] is True
+        assert metadata["budget_exhausted"] is True
+        clear_current_context()
+
+    @pytest.mark.asyncio
+    async def test_agent_loop_forces_final_answer_after_web_search_budget_exhaustion(self):
+        class DummyLLM:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, int]] = []
+
+            async def stream(self, system_prompt: str, messages: list[dict], tools=None):
+                _ = system_prompt
+                _ = messages
+                self.calls.append({"tools_count": len(tools or [])})
+                if len(self.calls) == 1:
+                    for index in range(4):
+                        yield StreamChunk.tool(
+                            f"tool-{index}",
+                            "web_search",
+                            {"query": f"query-{index}", "max_results": 5},
+                        )
+                    yield StreamChunk.done("tool_use")
+                    return
+
+                if tools:
+                    yield StreamChunk.tool(
+                        "tool-repeat",
+                        "web_search",
+                        {"query": "should-not-run", "max_results": 5},
+                    )
+                    yield StreamChunk.done("tool_use")
+                    return
+
+                yield StreamChunk.text("基于现有资料，给出最终总结。")
+                yield StreamChunk.done("end_turn", {"total_tokens": 1})
+
+        class DummyToolPort:
+            def __init__(self) -> None:
+                self.executions: list[tuple[str, dict[str, object]]] = []
+
+            async def execute(self, tool_name: str, arguments: dict[str, object], abort_event=None):
+                _ = abort_event
+                self.executions.append((tool_name, arguments))
+                return ToolResult.from_text(f"result for {arguments['query']}")
+
+        req_ctx = RequestAgentContext.for_websocket(
+            session_id="session-finalize",
+            agent_id="main-agent",
+        )
+        req_ctx.trace_id = "trace-finalize-budget"
+        set_current_context(req_ctx)
+
+        llm = DummyLLM()
+        tool_port = DummyToolPort()
+        middleware = create_tool_middleware_adapter(
+            enable_timing=False,
+            enable_logging=False,
+            max_tool_calls_total=10,
+            max_tool_calls_by_name={"web_search": 3},
+            default_repeat_signature_limit=2,
+            repeat_signature_limit_by_name={"web_search": 3},
+        )
+        tool = AgentTool(
+            name="web_search",
+            label="web_search",
+            description="search",
+            parameters=[],
+        )
+        config = AgentCoreConfig(
+            llm=llm,
+            tools=tool_port,
+            tool_middleware_pipeline=middleware.pipeline,
+            max_turns=12,
+        )
+        context = LoopAgentContext(system_prompt="system", messages=[], tools=[tool])
+
+        events = [
+            event
+            async for event in agent_loop(
+                prompts=[UserMessage.from_text("做 AI 创业方向调研")],
+                context=context,
+                config=config,
+            )
+        ]
+
+        assert len(tool_port.executions) == 3
+        assert llm.calls[0]["tools_count"] == 1
+        assert llm.calls[1]["tools_count"] == 0
+        agent_end = next(event for event in reversed(events) if getattr(event, "type", "") == "agent_end")
+        assistant_messages = [msg for msg in agent_end.messages if getattr(msg, "role", None) == "assistant"]
+        assert assistant_messages[-1].get_text() == "基于现有资料，给出最终总结。"
+        clear_current_context()
+
+    @pytest.mark.asyncio
+    async def test_agent_loop_can_still_use_non_search_tools_after_search_budget_exhaustion(self):
+        class DummyLLM:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, int]] = []
+
+            async def stream(self, system_prompt: str, messages: list[dict], tools=None):
+                _ = system_prompt
+                _ = messages
+                self.calls.append({"tools_count": len(tools or [])})
+                if len(self.calls) == 1:
+                    for index in range(4):
+                        yield StreamChunk.tool(
+                            f"tool-search-{index}",
+                            "web_search",
+                            {"query": f"query-{index}", "max_results": 5},
+                        )
+                    yield StreamChunk.done("tool_use")
+                    return
+
+                if len(self.calls) == 2:
+                    yield StreamChunk.tool(
+                        "tool-write",
+                        "write_file",
+                        {"file_path": "/tmp/report.html", "content": "<html>ok</html>"},
+                    )
+                    yield StreamChunk.done("tool_use")
+                    return
+
+                yield StreamChunk.text("HTML 页面已生成。")
+                yield StreamChunk.done("end_turn", {"total_tokens": 1})
+
+        class DummyToolPort:
+            def __init__(self) -> None:
+                self.executions: list[tuple[str, dict[str, object]]] = []
+
+            async def execute(self, tool_name: str, arguments: dict[str, object], abort_event=None):
+                _ = abort_event
+                self.executions.append((tool_name, arguments))
+                return ToolResult.from_text(f"executed {tool_name}")
+
+        req_ctx = RequestAgentContext.for_websocket(
+            session_id="session-deliverable",
+            agent_id="main-agent",
+        )
+        req_ctx.trace_id = "trace-deliverable-budget"
+        set_current_context(req_ctx)
+
+        llm = DummyLLM()
+        tool_port = DummyToolPort()
+        middleware = create_tool_middleware_adapter(
+            enable_timing=False,
+            enable_logging=False,
+            max_tool_calls_total=10,
+            max_tool_calls_by_name={"web_search": 3},
+            default_repeat_signature_limit=2,
+            repeat_signature_limit_by_name={"web_search": 3},
+        )
+        tools = [
+            AgentTool(name="web_search", label="web_search", description="search", parameters=[]),
+            AgentTool(name="write_file", label="write_file", description="write", parameters=[]),
+        ]
+        config = AgentCoreConfig(
+            llm=llm,
+            tools=tool_port,
+            tool_middleware_pipeline=middleware.pipeline,
+            max_turns=12,
+        )
+        context = LoopAgentContext(system_prompt="system", messages=[], tools=tools)
+
+        events = [
+            event
+            async for event in agent_loop(
+                prompts=[UserMessage.from_text("做 AI 创业方向调研并输出 HTML")],
+                context=context,
+                config=config,
+            )
+        ]
+
+        assert [name for name, _ in tool_port.executions].count("web_search") == 3
+        assert ("write_file", {"file_path": "/tmp/report.html", "content": "<html>ok</html>"}) in tool_port.executions
+        assert llm.calls[1]["tools_count"] == 1
+        agent_end = next(event for event in reversed(events) if getattr(event, "type", "") == "agent_end")
+        assistant_messages = [msg for msg in agent_end.messages if getattr(msg, "role", None) == "assistant"]
+        assert assistant_messages[-1].get_text() == "HTML 页面已生成。"
+        clear_current_context()
 
     @pytest.mark.asyncio
     async def test_quality_gate_rejects_low_value_compression(self, tmp_path):

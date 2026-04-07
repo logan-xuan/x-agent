@@ -9,7 +9,9 @@ from .compression_pipeline import (
     CompressionAutocompactConfig,
     CompressionCollapseConfig,
     CompressionMemoryFlushConfig,
+    CompressionMicrocompactConfig,
     CompressionPersistConfig,
+    CompressionPressureConfig,
     CompressionProfile,
     CompressionPruningConfig,
     CompressionQualityConfig,
@@ -22,6 +24,7 @@ def build_default_compression_profiles() -> dict[str, CompressionProfile]:
         "balanced": CompressionProfile(mode="balanced"),
         "aggressive": CompressionProfile(
             mode="aggressive",
+            pressure=CompressionPressureConfig(yellow_pct=0.45, orange_pct=0.60, red_pct=0.72, hard_stop_pct=0.85),
             persist=CompressionPersistConfig(
                 single_result_chars=30000,
                 aggregate_result_chars=120000,
@@ -36,6 +39,7 @@ def build_default_compression_profiles() -> dict[str, CompressionProfile]:
                 soft_trim_head_chars=900,
                 soft_trim_tail_chars=900,
             ),
+            microcompact=CompressionMicrocompactConfig(trigger_pct=0.45, max_units_per_pass=12),
             collapse=CompressionCollapseConfig(trigger_pct=0.60, max_segment_tokens=8000),
             autocompact=CompressionAutocompactConfig(
                 trigger_pct=0.72,
@@ -49,6 +53,7 @@ def build_default_compression_profiles() -> dict[str, CompressionProfile]:
         ),
         "conservative": CompressionProfile(
             mode="conservative",
+            pressure=CompressionPressureConfig(yellow_pct=0.55, orange_pct=0.75, red_pct=0.88, hard_stop_pct=0.94),
             persist=CompressionPersistConfig(
                 single_result_chars=80000,
                 aggregate_result_chars=260000,
@@ -64,6 +69,7 @@ def build_default_compression_profiles() -> dict[str, CompressionProfile]:
                 soft_trim_tail_chars=1800,
                 hard_clear_enabled=False,
             ),
+            microcompact=CompressionMicrocompactConfig(trigger_pct=0.60, max_units_per_pass=4),
             collapse=CompressionCollapseConfig(trigger_pct=0.75, max_segment_tokens=18000),
             autocompact=CompressionAutocompactConfig(
                 trigger_pct=0.88,
@@ -115,6 +121,14 @@ class CompressionProfileProvider:
             raise ValueError(
                 f"compression profile {name} has invalid max_history_share"
             )
+        if not (
+            0 < profile.pressure.yellow_pct
+            < profile.pressure.orange_pct
+            < profile.pressure.red_pct
+            < profile.pressure.hard_stop_pct
+            < 1
+        ):
+            raise ValueError(f"compression profile {name} has invalid pressure thresholds")
         if profile.quality.min_compression_gain_tokens < 0:
             raise ValueError(
                 f"compression profile {name} has invalid min_compression_gain_tokens"

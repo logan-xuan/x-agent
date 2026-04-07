@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from .types import ArtifactRef, SessionDescriptor, TaskFrame
+from ..models.runtime import RuntimeRecord
+from ..services.storage import StorageService
 
 
 @dataclass
@@ -189,6 +195,289 @@ class CompressionEventRepository(Protocol):
         ...
 
 
+def _task_frame_from_payload(payload: dict[str, Any]) -> TaskFrame:
+    return TaskFrame(**payload)
+
+
+def _session_descriptor_from_payload(payload: dict[str, Any]) -> SessionDescriptor:
+    route_payload = payload.get("route")
+    route = None
+    if isinstance(route_payload, dict):
+        from .types import RouteMeta
+
+        route = RouteMeta(**route_payload)
+    normalized = dict(payload)
+    normalized["route"] = route
+    return SessionDescriptor(**normalized)
+
+
+def _artifact_ref_from_payload(payload: dict[str, Any]) -> ArtifactRef:
+    return ArtifactRef(**payload)
+
+
+def _summary_record_from_payload(payload: dict[str, Any]) -> SummaryRecord:
+    return SummaryRecord(**payload)
+
+
+def _transcript_entry_from_payload(payload: dict[str, Any]) -> TranscriptEntry:
+    return TranscriptEntry(**payload)
+
+
+def _state_snapshot_from_payload(payload: dict[str, Any]) -> StateSnapshotRecord:
+    normalized = dict(payload)
+    normalized["task_frame"] = _task_frame_from_payload(normalized["task_frame"])
+    return StateSnapshotRecord(**normalized)
+
+
+def _compression_event_from_payload(payload: dict[str, Any]) -> CompressionEventRecord:
+    return CompressionEventRecord(**payload)
+
+
+@dataclass
+class _StorageRuntimeRepository:
+    """Shared helpers for storage-backed runtime repositories."""
+
+    storage: StorageService
+    _initialized: bool = field(default=False, init=False, repr=False)
+
+    async def _ensure_storage(self) -> None:
+        if self._initialized:
+            return
+        await self.storage.initialize()
+        self._initialized = True
+
+    async def _get_record(self, record_id: str) -> RuntimeRecord | None:
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            return await db.get(RuntimeRecord, record_id)
+
+    async def _put_record(
+        self,
+        *,
+        record_id: str,
+        record_type: str,
+        payload: dict[str, Any],
+        session_key: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        await self._ensure_storage()
+        serialized = json.dumps(payload, ensure_ascii=False)
+        async with self.storage.session() as db:
+            record = await db.get(RuntimeRecord, record_id)
+            if record is None:
+                record = RuntimeRecord(
+                    id=record_id,
+                    record_type=record_type,
+                    session_key=session_key,
+                    session_id=session_id,
+                    payload_json=serialized,
+                )
+                db.add(record)
+                return
+
+            record.record_type = record_type
+            record.session_key = session_key
+            record.session_id = session_id
+            record.payload_json = serialized
+
+    async def _list_records(
+        self,
+        *,
+        db: AsyncSession,
+        record_type: str,
+        session_id: str | None = None,
+        session_key: str | None = None,
+        desc: bool = False,
+        limit: int | None = None,
+    ) -> list[RuntimeRecord]:
+        stmt = select(RuntimeRecord).where(RuntimeRecord.record_type == record_type)
+        if session_id is not None:
+            stmt = stmt.where(RuntimeRecord.session_id == session_id)
+        if session_key is not None:
+            stmt = stmt.where(RuntimeRecord.session_key == session_key)
+        order_column = RuntimeRecord.created_at.desc() if desc else RuntimeRecord.created_at.asc()
+        stmt = stmt.order_by(order_column)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+
+@dataclass
+class StorageSessionRepository(_StorageRuntimeRepository):
+    """Storage-backed runtime session repository."""
+
+    async def get(self, session_key: str) -> SessionDescriptor | None:
+        record = await self._get_record(f"session:{session_key}")
+        if record is None:
+            return None
+        return _session_descriptor_from_payload(json.loads(record.payload_json))
+
+    async def put(self, session: SessionDescriptor) -> None:
+        payload = dict(session.__dict__)
+        payload["route"] = session.route.__dict__ if session.route is not None else None
+        await self._put_record(
+            record_id=f"session:{session.session_key}",
+            record_type="session",
+            session_key=session.session_key,
+            session_id=session.session_id,
+            payload=payload,
+        )
+
+    async def patch(self, session_key: str, values: dict[str, object]) -> SessionDescriptor:
+        current = await self.get(session_key)
+        if current is None:
+            raise KeyError(session_key)
+        updated = replace(current, **values)
+        await self.put(updated)
+        return updated
+
+    async def list(self) -> list[SessionDescriptor]:
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            records = await self._list_records(db=db, record_type="session")
+        return [_session_descriptor_from_payload(json.loads(record.payload_json)) for record in records]
+
+
+@dataclass
+class StorageTranscriptRepository(_StorageRuntimeRepository):
+    """Storage-backed raw runtime transcript repository."""
+
+    async def append(self, entry: TranscriptEntry) -> None:
+        await self._put_record(
+            record_id=entry.entry_id,
+            record_type="transcript",
+            session_id=entry.session_id,
+            payload=entry.__dict__,
+        )
+
+    async def list_by_session(self, session_id: str) -> list[TranscriptEntry]:
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            records = await self._list_records(db=db, record_type="transcript", session_id=session_id)
+        return [_transcript_entry_from_payload(json.loads(record.payload_json)) for record in records]
+
+    async def recent_by_session(self, session_id: str, limit: int) -> list[TranscriptEntry]:
+        if limit <= 0:
+            return []
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            records = await self._list_records(
+                db=db,
+                record_type="transcript",
+                session_id=session_id,
+                desc=True,
+                limit=limit,
+            )
+        entries = [_transcript_entry_from_payload(json.loads(record.payload_json)) for record in records]
+        entries.reverse()
+        return entries
+
+
+@dataclass
+class StorageSummaryRepository(_StorageRuntimeRepository):
+    """Storage-backed runtime summary repository."""
+
+    async def put(self, summary: SummaryRecord) -> None:
+        await self._put_record(
+            record_id=summary.summary_id,
+            record_type="summary",
+            session_id=summary.session_id,
+            payload=summary.__dict__,
+        )
+
+    async def list_by_session(self, session_id: str) -> list[SummaryRecord]:
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            records = await self._list_records(db=db, record_type="summary", session_id=session_id)
+        return [_summary_record_from_payload(json.loads(record.payload_json)) for record in records]
+
+    async def latest_for_session(self, session_id: str) -> SummaryRecord | None:
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            records = await self._list_records(
+                db=db,
+                record_type="summary",
+                session_id=session_id,
+                desc=True,
+                limit=1,
+            )
+        if not records:
+            return None
+        return _summary_record_from_payload(json.loads(records[0].payload_json))
+
+
+@dataclass
+class StorageArtifactRepository(_StorageRuntimeRepository):
+    """Storage-backed runtime artifact repository."""
+
+    async def put(self, artifact: ArtifactRef, content: str) -> None:
+        await self._put_record(
+            record_id=artifact.id,
+            record_type="artifact",
+            payload={"artifact": artifact.__dict__, "content": content},
+        )
+
+    async def get(self, artifact_id: str) -> tuple[ArtifactRef, str] | None:
+        record = await self._get_record(artifact_id)
+        if record is None:
+            return None
+        payload = json.loads(record.payload_json)
+        return _artifact_ref_from_payload(payload["artifact"]), str(payload["content"])
+
+
+@dataclass
+class StorageStateSnapshotRepository(_StorageRuntimeRepository):
+    """Storage-backed state snapshot repository."""
+
+    async def put(self, snapshot: StateSnapshotRecord) -> None:
+        payload = dict(snapshot.__dict__)
+        payload["task_frame"] = snapshot.task_frame.__dict__
+        await self._put_record(
+            record_id=snapshot.snapshot_id,
+            record_type="state_snapshot",
+            session_id=snapshot.session_id,
+            payload=payload,
+        )
+
+    async def latest_for_session(self, session_id: str) -> StateSnapshotRecord | None:
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            records = await self._list_records(
+                db=db,
+                record_type="state_snapshot",
+                session_id=session_id,
+                desc=True,
+                limit=1,
+            )
+        if not records:
+            return None
+        return _state_snapshot_from_payload(json.loads(records[0].payload_json))
+
+
+@dataclass
+class StorageCompressionEventRepository(_StorageRuntimeRepository):
+    """Storage-backed runtime compression telemetry repository."""
+
+    async def append(self, event: CompressionEventRecord) -> None:
+        await self._put_record(
+            record_id=event.event_id,
+            record_type="compression_event",
+            session_id=event.session_id,
+            payload=event.__dict__,
+        )
+
+    async def list_by_session(self, session_id: str) -> list[CompressionEventRecord]:
+        await self._ensure_storage()
+        async with self.storage.session() as db:
+            records = await self._list_records(
+                db=db,
+                record_type="compression_event",
+                session_id=session_id,
+            )
+        return [_compression_event_from_payload(json.loads(record.payload_json)) for record in records]
+
+
 @dataclass
 class InMemorySessionRepository:
     """In-memory repository for runtime session descriptors."""
@@ -303,6 +592,12 @@ __all__ = [
     "InMemorySummaryRepository",
     "InMemoryTranscriptRepository",
     "SessionRepository",
+    "StorageArtifactRepository",
+    "StorageCompressionEventRepository",
+    "StorageSessionRepository",
+    "StorageStateSnapshotRepository",
+    "StorageSummaryRepository",
+    "StorageTranscriptRepository",
     "StateSnapshotRecord",
     "StateSnapshotRepository",
     "SummaryRecord",

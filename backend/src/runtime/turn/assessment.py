@@ -36,6 +36,18 @@ class DefaultAssessmentEngine:
             spawn_packet = state.request.metadata["spawn_packet"]
             suggested_next_action = "spawn child session"
             notes.append("spawn requested by runtime metadata")
+        elif state.metadata.get("final_candidate_ready"):
+            decision = "finish"
+            finish_reason = (
+                "best_effort_budget_stop"
+                if state.metadata.get("best_effort_reason")
+                else "done_definition_satisfied"
+            )
+            suggested_next_action = "finish with runtime final candidate"
+            if state.metadata.get("best_effort_reason"):
+                notes.append(f"best-effort finish: {state.metadata['best_effort_reason']}")
+            else:
+                notes.append("runtime model produced final candidate")
         elif state.request.metadata.get("request_compact"):
             decision = "compact"
             suggested_next_action = "compact context before next step"

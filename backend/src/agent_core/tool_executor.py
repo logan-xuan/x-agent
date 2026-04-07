@@ -104,7 +104,15 @@ async def execute_tool_calls(
                 if ctx.action == MiddlewareAction.ABORT:
                     result = ToolResult(
                         content=[TextContent(text=ctx.abort_reason or "Execution aborted by middleware")],
-                        details={"aborted": True, "reason": ctx.abort_reason},
+                        details={
+                            "aborted": True,
+                            "reason": ctx.abort_reason,
+                            **{
+                                key: value
+                                for key, value in ctx.metadata.items()
+                                if not str(key).startswith("_")
+                            },
+                        },
                     )
                     is_error = True
                 else:
@@ -122,6 +130,17 @@ async def execute_tool_calls(
                     # 使用中间件可能修改的结果
                     if ctx.result is not None:
                         result = ctx.result
+                        if hasattr(result, "details") and isinstance(result.details, dict):
+                            result.details = {
+                                **result.details,
+                                **{
+                                    key: value
+                                    for key, value in ctx.metadata.items()
+                                    if not str(key).startswith("_")
+                                },
+                            }
+                        if isinstance(result.details, dict) and result.details.get("error"):
+                            is_error = True
             else:
                 # 直接执行工具
                 result = await tool_port.execute(
@@ -129,6 +148,13 @@ async def execute_tool_calls(
                     arguments=tc.arguments,
                     abort_event=abort_event,
                 )
+                if (
+                    result is not None
+                    and hasattr(result, "details")
+                    and isinstance(result.details, dict)
+                    and result.details.get("error")
+                ):
+                    is_error = True
 
         except Exception as e:
             is_error = True
@@ -148,6 +174,15 @@ async def execute_tool_calls(
             is_error=is_error,
             duration_ms=duration_ms,
         )
+
+        if (
+            result is not None
+            and isinstance(getattr(result, "details", None), dict)
+            and result.details.get("force_finalize")
+        ):
+            for remaining in tool_calls[i + 1:]:
+                yield _create_skipped_event(remaining, "Skipped due to tool budget exhaustion")
+            break
 
         # 检查 steering 消息
         if get_steering:
@@ -244,8 +279,13 @@ async def execute_tool_calls_parallel(
                     arguments=tc.arguments,
                     abort_event=abort_event,
                 )
-
-                return (tc, result, False, (time.time() - start_time) * 1000)
+                is_error = bool(
+                    result is not None
+                    and hasattr(result, "details")
+                    and isinstance(result.details, dict)
+                    and result.details.get("error")
+                )
+                return (tc, result, is_error, (time.time() - start_time) * 1000)
 
             except Exception as e:
                 return (

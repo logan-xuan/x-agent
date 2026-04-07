@@ -136,6 +136,7 @@ class HTTPClient:
             timeout=httpx.Timeout(effective_timeout),
             max_redirects=self.max_redirects,
             verify=self.verify_ssl,
+            follow_redirects=True,
         ) as client:
             response = await client.get(url, headers=request_headers)
             response.raise_for_status()
@@ -172,7 +173,7 @@ class HTTPClient:
                 return b""
             
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url)
+                response = await client.get(url, follow_redirects=True)
                 response.raise_for_status()
                 return response.content
         except httpx.RequestError as e:

@@ -21,9 +21,11 @@ AgentBridge 是 Gateway 与 Agent Core 之间的唯一连接点。
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, Optional
+from uuid import uuid4
 
 from .agent_info import AgentInfo
 from .response import GatewayEvent, GatewayEventType
@@ -36,17 +38,23 @@ from ..agent_core.adapters.tool_adapter import XAgentToolAdapter
 from ..agent_core.adapters.system_prompt_adapter import create_system_prompt_adapter
 # 新增 Adapter 导入
 from ..agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
-from ..runtime.session import DefaultSessionOrchestrator
 from ..agent_core.types import (
     AgentEndEvent,
     AgentStartEvent,
     AssistantMessage,
+    LLMCallLog,
+    LogCategory,
+    LogLevel,
     MessageUpdateEvent,
     MessageEndEvent,
+    ToolCallLog,
+    ToolCallContent,
     ToolExecutionStartEvent,
     ToolExecutionEndEvent,
     ToolExecutionUpdateEvent,
     TextContent,
+    ToolResultMessage,
+    UserMessage,
 )
 from ..agent_core.skill_dispatcher import (
     SkillCommandResolver,
@@ -54,8 +62,10 @@ from ..agent_core.skill_dispatcher import (
     SkillInvocation,
     build_skill_command_specs,
 )
-from ..runtime.turn import DefaultTurnController
-from ..runtime.types import TurnRequest, TurnResult
+from ..runtime.turn import DefaultToolGovernor, DefaultTurnController
+from ..runtime.service import get_runtime_services
+from ..runtime.repositories import StateSnapshotRecord, SummaryRecord, TranscriptEntry
+from ..runtime.types import ToolCallSpec, ToolExecutionPlan, ToolExecutionResult, TurnRequest, TurnResult
 from ..conversation.dao.models import Agent as AgentORM
 
 try:
@@ -267,14 +277,20 @@ class AgentBridge:
     """
 
     def __init__(self) -> None:
-        self.runtime_session_orchestrator = DefaultSessionOrchestrator()
-        self.runtime_turn_controller = DefaultTurnController()
+        self._runtime_services = get_runtime_services()
+        self.runtime_session_orchestrator = self._runtime_services.orchestrator
+        from ..runtime.context import DefaultCompressionPipeline, DefaultContextBuilder
+
+        self._runtime_context_builder = DefaultContextBuilder()
+        self._runtime_compression_pipeline = DefaultCompressionPipeline()
+        self.runtime_turn_controller = self._create_runtime_turn_controller()
 
     def create_config(
         self,
         agent_info: AgentInfo | None = None,
         *,
         disable_tools: bool = False,
+        use_legacy_context: bool = True,
     ) -> AgentCoreConfig:
         """创建 Agent 配置。
 
@@ -292,6 +308,23 @@ class AgentBridge:
         llm_adapter = XAgentLLMAdapter(llm_router)
         tool_adapter = None if disable_tools else XAgentToolAdapter(_get_tool_manager())
         agent_logger = _get_agent_logger()
+        model_name = getattr(getattr(llm_router, "_primary", None), "model_id", "")
+        provider_name = getattr(getattr(llm_router, "_primary", None), "name", "")
+        turn_profile = self._runtime_services.turn_profiles[self._runtime_services.default_turn_profile]
+        tool_policies = {
+            name: policy
+            for name, policy in self._runtime_services.tool_policies.items()
+            if name != "__default__"
+        }
+        if not tool_policies:
+            from ..runtime.types import ToolPolicy
+
+            tool_policies = {
+                "web_search": ToolPolicy(max_uses_per_turn=3, repeat_signature_limit=1),
+                "fetch_web_content": ToolPolicy(max_uses_per_turn=2, repeat_signature_limit=1),
+                "run_in_terminal": ToolPolicy(max_uses_per_turn=4, repeat_signature_limit=2),
+                "read_file": ToolPolicy(max_uses_per_turn=8, repeat_signature_limit=2),
+            }
 
         # 解析 agent 对应的 workspace 路径，多 Agent 场景下各 agent 有独立 workspace
         workspace_path = self._resolve_agent_workspace(agent_info)
@@ -299,10 +332,17 @@ class AgentBridge:
         system_prompt_adapter = create_system_prompt_adapter(workspace_path=workspace_path)
         system_prompt = system_prompt_adapter.build_system_prompt()
 
-        context_adapter = self._create_context_adapter(llm_router, agent_info, workspace_path=workspace_path)
+        context_adapter = (
+            self._create_context_adapter(llm_router, agent_info, workspace_path=workspace_path)
+            if use_legacy_context
+            else None
+        )
 
         # 创建工具中间件管道（可选，默认启用计时和日志中间件）
-        tool_middleware_adapter = None if disable_tools else self._create_tool_middleware_adapter()
+        tool_middleware_adapter = None if disable_tools else self._create_tool_middleware_adapter(
+            turn_profile=turn_profile,
+            tool_policies=tool_policies,
+        )
 
         return AgentCoreConfig(
             llm=llm_adapter,
@@ -312,6 +352,10 @@ class AgentBridge:
             system_prompt=system_prompt,
             system_prompt_port=system_prompt_adapter,
             tool_middleware_pipeline=tool_middleware_adapter.pipeline if tool_middleware_adapter else None,
+            max_turns=turn_profile.max_turns,
+            model=model_name,
+            provider=provider_name,
+            enable_context_compression=use_legacy_context,
         )
 
     def create_agent(
@@ -503,6 +547,1466 @@ class AgentBridge:
                 abort_forwarder.cancel()
             self._restore_system_prompt(agent)
 
+    def _create_runtime_turn_controller(self) -> DefaultTurnController:
+        """Create the default runtime controller backed by the shared runtime service."""
+        default_tool_policy = self._runtime_services.tool_policies.get("__default__")
+        governed_policies = dict(self._runtime_services.tool_policies)
+        if default_tool_policy is None:
+            from ..runtime.types import ToolPolicy
+
+            default_tool_policy = ToolPolicy()
+        if len(governed_policies) <= 1:
+            from ..runtime.types import ToolPolicy
+
+            governed_policies.update(
+                {
+                    "web_search": ToolPolicy(max_uses_per_turn=3, repeat_signature_limit=1),
+                    "fetch_web_content": ToolPolicy(max_uses_per_turn=2, repeat_signature_limit=1),
+                    "read_file": ToolPolicy(max_uses_per_turn=8, repeat_signature_limit=2),
+                    "write_file": ToolPolicy(max_uses_per_turn=4, repeat_signature_limit=2),
+                    "run_in_terminal": ToolPolicy(max_uses_per_turn=4, repeat_signature_limit=2),
+                }
+            )
+        governed_policies.setdefault(
+            "runtime_legacy_bridge",
+            default_tool_policy,
+        )
+        return DefaultTurnController(
+            tool_governor=DefaultToolGovernor(
+                default_policy=default_tool_policy,
+                policies_by_name=governed_policies,
+            ),
+            planner=self._runtime_controller_planner,
+            executor=self._runtime_controller_executor,
+            compact_fn=self._runtime_controller_compact,
+        )
+
+    async def _runtime_controller_planner(self, state) -> ToolExecutionPlan | None:
+        """Plan the next bounded runtime step by calling the model directly."""
+        if state.request.metadata.get("runtime_force_legacy_bridge"):
+            if state.metadata.get("runtime_legacy_bridge_executed"):
+                return ToolExecutionPlan()
+            return ToolExecutionPlan(
+                calls=[
+                    ToolCallSpec(
+                        tool_name="runtime_legacy_bridge",
+                        arguments={"session_id": state.request.session.session_id},
+                    )
+                ]
+            )
+
+        await self._ensure_runtime_turn_bootstrap(state)
+        forced_delegate_plan = self._runtime_maybe_force_delegate_plan(state)
+        if forced_delegate_plan is not None:
+            return forced_delegate_plan
+        self._runtime_log_entry(
+            state,
+            event="runtime_turn_plan",
+            message=f"Runtime planner starting for turn {state.turn_index}",
+            category=LogCategory.AGENT_LOOP,
+            data={"turn_index": state.turn_index},
+        )
+        assistant_message = await self._runtime_invoke_model_once(state)
+        state.metadata["last_assistant_message"] = assistant_message
+        state.active_messages.append(assistant_message)
+        state.metadata["model"] = assistant_message.model or state.metadata.get("model", "")
+        state.metadata["provider"] = assistant_message.provider or state.metadata.get("provider", "")
+
+        usage = assistant_message.usage or {}
+        state.record_token_usage(
+            input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+            output_tokens=int(usage.get("completion_tokens", 0) or 0),
+        )
+
+        tool_calls = assistant_message.get_tool_calls()
+        text_output = assistant_message.get_text().strip()
+        if assistant_message.stop_reason in {"error", "aborted"}:
+            state.metadata["final_output_text"] = text_output or self._runtime_best_effort_output(
+                state,
+                error_message=assistant_message.error_message or assistant_message.stop_reason,
+            )
+            state.metadata["final_candidate_ready"] = True
+            state.metadata["best_effort_reason"] = assistant_message.stop_reason
+            return ToolExecutionPlan()
+
+        if not tool_calls:
+            state.metadata["final_output_text"] = text_output or self._runtime_best_effort_output(state)
+            state.metadata["final_candidate_ready"] = True
+            return ToolExecutionPlan()
+
+        state.metadata["final_candidate_ready"] = False
+        self._runtime_log_entry(
+            state,
+            event="runtime_turn_plan_ready",
+            message="Runtime planner produced tool plan",
+            category=LogCategory.AGENT_LOOP,
+            data={
+                "turn_index": state.turn_index,
+                "tool_call_count": len(tool_calls),
+                "stop_reason": assistant_message.stop_reason,
+                "output_chars": len(text_output),
+            },
+        )
+        return ToolExecutionPlan(
+            calls=[
+                ToolCallSpec(
+                    tool_name=tool_call.name,
+                    arguments=dict(tool_call.arguments),
+                )
+                for tool_call in tool_calls
+            ],
+            allow_parallel=len(tool_calls) > 1,
+        )
+
+    def _runtime_maybe_force_delegate_plan(self, state) -> ToolExecutionPlan | None:
+        """Convert explicit delegation requests into a deterministic delegate_task plan."""
+        if state.turn_index != 0:
+            return None
+        if state.request.metadata.get("runtime_resume_from_child"):
+            return None
+
+        available_tool_names = {tool.name for tool in self._runtime_available_tools(state)}
+        if "delegate_task" not in available_tool_names:
+            return None
+
+        current_agent_id = ""
+        runtime_agent_info = state.metadata.get("runtime_agent_info")
+        if runtime_agent_info is not None:
+            current_agent_id = getattr(runtime_agent_info, "agent_id", "") or ""
+
+        parsed = self._runtime_parse_delegate_intent(
+            state.request.user_input,
+            current_agent_id=current_agent_id,
+        )
+        if parsed is None:
+            return None
+
+        target_agent_id, delegated_task = parsed
+        self._runtime_log_entry(
+            state,
+            event="runtime_forced_delegate_plan",
+            message=f"Forced delegate_task plan for {target_agent_id}",
+            category=LogCategory.AGENT_LOOP,
+            data={
+                "target_agent_id": target_agent_id,
+                "task_preview": delegated_task[:200],
+            },
+        )
+        return ToolExecutionPlan(
+            calls=[
+                ToolCallSpec(
+                    tool_name="delegate_task",
+                    arguments={
+                        "agent_id": target_agent_id,
+                        "task": delegated_task,
+                    },
+                )
+            ]
+        )
+
+    def _runtime_parse_delegate_intent(
+        self,
+        user_input: str,
+        *,
+        current_agent_id: str = "",
+    ) -> tuple[str, str] | None:
+        """Parse explicit '让某个 agent 去做事' requests before they hit the model."""
+        text = (user_input or "").strip()
+        if not text:
+            return None
+
+        agents = AgentORM.list_all()
+        if not agents:
+            return None
+
+        alias_to_agent_id: dict[str, str] = {}
+        for agent in agents:
+            agent_id = getattr(agent, "agent_id", "") or ""
+            agent_name = getattr(agent, "agent_name", "") or ""
+            if not agent_id or agent_id == current_agent_id:
+                continue
+
+            aliases = {
+                agent_id,
+                agent_name,
+                agent_name.replace("助手", "").strip(),
+                agent_name.replace("分析员", "").strip(),
+                agent_name.replace("评估员", "").strip(),
+            }
+            for alias in aliases:
+                normalized = alias.strip()
+                if normalized:
+                    alias_to_agent_id[normalized] = agent_id
+
+        if not alias_to_agent_id:
+            return None
+
+        alias_pattern = "|".join(
+            sorted((re.escape(alias) for alias in alias_to_agent_id.keys()), key=len, reverse=True)
+        )
+        pattern = re.compile(
+            rf"^\s*(?:请|麻烦|请你|帮我)?\s*(?:委托|让|叫)?\s*(?P<agent>{alias_pattern})\s*(?P<task>.+)$"
+        )
+        match = pattern.match(text)
+        if match is None:
+            return None
+
+        target_agent_id = alias_to_agent_id.get(match.group("agent"), "")
+        delegated_task = match.group("task").lstrip(" ，,:：")
+        for prefix in ("帮我", "帮忙", "给我", "为我", "去", "来", "帮我去", "帮忙去"):
+            if delegated_task.startswith(prefix) and len(delegated_task) > len(prefix):
+                delegated_task = delegated_task[len(prefix):].lstrip(" ，,:：")
+                break
+        delegated_task = delegated_task.strip()
+        if not target_agent_id or not delegated_task:
+            return None
+        return target_agent_id, delegated_task
+
+    async def _runtime_controller_executor(
+        self,
+        plan,
+        state,
+    ) -> list[ToolExecutionResult]:
+        """Execute governed runtime tools directly, with legacy fallback only when requested."""
+        observed: list[ToolExecutionResult] = []
+        runtime_abort_event = (
+            state.request.metadata.get("runtime_abort_event")
+            if isinstance(state.request.metadata.get("runtime_abort_event"), asyncio.Event)
+            else None
+        )
+        if state.request.metadata.get("runtime_force_legacy_bridge"):
+            for call in plan.calls:
+                if call.tool_name != "runtime_legacy_bridge":
+                    observed.append(
+                        ToolExecutionResult(
+                            tool_name=call.tool_name,
+                            success=False,
+                            error=f"unsupported runtime controller tool: {call.tool_name}",
+                        )
+                    )
+                    continue
+
+                state.metadata["runtime_legacy_bridge_executed"] = True
+                result = await self._run_runtime_turn_via_legacy_bridge(state.request)
+                await self._persist_runtime_turn_result(state.request, result)
+                result.metadata["runtime_persisted"] = True
+                observed.append(
+                    ToolExecutionResult(
+                        tool_name=call.tool_name,
+                        success=result.kind != "abort",
+                        output=result.output_text or "",
+                        error=None if result.kind != "abort" else result.finish_reason,
+                        metadata={"turn_result": result},
+                    )
+                )
+            return observed
+
+        await self._ensure_runtime_turn_bootstrap(state)
+        config = state.metadata["runtime_config"]
+        available_tools = self._runtime_available_tools(state)
+        tool_port = config.tools
+
+        for call in plan.calls:
+            if tool_port is None:
+                observed.append(
+                    ToolExecutionResult(
+                        tool_name=call.tool_name,
+                        success=False,
+                        error="tool execution is disabled for this runtime request",
+                    )
+                )
+                continue
+
+        from ..agent_core.tool_executor import execute_tool_calls
+        from ..agent_core.types import TextContent, ToolCallContent
+
+        runtime_tool_calls = [
+            ToolCallContent(
+                id=f"runtime-tool-{uuid4().hex[:8]}",
+                name=call.tool_name,
+                arguments=dict(call.arguments),
+            )
+            for call in plan.calls
+        ]
+        self._runtime_log_entry(
+            state,
+            event="runtime_tool_batch_start",
+            message=f"Executing {len(runtime_tool_calls)} runtime tool call(s)",
+            category=LogCategory.TOOL_EXEC,
+            data={
+                "turn_index": state.turn_index,
+                "tool_names": [call.name for call in runtime_tool_calls],
+            },
+        )
+        for tool_call in runtime_tool_calls:
+            self._runtime_log_tool_call_start(
+                state,
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                arguments=tool_call.arguments,
+            )
+            self._runtime_record_gateway_event(
+                state,
+                event_type="tool_call",
+                payload={
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": dict(tool_call.arguments),
+                },
+            )
+
+        async for event in execute_tool_calls(
+            trace_id=getattr(self._runtime_request_context(state.request), "trace_id", ""),
+            llm_call_id=f"runtime-turn-{uuid4().hex[:8]}",
+            tool_port=tool_port,
+            tools=available_tools,
+            tool_calls=runtime_tool_calls,
+            abort_event=runtime_abort_event,
+            middleware_pipeline=config.tool_middleware_pipeline,
+        ):
+            if not isinstance(event, ToolExecutionEndEvent):
+                continue
+
+            output_text = ""
+            details: dict[str, Any] = {}
+            if event.result is not None:
+                details = dict(event.result.details)
+                output_text = "".join(
+                    content.text
+                    for content in event.result.content
+                    if isinstance(content, TextContent)
+                )
+            artifact_ref = await self._runtime_maybe_archive_tool_output(
+                state,
+                tool_name=event.tool_name,
+                output_text=output_text,
+                details=details,
+            )
+            if artifact_ref is not None:
+                details["artifact_ref"] = artifact_ref.id
+                output_text = (
+                    f"[Stored large result: {artifact_ref.id}]\n"
+                    f"Preview:\n{artifact_ref.preview}"
+                )
+
+            result_message = ToolResultMessage.from_text(
+                tool_call_id=event.tool_call_id,
+                tool_name=event.tool_name,
+                text=output_text or (event.result.details.get("error", "") if event.result else ""),
+                is_error=event.is_error,
+                details=details,
+            )
+            state.active_messages.append(result_message)
+            result_text = "".join(
+                content.text
+                for content in result_message.content
+                if isinstance(content, TextContent)
+            )
+            self._runtime_log_tool_call_end(
+                state,
+                tool_call_id=event.tool_call_id,
+                result=event.result,
+                duration_ms=event.duration_ms,
+                is_error=event.is_error,
+                error=str(details.get("error") or output_text) if event.is_error else None,
+            )
+            self._runtime_record_gateway_event(
+                state,
+                event_type="tool_result",
+                payload={
+                    "tool_call_id": event.tool_call_id,
+                    "name": event.tool_name,
+                    "result": result_text,
+                    "is_error": event.is_error,
+                    "details": dict(details),
+                    "duration_ms": event.duration_ms,
+                },
+            )
+            await self.runtime_session_orchestrator.append_transcript_entry(
+                TranscriptEntry(
+                    entry_id=f"runtime-tool-result:{uuid4().hex}",
+                    session_id=state.request.session.session_id,
+                    turn_index=state.turn_index,
+                    kind="tool_result",
+                    role="tool",
+                    text=result_text,
+                    payload_json={
+                        "tool_call_id": event.tool_call_id,
+                        "tool_name": event.tool_name,
+                        "is_error": event.is_error,
+                        "details": dict(details),
+                    },
+                    created_at=time.time(),
+                )
+            )
+            await self._runtime_record_tool_side_effects(state, result_message)
+
+            if details.get("force_finalize"):
+                exhausted = list(details.get("exhausted_tool_names", []))
+                disabled = state.metadata.setdefault("disabled_tool_names", set())
+                disabled.update(exhausted or [event.tool_name])
+                state.metadata["force_finalize"] = True
+
+            if event.tool_name == "delegate_task" and details.get("delegate_terminal"):
+                state.metadata["runtime_synthesis_instruction"] = self._runtime_delegate_synthesis_instruction(
+                    tool_name=event.tool_name,
+                    details=details,
+                    result_text=result_text,
+                )
+                disabled = state.metadata.setdefault("disabled_tool_names", set())
+                disabled.update(tool.name for tool in self._runtime_available_tools(state))
+                self._runtime_log_entry(
+                    state,
+                    event="delegate_terminal_result",
+                    message="Delegate task returned terminal child result; forcing synthesis without more tool calls",
+                    category=LogCategory.AGENT_LOOP,
+                    data={
+                        "delegate_terminal_reason": details.get("delegate_terminal_reason", ""),
+                        "child_trace_id": details.get("child_trace_id", ""),
+                    },
+                    level=LogLevel.INFO,
+                )
+
+            observed.append(
+                ToolExecutionResult(
+                    tool_name=event.tool_name,
+                    success=not event.is_error,
+                    output=output_text,
+                    error=str(details.get("error") or output_text) if event.is_error else None,
+                    metadata=details,
+                )
+            )
+        return observed
+
+    def _runtime_delegate_synthesis_instruction(
+        self,
+        *,
+        tool_name: str,
+        details: dict[str, Any],
+        result_text: str,
+    ) -> str:
+        """Force the parent runtime to summarize delegated output instead of continuing tool search."""
+        child_trace_id = details.get("child_trace_id", "")
+        reason = details.get("delegate_terminal_reason", "")
+        if reason == "async_wait":
+            lines = [
+                f"委托工具 {tool_name} 已成功发起异步子任务。",
+                "不要继续调用任何工具，也不要自己继续搜索或扩展调研。",
+                "请向用户明确说明：子任务已委托给目标 agent，完成后会自动回传结果。",
+            ]
+        else:
+            lines = [
+                f"委托工具 {tool_name} 已返回最终子任务结果。",
+                "不要继续调用任何工具，也不要自己继续搜索或扩展调研。",
+                "请仅基于当前委托结果向用户给出最终答复。",
+            ]
+        if child_trace_id:
+            lines.append(f"子任务 trace_id: {child_trace_id}")
+        if reason:
+            lines.append(f"委托结果状态: {reason}")
+        if result_text.strip() and reason != "async_wait":
+            lines.append("委托结果如下：")
+            lines.append(result_text.strip())
+        return "\n".join(lines)
+
+    async def _persist_runtime_turn_result(self, request: TurnRequest, result: TurnResult) -> None:
+        """Persist minimal runtime replay state for resume/reconnect and child-session flows."""
+        try:
+            if result.metadata.get("legacy_bridge"):
+                user_entry_id = f"runtime-user:{uuid4().hex}"
+                await self.runtime_session_orchestrator.append_transcript_entry(
+                    TranscriptEntry(
+                        entry_id=user_entry_id,
+                        session_id=request.session.session_id,
+                        turn_index=0,
+                        kind="user_message",
+                        role="user",
+                        text=request.user_input,
+                        created_at=time.time(),
+                    )
+                )
+                if result.output_text:
+                    await self.runtime_session_orchestrator.append_transcript_entry(
+                        TranscriptEntry(
+                            entry_id=f"runtime-assistant:{uuid4().hex}",
+                            session_id=request.session.session_id,
+                            turn_index=0,
+                            kind="assistant_message",
+                            role="assistant",
+                            text=result.output_text,
+                            created_at=time.time(),
+                        )
+                    )
+            await self.runtime_session_orchestrator.record_state_snapshot(
+                StateSnapshotRecord(
+                    snapshot_id=f"snapshot:{uuid4().hex}",
+                    session_id=request.session.session_id,
+                    task_frame=result.updated_task_frame or request.task_frame,
+                    turn_index=int(result.metadata.get("turn_index", 0) or 0),
+                    unresolved=list((result.updated_task_frame or request.task_frame).unresolved),
+                    active_artifact_refs=[artifact.id for artifact in result.artifact_refs],
+                    budget_snapshot=dict(result.metadata.get("budget", {}) or {}),
+                    tool_usage_json=dict(
+                        result.metadata.get("budget", {}).get("per_tool_calls", {})
+                        if isinstance(result.metadata.get("budget"), dict)
+                        else {}
+                    ),
+                    last_finish_reason=result.finish_reason,
+                    metadata={"kind": result.kind},
+                    created_at=time.time(),
+                )
+            )
+            if result.output_text:
+                await self.runtime_session_orchestrator.record_summary(
+                    SummaryRecord(
+                        summary_id=f"summary:{uuid4().hex}",
+                        session_id=request.session.session_id,
+                        summary_type="child_result"
+                        if request.session.parent_session_key
+                        else "collapse",
+                        summary=result.output_text,
+                        objective=(result.updated_task_frame or request.task_frame).objective,
+                        artifact_refs=[artifact.id for artifact in result.artifact_refs],
+                        created_at=time.time(),
+                    )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist runtime replay state",
+                extra={
+                    "session_id": request.session.session_id,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+
+    async def _runtime_controller_compact(self, state, reason: str):
+        """Mark runtime compaction decisions while letting per-call context compression own the actual pruning."""
+        state.metadata["last_compaction_reason"] = reason
+        state.metadata["compaction_count"] = state.metadata.get("compaction_count", 0) + 1
+        state.metadata["request_compact"] = False
+        return state
+
+    async def _ensure_runtime_turn_bootstrap(self, state) -> None:
+        """Load runtime dependencies and session history once per turn request."""
+        if state.metadata.get("runtime_bootstrapped"):
+            return
+
+        request = state.request
+        agent_info = self._resolve_runtime_agent_info(request)
+        runtime_config = self._build_runtime_agent_config(request, agent_info) or self.create_config(
+            agent_info,
+            use_legacy_context=False,
+        )
+        state.metadata["runtime_agent_info"] = agent_info
+        state.metadata["runtime_config"] = runtime_config
+        state.metadata["model"] = runtime_config.model
+        state.metadata["provider"] = runtime_config.provider
+        state.metadata.setdefault("disabled_tool_names", set())
+        state.metadata.setdefault("runtime_event_timeline", [])
+        state.metadata["runtime_prompt_mode"] = request.metadata.get("prompt_mode") or (
+            "minimal" if request.session.lane == "subagent" else "full"
+        )
+
+        resume_state = None
+        if not bool(request.metadata.get("runtime_skip_history_load")):
+            resume_state = await self.runtime_session_orchestrator.resume_session(
+                request.session.session_key,
+                recent_entries_limit=48,
+            )
+        state.metadata["runtime_resume_state"] = resume_state
+        state.metadata["runtime_summary_chain_messages"] = self._runtime_summary_chain_messages(resume_state)
+        state.metadata["runtime_recent_failures"] = self._runtime_recent_failures_from_resume(resume_state)
+
+        history_messages = self._runtime_messages_from_resume(resume_state)
+        if history_messages:
+            state.active_messages.extend(history_messages)
+        elif not bool(request.metadata.get("runtime_skip_history_load")):
+            fallback_messages = await self._runtime_load_legacy_history_messages(request.session.session_id)
+            state.active_messages.extend(fallback_messages)
+            if fallback_messages:
+                await self._runtime_seed_transcript_from_agent_messages(
+                    request.session.session_id,
+                    fallback_messages,
+                )
+                state.metadata["runtime_history_source"] = "legacy_memory_imported"
+            else:
+                state.metadata["runtime_history_source"] = "empty"
+        else:
+            state.metadata["runtime_history_source"] = "empty"
+
+        state.active_artifact_refs = await self._runtime_artifact_refs_from_resume(resume_state)
+        if resume_state is not None and resume_state.latest_snapshot is not None:
+            state.session_tool_usage = dict(resume_state.latest_snapshot.tool_usage_json or {})
+
+        if bool(request.metadata.get("persist_user_message", True)) and request.user_input.strip():
+            state.metadata["runtime_user_msg_id"] = await self._persist_user_message(
+                request.session.session_id,
+                request.user_input,
+            )
+
+        current_user_message = UserMessage.from_text(request.user_input)
+        state.active_messages.append(current_user_message)
+        if request.user_input.strip():
+            await self.runtime_session_orchestrator.append_transcript_entry(
+                TranscriptEntry(
+                    entry_id=f"runtime-user:{uuid4().hex}",
+                    session_id=request.session.session_id,
+                    turn_index=state.turn_index,
+                    kind="user_message",
+                    role="user",
+                    text=request.user_input,
+                    created_at=time.time(),
+                )
+            )
+        state.metadata["runtime_system_prompt"] = self._runtime_system_prompt(request, runtime_config)
+        self._runtime_log_entry(
+            state,
+            event="runtime_turn_start",
+            message="Runtime turn bootstrapped",
+            category=LogCategory.AGENT_LOOP,
+            data={
+                "session_id": request.session.session_id,
+                "turn_index": state.turn_index,
+                "history_source": state.metadata.get("runtime_history_source", "runtime_store"),
+                "prompt_mode": state.metadata.get("runtime_prompt_mode", "full"),
+            },
+        )
+        state.metadata["runtime_bootstrapped"] = True
+
+    async def _runtime_load_legacy_history_messages(self, session_id: str) -> list[Any]:
+        """Fallback loader for older sessions that have not been replayed into runtime stores yet."""
+        try:
+            from ..memory.manager import get_memory_manager
+
+            memory_manager = get_memory_manager()
+            return await memory_manager.get_session_history_as_agent_messages(session_id, limit=200)
+        except Exception as exc:
+            logger.warning(
+                "Failed to load legacy session history for runtime fallback",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+            return []
+
+    def _runtime_messages_from_resume(self, resume_state) -> list[Any]:
+        """Convert persisted runtime transcript entries back into agent-core messages."""
+        if resume_state is None:
+            return []
+
+        messages: list[Any] = []
+        for entry in resume_state.recent_entries:
+            message = self._runtime_entry_to_message(entry)
+            if message is not None:
+                messages.append(message)
+        return messages
+
+    def _runtime_entry_to_message(self, entry: TranscriptEntry) -> Any | None:
+        """Map one runtime transcript entry into an agent-core message."""
+        payload = entry.payload_json or {}
+        if entry.kind == "user_message":
+            return UserMessage.from_text(entry.text or "")
+        if entry.kind == "assistant_message":
+            content: list[Any] = []
+            if entry.text:
+                content.append(TextContent(text=entry.text))
+            for tool_call in payload.get("tool_calls", []) if isinstance(payload, dict) else []:
+                if not isinstance(tool_call, dict):
+                    continue
+                content.append(
+                    ToolCallContent(
+                        id=str(tool_call.get("id", "")),
+                        name=str(tool_call.get("name", "")),
+                        arguments=(
+                            dict(tool_call.get("arguments", {}) or {})
+                            if isinstance(tool_call.get("arguments"), dict)
+                            else {"raw": tool_call.get("arguments")}
+                        ),
+                    )
+                )
+            return AssistantMessage(
+                content=content,
+                model=str(payload.get("model", "")),
+                provider=str(payload.get("provider", "")),
+                stop_reason=str(payload.get("stop_reason", "")),
+                usage=dict(payload.get("usage", {}) or {}),
+            )
+        if entry.kind == "tool_result":
+            return ToolResultMessage.from_text(
+                tool_call_id=str(payload.get("tool_call_id", "")),
+                tool_name=str(payload.get("tool_name", entry.role or "")),
+                text=entry.text or "",
+                is_error=bool(payload.get("is_error", False)),
+                details=dict(payload.get("details", {}) or {}),
+            )
+        if entry.kind == "tool_call":
+            payload_calls = payload.get("tool_calls")
+            if isinstance(payload_calls, list) and payload_calls:
+                tool_contents = [
+                    ToolCallContent(
+                        id=str(call.get("id", "")),
+                        name=str(call.get("name", "")),
+                        arguments=(
+                            dict(call.get("arguments", {}) or {})
+                            if isinstance(call.get("arguments"), dict)
+                            else {"raw": call.get("arguments")}
+                        ),
+                    )
+                    for call in payload_calls
+                    if isinstance(call, dict)
+                ]
+                return AssistantMessage(
+                    content=tool_contents,
+                    model=str(payload.get("model", "")),
+                    provider=str(payload.get("provider", "")),
+                    stop_reason="tool_use",
+                    usage=dict(payload.get("usage", {}) or {}),
+                )
+        return None
+
+    def _runtime_summary_chain_messages(self, resume_state) -> list[dict[str, str]]:
+        """Convert persisted summary chain into compact system summary messages."""
+        if resume_state is None:
+            return []
+
+        messages: list[dict[str, str]] = []
+        for summary in resume_state.summary_chain:
+            lines = [f"[{summary.summary_type} summary]"]
+            if summary.objective:
+                lines.append(f"Objective: {summary.objective}")
+            if summary.summary:
+                lines.append(summary.summary)
+            if summary.open_questions:
+                lines.append("Open questions: " + "; ".join(summary.open_questions))
+            if summary.recent_failures:
+                lines.append("Recent failures: " + "; ".join(summary.recent_failures))
+            if summary.artifact_refs:
+                lines.append("Artifacts: " + ", ".join(summary.artifact_refs))
+            messages.append({"role": "system", "content": "\n".join(lines)})
+        return messages
+
+    def _runtime_recent_failures_from_resume(self, resume_state) -> list[str]:
+        """Recover persisted failure summaries for compression invariants and assessment context."""
+        if resume_state is None:
+            return []
+
+        failures: list[str] = []
+        for summary in resume_state.summary_chain:
+            failures.extend(summary.recent_failures)
+        return failures[-6:]
+
+    async def _runtime_artifact_refs_from_resume(self, resume_state) -> list[Any]:
+        """Resolve active artifact refs from the latest runtime snapshot when available."""
+        if resume_state is None or resume_state.latest_snapshot is None:
+            return []
+
+        refs: list[Any] = []
+        seen: set[str] = set()
+        for artifact_id in resume_state.latest_snapshot.active_artifact_refs:
+            if artifact_id in seen:
+                continue
+            seen.add(artifact_id)
+            try:
+                stored = await self.runtime_session_orchestrator.artifact_repository.get(artifact_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to resolve runtime artifact reference",
+                    extra={"session_id": resume_state.session.session_id, "artifact_id": artifact_id, "error": str(exc)},
+                )
+                continue
+            if stored is None:
+                continue
+            artifact_ref, _content = stored
+            refs.append(artifact_ref)
+        return refs
+
+    async def _runtime_seed_transcript_from_agent_messages(
+        self,
+        session_id: str,
+        messages: list[Any],
+    ) -> None:
+        """Import legacy agent messages into runtime transcript storage once, for compatibility migration."""
+        for index, message in enumerate(messages):
+            entry = self._runtime_message_to_transcript_entry(
+                session_id=session_id,
+                turn_index=index,
+                message=message,
+            )
+            if entry is None:
+                continue
+            await self.runtime_session_orchestrator.append_transcript_entry(entry)
+
+    def _runtime_message_to_transcript_entry(
+        self,
+        *,
+        session_id: str,
+        turn_index: int,
+        message: Any,
+    ) -> TranscriptEntry | None:
+        """Convert an agent-core message into a runtime transcript entry."""
+        if isinstance(message, UserMessage):
+            text = "".join(content.text for content in message.content if isinstance(content, TextContent))
+            return TranscriptEntry(
+                entry_id=f"runtime-import-user:{uuid4().hex}",
+                session_id=session_id,
+                turn_index=turn_index,
+                kind="user_message",
+                role="user",
+                text=text,
+                created_at=float(getattr(message, "timestamp", 0) or 0) / 1000.0,
+            )
+
+        if isinstance(message, AssistantMessage):
+            text = message.get_text()
+            tool_calls = [
+                {
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": dict(tool_call.arguments),
+                }
+                for tool_call in message.get_tool_calls()
+            ]
+            return TranscriptEntry(
+                entry_id=f"runtime-import-assistant:{uuid4().hex}",
+                session_id=session_id,
+                turn_index=turn_index,
+                kind="assistant_message" if text else "tool_call",
+                role="assistant",
+                text=text or None,
+                payload_json={
+                    "model": message.model,
+                    "provider": message.provider,
+                    "stop_reason": message.stop_reason,
+                    "usage": dict(message.usage or {}),
+                    "tool_calls": tool_calls,
+                },
+                created_at=float(getattr(message, "timestamp", 0) or 0) / 1000.0,
+            )
+
+        if isinstance(message, ToolResultMessage):
+            text = "".join(content.text for content in message.content if isinstance(content, TextContent))
+            return TranscriptEntry(
+                entry_id=f"runtime-import-tool:{uuid4().hex}",
+                session_id=session_id,
+                turn_index=turn_index,
+                kind="tool_result",
+                role="tool",
+                text=text,
+                payload_json={
+                    "tool_call_id": message.tool_call_id,
+                    "tool_name": message.tool_name,
+                    "is_error": message.is_error,
+                    "details": dict(message.details),
+                },
+                created_at=float(getattr(message, "timestamp", 0) or 0) / 1000.0,
+            )
+        return None
+
+    def _runtime_system_prompt(self, request: TurnRequest, config: AgentCoreConfig) -> str:
+        """Build the runtime system prompt without creating an Agent instance."""
+        system_prompt = config.system_prompt
+
+        if not bool(request.metadata.get("runtime_disable_skills")):
+            skill_prompt, _ = _match_and_load_skill_prompt(request.user_input)
+            if skill_prompt:
+                system_prompt = f"{system_prompt}\n{skill_prompt}".strip()
+
+        announcement_block = self._render_runtime_announcements(request)
+        if announcement_block:
+            system_prompt = f"{system_prompt}\n\n{announcement_block}".strip()
+
+        return system_prompt
+
+    async def _runtime_invoke_model_once(self, state) -> AssistantMessage:
+        """Run one LLM round for the runtime controller."""
+        from ..agent_core.agent_loop import _stream_assistant_response
+
+        config: AgentCoreConfig = state.metadata["runtime_config"]
+        available_tools = self._runtime_available_tools(state)
+        runtime_abort_event = (
+            state.request.metadata.get("runtime_abort_event")
+            if isinstance(state.request.metadata.get("runtime_abort_event"), asyncio.Event)
+            else None
+        )
+        system_prompt, llm_messages = await self._runtime_prepare_model_input(
+            state,
+            system_prompt=state.metadata["runtime_system_prompt"],
+            available_tools=available_tools,
+        )
+        synthesis_instruction = state.metadata.get("runtime_synthesis_instruction")
+        if isinstance(synthesis_instruction, str) and synthesis_instruction.strip():
+            system_prompt = f"{system_prompt}\n\n[Runtime Synthesis Directive]\n{synthesis_instruction}".strip()
+        llm_call_id = self._runtime_log_llm_call_start(
+            state,
+            system_prompt=system_prompt,
+            messages=llm_messages,
+            tools=available_tools,
+        )
+        llm_started_at = time.time()
+
+        assistant_message: AssistantMessage | None = None
+        async for event in _stream_assistant_response(
+            llm=config.llm,
+            llm_call_id=llm_call_id,
+            system_prompt=system_prompt,
+            messages=llm_messages,
+            tools=available_tools,
+            model=config.model,
+            provider=config.provider,
+            abort_event=runtime_abort_event,
+        ):
+            if isinstance(event, MessageEndEvent) and isinstance(event.message, AssistantMessage):
+                assistant_message = event.message
+
+        if assistant_message is None:
+            assistant_message = AssistantMessage(
+                content=[TextContent(text=self._runtime_best_effort_output(state))],
+                model=config.model,
+                provider=config.provider,
+                stop_reason="error",
+                error_message="runtime model invocation produced no assistant message",
+            )
+
+        if assistant_message.stop_reason in {"error", "aborted"} and not assistant_message.get_text().strip():
+            assistant_message.content = [
+                TextContent(
+                    text=self._runtime_best_effort_output(
+                        state,
+                        error_message=assistant_message.error_message or assistant_message.stop_reason,
+                    )
+                )
+            ]
+        self._runtime_log_llm_call_end(
+            state,
+            call_id=llm_call_id,
+            assistant_message=assistant_message,
+            duration_ms=(time.time() - llm_started_at) * 1000,
+        )
+        await self._runtime_record_assistant_observation(state, assistant_message)
+        return assistant_message
+
+    async def _runtime_prepare_model_input(
+        self,
+        state,
+        *,
+        system_prompt: str,
+        available_tools: list[Any],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Build runtime model input directly from transcript, summaries, artifacts, and compression."""
+        from ..agent_core.context_transform import convert_messages_to_llm
+        from ..runtime.context import CompressionContext, ContextBuildRequest
+
+        raw_messages = convert_messages_to_llm(state.active_messages)
+        profile_name = str(
+            state.request.metadata.get("_runtime_compression_profile_name")
+            or self._runtime_services.default_compression_profile
+        )
+        profile = self._runtime_services.compression_profiles.get(profile_name)
+        if profile is None:
+            profile = self._runtime_services.compression_profiles.get(
+                self._runtime_services.default_compression_profile
+            )
+
+        build_result = await self._runtime_context_builder.build(
+            ContextBuildRequest(
+                session=state.request.session,
+                task_frame=state.task_frame,
+                raw_messages=raw_messages,
+                prompt_mode=state.metadata.get("runtime_prompt_mode", "full"),
+                metadata={
+                    "stable_prefix": system_prompt,
+                    "artifact_refs": list(state.active_artifact_refs),
+                    "budget": state.budget,
+                    "summary_chain": list(state.metadata.get("runtime_summary_chain_messages", [])),
+                },
+            )
+        )
+
+        if profile is None:
+            return build_result.system_prompt or system_prompt, list(build_result.active_messages)
+
+        model_context_window = state.budget.profile.max_total_tokens or max(
+            build_result.estimated_input_tokens,
+            1,
+        )
+        compression_ctx = CompressionContext(
+            session_key=state.request.session.session_key,
+            turn=state.turn_index,
+            task_frame=state.task_frame,
+            profile=profile,
+            model_context_window=model_context_window,
+            estimated_input_tokens=build_result.estimated_input_tokens,
+            messages=[dict(message) for message in build_result.active_messages],
+            active_artifacts=list(state.active_artifact_refs),
+            budget=state.budget,
+            metadata={
+                "now_ms": int(time.time() * 1000),
+                "recent_failures": list(state.metadata.get("runtime_recent_failures", [])),
+                "available_tool_count": len(available_tools),
+            },
+        )
+        compression_result = await self._runtime_compression_pipeline.run(compression_ctx)
+        if (
+            model_context_window > 0
+            and compression_result.estimated_input_tokens >= model_context_window
+        ):
+            emergency_ctx = CompressionContext(
+                session_key=compression_ctx.session_key,
+                turn=compression_ctx.turn,
+                task_frame=compression_ctx.task_frame,
+                profile=compression_ctx.profile,
+                model_context_window=compression_ctx.model_context_window,
+                estimated_input_tokens=compression_result.estimated_input_tokens,
+                messages=[dict(message) for message in compression_result.messages],
+                active_artifacts=list(compression_result.active_artifacts),
+                budget=compression_ctx.budget,
+                metadata=dict(compression_ctx.metadata),
+            )
+            compression_result = await self._runtime_compression_pipeline.run_emergency(emergency_ctx)
+
+        state.active_artifact_refs = list(compression_result.active_artifacts)
+        await self._runtime_record_compression_events(
+            state,
+            tokens_before=build_result.estimated_input_tokens,
+            result=compression_result,
+        )
+        state.metadata["runtime_context_summary"] = ", ".join(compression_result.operations)
+        self._runtime_log_entry(
+            state,
+            event="runtime_context_prepared",
+            message="Runtime context prepared for model call",
+            category=LogCategory.CONTEXT,
+            data={
+                "turn_index": state.turn_index,
+                "message_count": len(compression_result.messages),
+                "estimated_tokens": compression_result.estimated_input_tokens,
+                "operations": list(compression_result.operations),
+                "artifact_count": len(compression_result.active_artifacts),
+            },
+        )
+        return build_result.system_prompt or system_prompt, list(compression_result.messages)
+
+    async def _runtime_record_compression_events(
+        self,
+        state,
+        *,
+        tokens_before: int,
+        result,
+    ) -> None:
+        """Persist runtime compression telemetry for this turn."""
+        from ..runtime.repositories import CompressionEventRecord
+
+        if not getattr(result, "operations", None):
+            return
+
+        tokens_after = int(getattr(result, "estimated_input_tokens", tokens_before) or 0)
+        freed_tokens = max(tokens_before - tokens_after, 0)
+        affected_artifacts = [
+            artifact.id
+            for artifact in getattr(result, "active_artifacts", [])
+            if hasattr(artifact, "id")
+        ]
+        for stage in result.operations:
+            normalized_stage = "emergency" if stage == "emergency_compact" else stage
+            if normalized_stage not in {
+                "persist",
+                "aggregate_budget",
+                "ttl_prune",
+                "microcompact",
+                "collapse",
+                "autocompact",
+                "memory_flush",
+                "emergency",
+            }:
+                continue
+            try:
+                await self.runtime_session_orchestrator.append_compression_event(
+                    CompressionEventRecord(
+                        event_id=f"compression:{uuid4().hex}",
+                        session_id=state.request.session.session_id,
+                        turn_index=state.turn_index,
+                        stage=normalized_stage,
+                        tokens_before=tokens_before,
+                        tokens_after=tokens_after,
+                        freed_tokens=freed_tokens,
+                        affected_artifact_ids=affected_artifacts,
+                        fallback_used=normalized_stage == "emergency",
+                        metadata={"operations": list(result.operations)},
+                        created_at=time.time(),
+                    )
+                )
+                self._runtime_log_entry(
+                    state,
+                    event=f"runtime_compression_{normalized_stage}",
+                    message=f"Runtime compression stage applied: {normalized_stage}",
+                    category=LogCategory.CONTEXT,
+                    data={
+                        "turn_index": state.turn_index,
+                        "tokens_before": tokens_before,
+                        "tokens_after": tokens_after,
+                        "freed_tokens": freed_tokens,
+                        "affected_artifact_ids": affected_artifacts,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist runtime compression event",
+                    extra={
+                        "session_id": state.request.session.session_id,
+                        "stage": stage,
+                        "error": str(exc),
+                    },
+                )
+
+    async def _runtime_record_assistant_observation(self, state, assistant_message: AssistantMessage) -> None:
+        """Persist runtime transcript entries for assistant text and tool-call planning."""
+        text_output = assistant_message.get_text().strip()
+        tool_calls = assistant_message.get_tool_calls()
+
+        payload = {
+            "model": assistant_message.model,
+            "provider": assistant_message.provider,
+            "stop_reason": assistant_message.stop_reason,
+            "usage": dict(assistant_message.usage or {}),
+        }
+        if tool_calls:
+            payload["tool_calls"] = [
+                {
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": dict(tool_call.arguments),
+                }
+                for tool_call in tool_calls
+            ]
+
+        if text_output or tool_calls:
+            await self.runtime_session_orchestrator.append_transcript_entry(
+                TranscriptEntry(
+                    entry_id=f"runtime-assistant:{uuid4().hex}",
+                    session_id=state.request.session.session_id,
+                    turn_index=state.turn_index,
+                    kind="assistant_message" if text_output else "tool_call",
+                    role="assistant",
+                    text=text_output or None,
+                    payload_json=payload,
+                    created_at=time.time(),
+                )
+            )
+
+        if assistant_message.stop_reason in {"error", "aborted"} and assistant_message.error_message:
+            recent_failures = state.metadata.setdefault("runtime_recent_failures", [])
+            recent_failures.append(assistant_message.error_message)
+            del recent_failures[:-6]
+
+    def _runtime_available_tools(self, state) -> list[Any]:
+        """Return tools still available for the runtime turn."""
+        config: AgentCoreConfig = state.metadata["runtime_config"]
+        if config.tools is None:
+            return []
+        available_tools = config.tools.get_tools()
+        disabled = state.metadata.get("disabled_tool_names") or set()
+        if not disabled:
+            return available_tools
+        return [tool for tool in available_tools if tool.name not in disabled]
+
+    async def _runtime_maybe_archive_tool_output(
+        self,
+        state,
+        *,
+        tool_name: str,
+        output_text: str,
+        details: dict[str, Any],
+    ):
+        """Persist very large tool output out of the active runtime context."""
+        if not output_text:
+            return None
+        if len(output_text) <= state.budget.profile.tool_result_single_chars:
+            return None
+
+        from ..runtime.types import ArtifactRef
+
+        artifact_id = f"artifact:{uuid4().hex[:8]}"
+        preview = output_text[:900]
+        artifact = ArtifactRef(
+            id=artifact_id,
+            kind="tool",
+            title=tool_name,
+            preview=preview,
+            created_at=time.time(),
+            metadata=dict(details),
+        )
+        await self.runtime_session_orchestrator.store_artifact(artifact, output_text)
+        state.active_artifact_refs.append(artifact)
+        return artifact
+
+    async def _runtime_record_tool_side_effects(self, state, result_message: ToolResultMessage) -> None:
+        """Record lightweight stateful side effects after one tool result."""
+        details = result_message.details
+        try:
+            from ..services.context import get_session_state_updater, get_tool_result_archiver
+
+            archiver = get_tool_result_archiver()
+            updater = get_session_state_updater()
+            archived = {}
+            result_text = result_message.get_text() if hasattr(result_message, "get_text") else "".join(
+                content.text for content in result_message.content if isinstance(content, TextContent)
+            )
+
+            if archiver is not None:
+                archived = await archiver.archive(
+                    session_id=state.request.session.session_id,
+                    tool_name=result_message.tool_name,
+                    result_text=result_text,
+                    details=details,
+                )
+
+            if updater is not None:
+                await updater.update_after_turn(
+                    session_id=state.request.session.session_id,
+                    agent_id=state.metadata["runtime_agent_info"].agent_id,
+                    mode="research",
+                    new_messages=[{"role": "user", "content": state.request.user_input}],
+                    tool_results=[{"tool_name": result_message.tool_name, **archived}],
+                    delegate_results=[],
+                )
+        except Exception as exc:
+            logger.warning(
+                "Runtime tool side effects failed",
+                extra={
+                    "session_id": state.request.session.session_id,
+                    "tool_name": result_message.tool_name,
+                    "error": str(exc),
+                },
+            )
+
+    def _runtime_best_effort_output(self, state, error_message: str | None = None) -> str:
+        """Build a compact best-effort answer from current tool evidence."""
+        snippets: list[str] = []
+        for result in state.tool_results[-4:]:
+            if result.output:
+                snippets.append(f"[{result.tool_name}] {result.output[:280]}")
+        if snippets:
+            body = "\n\n".join(snippets)
+            if error_message:
+                return (
+                    f"基于当前已获取的信息，先给出最佳努力结果。\n\n{body}\n\n"
+                    f"说明：后续总结阶段失败，错误为：{error_message}"
+                )
+            return f"基于当前已获取的信息，先给出最佳努力结果。\n\n{body}"
+        if error_message:
+            return f"未能完成最终总结，但已停止继续调用工具。错误：{error_message}"
+        return "未能生成最终答案，但已停止继续调用工具。"
+
+    def _runtime_request_context(self, request: TurnRequest):
+        try:
+            from ..conversation.context import get_current_context
+
+            return get_current_context()
+        except Exception:
+            return None
+
+    def _runtime_trace_id(self, request: TurnRequest) -> str:
+        """Resolve the active trace id for runtime telemetry."""
+        current_context = self._runtime_request_context(request)
+        if current_context is not None and getattr(current_context, "trace_id", ""):
+            return str(current_context.trace_id)
+        trace_id = request.metadata.get("trace_id")
+        return str(trace_id) if isinstance(trace_id, str) else ""
+
+    def _runtime_log_request(
+        self,
+        request: TurnRequest,
+        *,
+        event: str,
+        message: str,
+        level: LogLevel = LogLevel.INFO,
+        category: LogCategory = LogCategory.AGENT_LOOP,
+        data: dict[str, Any] | None = None,
+        duration_ms: float | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Write one runtime log entry into AgentLogger for developer-mode inspection."""
+        trace_id = self._runtime_trace_id(request)
+        if not trace_id:
+            return
+        _get_agent_logger().create_log_entry(
+            trace_id=trace_id,
+            event=event,
+            message=message,
+            level=level,
+            category=category,
+            data=data or {},
+            duration_ms=duration_ms,
+            error=error,
+        )
+
+    def _runtime_log_entry(
+        self,
+        state,
+        *,
+        event: str,
+        message: str,
+        level: LogLevel = LogLevel.INFO,
+        category: LogCategory = LogCategory.AGENT_LOOP,
+        data: dict[str, Any] | None = None,
+        duration_ms: float | None = None,
+        error: str | None = None,
+    ) -> None:
+        """State-aware wrapper around runtime request logging."""
+        self._runtime_log_request(
+            state.request,
+            event=event,
+            message=message,
+            level=level,
+            category=category,
+            data=data,
+            duration_ms=duration_ms,
+            error=error,
+        )
+
+    def _runtime_log_llm_call_start(
+        self,
+        state,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[Any],
+    ) -> str:
+        """Create one runtime LLM call entry in AgentLogger and return the call id."""
+        from ..agent_core.context_transform import estimate_tokens
+
+        trace_id = self._runtime_trace_id(state.request)
+        call_id = f"runtime-{uuid4().hex[:8]}"
+        state.metadata["runtime_last_llm_call_id"] = call_id
+        if not trace_id:
+            return call_id
+
+        _get_agent_logger().log_llm_call_start(
+            LLMCallLog(
+                call_id=call_id,
+                trace_id=trace_id,
+                model=str(state.metadata.get("model") or state.metadata["runtime_config"].model or ""),
+                provider=str(state.metadata.get("provider") or state.metadata["runtime_config"].provider or ""),
+                system_prompt=system_prompt,
+                messages=list(messages),
+                message_count=len(messages),
+                estimated_tokens=estimate_tokens(messages),
+                temperature=state.metadata["runtime_config"].temperature,
+                max_tokens=state.metadata["runtime_config"].max_tokens,
+                thinking_level=state.metadata["runtime_config"].thinking_level,
+                tools=[tool.to_llm_tool() for tool in tools] if tools else None,
+            )
+        )
+        return call_id
+
+    def _runtime_log_llm_call_end(
+        self,
+        state,
+        *,
+        call_id: str,
+        assistant_message: AssistantMessage,
+        duration_ms: float,
+    ) -> None:
+        """Close one runtime LLM call entry in AgentLogger."""
+        from ..agent_core.context_transform import content_to_dict
+
+        if not self._runtime_trace_id(state.request):
+            return
+        _get_agent_logger().log_llm_call_end(
+            call_id=call_id,
+            response={
+                "content": [content_to_dict(item) for item in assistant_message.content],
+                "stop_reason": assistant_message.stop_reason,
+            },
+            usage=dict(assistant_message.usage or {}),
+            duration_ms=duration_ms,
+            error=assistant_message.error_message,
+        )
+
+    def _runtime_log_tool_call_start(
+        self,
+        state,
+        *,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        """Create one runtime tool-call entry in AgentLogger."""
+        trace_id = self._runtime_trace_id(state.request)
+        if not trace_id:
+            return
+        _get_agent_logger().log_tool_call_start(
+            ToolCallLog(
+                call_id=tool_call_id,
+                trace_id=trace_id,
+                llm_call_id=str(state.metadata.get("runtime_last_llm_call_id", "")),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                arguments=dict(arguments),
+            )
+        )
+
+    def _runtime_log_tool_call_end(
+        self,
+        state,
+        *,
+        tool_call_id: str,
+        result: Any,
+        duration_ms: float,
+        is_error: bool,
+        error: str | None,
+    ) -> None:
+        """Close one runtime tool-call entry in AgentLogger."""
+        if not self._runtime_trace_id(state.request):
+            return
+        _get_agent_logger().log_tool_call_end(
+            call_id=tool_call_id,
+            result=result,
+            duration_ms=duration_ms,
+            is_error=is_error,
+            error=error,
+        )
+
+    def _runtime_record_gateway_event(
+        self,
+        state,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Record runtime events that should be replayed to gateway clients."""
+        timeline = state.metadata.setdefault("runtime_event_timeline", [])
+        timeline.append(
+            {
+                "type": event_type,
+                "payload": dict(payload),
+                "timestamp_ms": int(time.time() * 1000),
+            }
+        )
+
+    async def _persist_runtime_assistant_message(self, request: TurnRequest, result: TurnResult) -> None:
+        """Persist the final assistant answer into the legacy session store for UI history."""
+        if not result.output_text:
+            return
+        try:
+            session_manager = _get_session_manager()
+            await session_manager.add_message(
+                session_id=request.session.session_id,
+                role="assistant",
+                content=result.output_text,
+                metadata={
+                    "model": result.metadata.get("model", ""),
+                    "provider": result.metadata.get("provider", ""),
+                    "stop_reason": result.finish_reason,
+                    "usage": result.metadata.get("budget", {}),
+                    "user_msg_id": request.metadata.get("runtime_user_msg_id"),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist runtime assistant message",
+                extra={"session_id": request.session.session_id, "error": str(exc)},
+            )
+
     async def run_runtime_turn(
         self,
         request: TurnRequest,
@@ -510,10 +2014,38 @@ class AgentBridge:
         controller=None,
     ) -> TurnResult:
         """Execute a prepared runtime turn through the bounded runtime controller."""
-        runtime_controller = controller
-        if runtime_controller is None:
-            return await self._run_runtime_turn_via_legacy_bridge(request)
-        return await runtime_controller.run(request)
+        runtime_controller = controller or self.runtime_turn_controller
+        try:
+            result = await runtime_controller.run(request)
+        except Exception as exc:
+            self._runtime_log_request(
+                request,
+                event="runtime_turn_error",
+                message="Runtime turn execution failed",
+                level=LogLevel.ERROR,
+                category=LogCategory.AGENT_LOOP,
+                data={"session_id": request.session.session_id},
+                error=str(exc),
+            )
+            raise
+        if not result.metadata.get("runtime_persisted"):
+            await self._persist_runtime_turn_result(request, result)
+            await self._persist_runtime_assistant_message(request, result)
+            result.metadata["runtime_persisted"] = True
+        self._runtime_log_request(
+            request,
+            event="runtime_turn_finish",
+            message=f"Runtime turn finished with {result.finish_reason or result.kind}",
+            category=LogCategory.AGENT_LOOP,
+            data={
+                "kind": result.kind,
+                "finish_reason": result.finish_reason,
+                "model": result.metadata.get("model", ""),
+                "provider": result.metadata.get("provider", ""),
+                "budget": result.metadata.get("budget", {}),
+            },
+        )
+        return result
 
     async def _run_runtime_turn_via_legacy_bridge(self, request: TurnRequest) -> TurnResult:
         """Fallback runtime execution path that reuses the legacy AgentBridge event stream."""
@@ -636,6 +2168,14 @@ class AgentBridge:
             else:
                 await self.load_session_history(agent, request.session.session_id)
                 mark_milestone("history_loaded", phase="stream_events", progress="session_history_loaded")
+
+            injected_announcements = self._inject_runtime_announcements(agent, request)
+            if injected_announcements:
+                mark_milestone(
+                    "announcements_injected",
+                    phase="stream_events",
+                    progress="runtime_announcements_injected",
+                )
 
             if timeout_ms is not None:
                 await asyncio.wait_for(consume_events(), timeout=float(timeout_ms) / 1000.0)
@@ -846,7 +2386,46 @@ class AgentBridge:
                 tool_middleware_pipeline=None,
             )
 
-        return self.create_config(agent_info, disable_tools=False)
+        return self.create_config(
+            agent_info,
+            disable_tools=False,
+            use_legacy_context=False,
+        )
+
+    def _inject_runtime_announcements(self, agent: Agent, request: TurnRequest) -> bool:
+        """Inject structured child-session announcements into the runtime prompt."""
+        announcement_block = self._render_runtime_announcements(request)
+        if not announcement_block:
+            return False
+        if not hasattr(agent, "__dict__") and not hasattr(agent, "_system_prompt"):
+            return False
+
+        base_prompt = getattr(agent, "_system_prompt", "") or getattr(agent, "_original_system_prompt", "")
+        try:
+            agent._system_prompt = f"{base_prompt}\n\n{announcement_block}".strip()
+        except (AttributeError, TypeError):
+            return False
+        return True
+
+    def _render_runtime_announcements(self, request: TurnRequest) -> str:
+        """Render queued child-session announcements into one prompt block."""
+        announcements = request.metadata.get("runtime_announcements")
+        if not isinstance(announcements, list) or not announcements:
+            return ""
+
+        lines = ["[Runtime Child Results]"]
+        for item in announcements:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                "- "
+                f"status={item.get('status', 'unknown')}; "
+                f"summary={item.get('summary', '')}; "
+                f"unresolved={'; '.join(item.get('unresolved', [])) if isinstance(item.get('unresolved'), list) else item.get('unresolved', '')}; "
+                f"artifacts={', '.join(item.get('artifact_refs', [])) if isinstance(item.get('artifact_refs'), list) else item.get('artifact_refs', '')}; "
+                f"stats={item.get('stats_line', '')}"
+            )
+        return "\n".join(lines).strip()
 
     def _resolve_runtime_output_text(
         self,
@@ -1046,7 +2625,12 @@ class AgentBridge:
             )
             return None
 
-    def _create_tool_middleware_adapter(self):
+    def _create_tool_middleware_adapter(
+        self,
+        *,
+        turn_profile,
+        tool_policies: dict[str, Any],
+    ):
         """创建工具中间件适配器（可选）。
 
         默认启用计时和日志中间件。
@@ -1069,6 +2653,20 @@ class AgentBridge:
                 enable_timing=True,
                 enable_logging=True,
                 high_risk_tools=high_risk_tools,
+                max_tool_calls_total=turn_profile.max_tool_calls if turn_profile else 12,
+                max_tool_calls_by_name={
+                    name: policy.max_uses_per_turn
+                    for name, policy in (tool_policies or {}).items()
+                },
+                default_repeat_signature_limit=(
+                    self._runtime_services.tool_policies.get("__default__").repeat_signature_limit
+                    if self._runtime_services.tool_policies.get("__default__") is not None
+                    else 2
+                ),
+                repeat_signature_limit_by_name={
+                    name: policy.repeat_signature_limit
+                    for name, policy in (tool_policies or {}).items()
+                },
             )
         except Exception as exc:
             logger.warning(
@@ -1195,8 +2793,11 @@ class AgentBridge:
             if msg.stop_reason == "tool_use":
                 return None
             text_parts = [c.text for c in msg.content if isinstance(c, TextContent)]
+            final_text = "".join(text_parts)
+            if not final_text.strip():
+                return None
             return GatewayEvent.message_end(
-                content="".join(text_parts),
+                content=final_text,
                 model=msg.model,
                 usage=msg.usage,
                 stop_reason=msg.stop_reason,
@@ -1259,10 +2860,13 @@ class AgentBridge:
 
             for msg in event.messages:
                 if isinstance(msg, AssistantMessage):
+                    text = msg.get_text()
+                    if not text.strip():
+                        continue
                     await session_manager.add_message(
                         session_id=session_id,
                         role="assistant",
-                        content=msg.get_text(),
+                        content=text,
                         metadata={
                             "model": msg.model,
                             "provider": msg.provider,

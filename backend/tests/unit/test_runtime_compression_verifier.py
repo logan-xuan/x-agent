@@ -47,3 +47,21 @@ def test_compression_verifier_rejects_missing_objective_when_not_preserved_out_o
 
     assert result.ok is False
     assert result.preserved_fields["objective"] is False
+
+
+def test_compression_verifier_rejects_missing_recent_failures():
+    verifier = DefaultCompressionVerifier()
+    request = CompressionVerifyRequest(
+        task_frame=TaskFrame(objective="Task"),
+        original_messages=[{"role": "assistant", "content": "failed once"}],
+        compressed_messages=[{"role": "assistant", "content": "failed once"}],
+        metadata={
+            "recent_failures_before": ["timeout:web_search"],
+            "recent_failures_after": [],
+        },
+    )
+
+    result = verifier.verify(request)
+
+    assert result.ok is False
+    assert result.preserved_fields["recent_failures"] is False

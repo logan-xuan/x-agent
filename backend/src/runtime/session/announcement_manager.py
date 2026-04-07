@@ -25,11 +25,25 @@ class AnnouncementManager:
             "usage": dict(result.usage),
             "duration_ms": result.duration_ms,
             "stats_line": f"duration={result.duration_ms}ms",
+            "target_route": parent.route.__dict__ if parent.route is not None else None,
+            "child_route": child.route.__dict__ if child.route is not None else None,
         }
 
     async def enqueue(self, payload: dict[str, object]) -> None:
         """Queue an announcement for later delivery."""
         self.queue.append(payload)
+
+    async def dequeue_for_session(self, session_key: str) -> list[dict[str, object]]:
+        """Drain queued announcements for one target session."""
+        matched = [
+            payload for payload in self.queue if payload.get("target_session_key") == session_key
+        ]
+        if not matched:
+            return []
+        self.queue = [
+            payload for payload in self.queue if payload.get("target_session_key") != session_key
+        ]
+        return matched
 
 
 __all__ = ["AnnouncementManager"]

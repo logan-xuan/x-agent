@@ -159,6 +159,352 @@ class CompressionConfig(BaseModel):
     min_token_savings: int = Field(default=0, ge=0)
 
 
+class RuntimeDefaultsConfig(BaseModel):
+    """Default runtime profile selection."""
+
+    turn_profile: str = Field(default="default", description="Default turn budget profile")
+    compression_profile: str = Field(
+        default="balanced",
+        description="Default runtime compression profile",
+    )
+    session_profile: str = Field(default="default", description="Default session profile")
+
+
+class RuntimeTurnProfileConfig(BaseModel):
+    """Bounded-turn runtime budget profile."""
+
+    max_turns: int = Field(default=12, ge=1, le=100)
+    max_wall_time_ms: int = Field(default=180000, ge=1000, le=3600000)
+    max_total_tokens: int = Field(default=120000, ge=1000)
+    max_cost_usd: float | None = Field(default=None, ge=0.0)
+    max_tool_calls: int = Field(default=24, ge=1, le=500)
+    max_parallel_tools: int = Field(default=4, ge=1, le=32)
+    max_spawns: int = Field(default=3, ge=0, le=32)
+    compact_trigger_tokens: int = Field(default=80000, ge=1000)
+    collapse_trigger_tokens: int = Field(default=60000, ge=1000)
+    tool_result_single_chars: int = Field(default=50000, ge=1000)
+    tool_result_per_message_chars: int = Field(default=200000, ge=1000)
+    max_tool_calls_by_name: dict[str, int] = Field(default_factory=dict)
+
+
+class RuntimeCompressionPersistConfig(BaseModel):
+    """Persistence thresholds for large runtime tool outputs."""
+
+    single_result_chars: int = Field(default=50000, ge=1000)
+    aggregate_result_chars: int = Field(default=200000, ge=1000)
+    artifact_preview_chars: int = Field(default=2000, ge=200)
+    artifact_preview_head_chars: int = Field(default=900, ge=50)
+    artifact_preview_tail_chars: int = Field(default=700, ge=50)
+
+
+class RuntimeCompressionPressureConfig(BaseModel):
+    """Pressure thresholds for staged runtime compaction."""
+
+    yellow_pct: float = Field(default=0.50, gt=0.0, lt=1.0)
+    orange_pct: float = Field(default=0.68, gt=0.0, lt=1.0)
+    red_pct: float = Field(default=0.82, gt=0.0, lt=1.0)
+    hard_stop_pct: float = Field(default=0.90, gt=0.0, lt=1.0)
+
+
+class RuntimeCompressionPruningConfig(BaseModel):
+    """Pruning behavior for old tool outputs."""
+
+    enabled: bool = True
+    ttl_ms: int = Field(default=300000, ge=1000)
+    preserve_recent_assistants: int = Field(default=3, ge=1, le=20)
+    min_prunable_tool_chars: int = Field(default=50000, ge=1000)
+    soft_trim_max_chars: int = Field(default=4000, ge=100)
+    soft_trim_head_chars: int = Field(default=1500, ge=0)
+    soft_trim_tail_chars: int = Field(default=1500, ge=0)
+    hard_clear_enabled: bool = True
+    hard_clear_placeholder: str = "[Old tool result content cleared]"
+
+
+class RuntimeCompressionMicrocompactConfig(BaseModel):
+    """Targeted trimming before full history collapse."""
+
+    enabled: bool = True
+    trigger_pct: float = Field(default=0.50, gt=0.0, lt=1.0)
+    max_units_per_pass: int = Field(default=8, ge=1, le=100)
+    preserve_error_results: bool = True
+
+
+class RuntimeCompressionCollapseConfig(BaseModel):
+    """Collapse settings for long message histories."""
+
+    enabled: bool = True
+    trigger_pct: float = Field(default=0.68, gt=0.0, lt=1.0)
+    max_segment_tokens: int = Field(default=12000, ge=100)
+    min_segment_turns: int = Field(default=2, ge=1, le=50)
+
+
+class RuntimeCompressionAutocompactConfig(BaseModel):
+    """Autocompact thresholds for runtime history pressure."""
+
+    enabled: bool = True
+    trigger_pct: float = Field(default=0.82, gt=0.0, lt=1.0)
+    reserve_tokens_floor: int = Field(default=20000, ge=0)
+    max_history_share: float = Field(default=0.50, gt=0.0, lt=1.0)
+    fallback_summary_max_chars: int = Field(default=8000, ge=500)
+
+
+class RuntimeCompressionMemoryFlushConfig(BaseModel):
+    """Memory flush behavior before runtime compaction."""
+
+    enabled: bool = True
+    soft_threshold_tokens: int = Field(default=4000, ge=0)
+
+
+class RuntimeCompressionQualityConfig(BaseModel):
+    """Quality gates for runtime compression output."""
+
+    min_compression_gain_tokens: int = Field(default=0, ge=0)
+    require_post_check: bool = True
+    rollback_on_invariant_failure: bool = True
+
+
+class RuntimeCompressionProfileConfig(BaseModel):
+    """Named runtime compression profile."""
+
+    mode: str = Field(default="balanced")
+    pressure: RuntimeCompressionPressureConfig = Field(default_factory=RuntimeCompressionPressureConfig)
+    persist: RuntimeCompressionPersistConfig = Field(default_factory=RuntimeCompressionPersistConfig)
+    pruning: RuntimeCompressionPruningConfig = Field(default_factory=RuntimeCompressionPruningConfig)
+    microcompact: RuntimeCompressionMicrocompactConfig = Field(
+        default_factory=RuntimeCompressionMicrocompactConfig
+    )
+    collapse: RuntimeCompressionCollapseConfig = Field(default_factory=RuntimeCompressionCollapseConfig)
+    autocompact: RuntimeCompressionAutocompactConfig = Field(
+        default_factory=RuntimeCompressionAutocompactConfig
+    )
+    memory_flush: RuntimeCompressionMemoryFlushConfig = Field(
+        default_factory=RuntimeCompressionMemoryFlushConfig
+    )
+    quality: RuntimeCompressionQualityConfig = Field(default_factory=RuntimeCompressionQualityConfig)
+    retain_recent_messages: int = Field(default=12, ge=1, le=100)
+
+
+class RuntimeSessionLaneLimitsConfig(BaseModel):
+    """Lane concurrency caps for the session orchestrator."""
+
+    main: int = Field(default=1, ge=1, le=32)
+    followup: int = Field(default=2, ge=1, le=32)
+    subagent: int = Field(default=4, ge=1, le=64)
+    cron: int = Field(default=2, ge=1, le=32)
+    background_tool: int = Field(default=2, ge=1, le=32)
+
+
+class RuntimeSessionProfileConfig(BaseModel):
+    """Session lifecycle and child-session defaults."""
+
+    idle_archive_ms: int = Field(default=86400000, ge=60000)
+    child_auto_archive_ms: int = Field(default=3600000, ge=60000)
+    allow_child_sessions: bool = True
+    child_prompt_mode: Literal["full", "minimal", "none"] = Field(default="minimal")
+    child_max_depth: int = Field(default=1, ge=0, le=3)
+    child_default_budget_profile: str = Field(default="child-default")
+    lane_limits: RuntimeSessionLaneLimitsConfig = Field(default_factory=RuntimeSessionLaneLimitsConfig)
+
+
+class RuntimeToolPolicyConfig(BaseModel):
+    """Runtime governance policy for a specific tool."""
+
+    max_result_size_chars: int = Field(default=50000, ge=100)
+    max_uses_per_turn: int = Field(default=8, ge=1, le=100)
+    max_uses_per_session: int = Field(default=50, ge=1, le=1000)
+    max_parallelism: int = Field(default=2, ge=1, le=32)
+    default_timeout_ms: int = Field(default=30000, ge=100, le=3600000)
+    compactable: bool = True
+    persist_large_output: bool = True
+    allow_in_subagent: bool = True
+    cost_weight: int = Field(default=1, ge=1, le=100)
+    repeat_signature_limit: int = Field(default=2, ge=1, le=20)
+
+
+class RuntimeToolsConfig(BaseModel):
+    """Runtime tool policies."""
+
+    defaults: RuntimeToolPolicyConfig = Field(default_factory=RuntimeToolPolicyConfig)
+    by_name: dict[str, RuntimeToolPolicyConfig] = Field(default_factory=dict)
+
+
+def _default_runtime_turn_profiles() -> dict[str, RuntimeTurnProfileConfig]:
+    return {
+        "default": RuntimeTurnProfileConfig(),
+        "delegate-default": RuntimeTurnProfileConfig(
+            max_turns=10,
+            max_wall_time_ms=240000,
+            max_total_tokens=80000,
+            max_tool_calls=16,
+            max_parallel_tools=4,
+            max_spawns=0,
+            compact_trigger_tokens=50000,
+            collapse_trigger_tokens=38000,
+            tool_result_single_chars=40000,
+            tool_result_per_message_chars=160000,
+        ),
+        "child-default": RuntimeTurnProfileConfig(
+            max_turns=6,
+            max_wall_time_ms=60000,
+            max_total_tokens=40000,
+            max_tool_calls=8,
+            max_parallel_tools=2,
+            max_spawns=0,
+            compact_trigger_tokens=24000,
+            collapse_trigger_tokens=18000,
+            tool_result_single_chars=20000,
+            tool_result_per_message_chars=80000,
+        ),
+    }
+
+
+def _default_runtime_compression_profiles() -> dict[str, RuntimeCompressionProfileConfig]:
+    return {
+        "balanced": RuntimeCompressionProfileConfig(mode="balanced"),
+        "aggressive": RuntimeCompressionProfileConfig(
+            mode="aggressive",
+            pressure=RuntimeCompressionPressureConfig(
+                yellow_pct=0.45,
+                orange_pct=0.60,
+                red_pct=0.72,
+                hard_stop_pct=0.85,
+            ),
+            persist=RuntimeCompressionPersistConfig(
+                single_result_chars=30000,
+                aggregate_result_chars=120000,
+                artifact_preview_chars=1600,
+                artifact_preview_head_chars=700,
+                artifact_preview_tail_chars=500,
+            ),
+            pruning=RuntimeCompressionPruningConfig(
+                ttl_ms=180000,
+                preserve_recent_assistants=2,
+                soft_trim_max_chars=2500,
+                soft_trim_head_chars=900,
+                soft_trim_tail_chars=900,
+            ),
+            microcompact=RuntimeCompressionMicrocompactConfig(trigger_pct=0.45, max_units_per_pass=12),
+            collapse=RuntimeCompressionCollapseConfig(trigger_pct=0.60, max_segment_tokens=8000),
+            autocompact=RuntimeCompressionAutocompactConfig(
+                trigger_pct=0.72,
+                reserve_tokens_floor=12000,
+                max_history_share=0.40,
+                fallback_summary_max_chars=5000,
+            ),
+            memory_flush=RuntimeCompressionMemoryFlushConfig(soft_threshold_tokens=2500),
+            quality=RuntimeCompressionQualityConfig(min_compression_gain_tokens=500),
+            retain_recent_messages=8,
+        ),
+        "conservative": RuntimeCompressionProfileConfig(
+            mode="conservative",
+            pressure=RuntimeCompressionPressureConfig(
+                yellow_pct=0.55,
+                orange_pct=0.75,
+                red_pct=0.88,
+                hard_stop_pct=0.94,
+            ),
+            persist=RuntimeCompressionPersistConfig(
+                single_result_chars=80000,
+                aggregate_result_chars=260000,
+                artifact_preview_chars=2600,
+                artifact_preview_head_chars=1100,
+                artifact_preview_tail_chars=900,
+            ),
+            pruning=RuntimeCompressionPruningConfig(
+                ttl_ms=600000,
+                preserve_recent_assistants=5,
+                soft_trim_max_chars=5000,
+                soft_trim_head_chars=1800,
+                soft_trim_tail_chars=1800,
+                hard_clear_enabled=False,
+            ),
+            microcompact=RuntimeCompressionMicrocompactConfig(trigger_pct=0.60, max_units_per_pass=4),
+            collapse=RuntimeCompressionCollapseConfig(trigger_pct=0.75, max_segment_tokens=18000),
+            autocompact=RuntimeCompressionAutocompactConfig(
+                trigger_pct=0.88,
+                reserve_tokens_floor=28000,
+                max_history_share=0.60,
+                fallback_summary_max_chars=10000,
+            ),
+            memory_flush=RuntimeCompressionMemoryFlushConfig(soft_threshold_tokens=5000),
+            quality=RuntimeCompressionQualityConfig(min_compression_gain_tokens=1500),
+            retain_recent_messages=16,
+        ),
+    }
+
+
+def _default_runtime_session_profiles() -> dict[str, RuntimeSessionProfileConfig]:
+    return {
+        "default": RuntimeSessionProfileConfig(),
+        "child-default": RuntimeSessionProfileConfig(
+            allow_child_sessions=False,
+            child_prompt_mode="minimal",
+            child_max_depth=0,
+        ),
+    }
+
+
+class RuntimeConfig(BaseModel):
+    """Top-level runtime configuration tree."""
+
+    defaults: RuntimeDefaultsConfig = Field(default_factory=RuntimeDefaultsConfig)
+    turn_profiles: dict[str, RuntimeTurnProfileConfig] = Field(
+        default_factory=_default_runtime_turn_profiles
+    )
+    compression_profiles: dict[str, RuntimeCompressionProfileConfig] = Field(
+        default_factory=_default_runtime_compression_profiles
+    )
+    session_profiles: dict[str, RuntimeSessionProfileConfig] = Field(
+        default_factory=_default_runtime_session_profiles
+    )
+    tools: RuntimeToolsConfig = Field(default_factory=RuntimeToolsConfig)
+
+    @model_validator(mode="after")
+    def validate_profile_references(self) -> "RuntimeConfig":
+        if self.defaults.turn_profile not in self.turn_profiles:
+            raise ValueError(
+                f"runtime.defaults.turn_profile references unknown profile '{self.defaults.turn_profile}'"
+            )
+        if self.defaults.compression_profile not in self.compression_profiles:
+            raise ValueError(
+                "runtime.defaults.compression_profile references unknown profile "
+                f"'{self.defaults.compression_profile}'"
+            )
+        if self.defaults.session_profile not in self.session_profiles:
+            raise ValueError(
+                f"runtime.defaults.session_profile references unknown profile '{self.defaults.session_profile}'"
+            )
+
+        for name, profile in self.compression_profiles.items():
+            if profile.persist.single_result_chars > profile.persist.aggregate_result_chars:
+                raise ValueError(
+                    f"runtime.compression_profiles.{name} has single_result_chars > aggregate_result_chars"
+                )
+            if not 0 < profile.autocompact.max_history_share < 1:
+                raise ValueError(
+                    f"runtime.compression_profiles.{name} has invalid max_history_share"
+                )
+            if not (
+                0 < profile.pressure.yellow_pct
+                < profile.pressure.orange_pct
+                < profile.pressure.red_pct
+                < profile.pressure.hard_stop_pct
+                < 1
+            ):
+                raise ValueError(
+                    f"runtime.compression_profiles.{name} has invalid pressure thresholds"
+                )
+
+        for name, profile in self.session_profiles.items():
+            if profile.child_default_budget_profile not in self.turn_profiles:
+                raise ValueError(
+                    "runtime.session_profiles."
+                    f"{name}.child_default_budget_profile references unknown turn profile "
+                    f"'{profile.child_default_budget_profile}'"
+                )
+        return self
+
+
 class PlanConfig(BaseModel):
     """Plan mode configuration.
     
@@ -518,3 +864,4 @@ class Config(BaseModel):
     aliyun_opensearch: AliyunOpensearchConfig = Field(default_factory=lambda: AliyunOpensearchConfig(api_key="", host=""), description="Aliyun OpenSearch config")
     cron: dict[str, Any] = Field(default_factory=dict, description="Cron scheduler config")
     multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig, description="Multi-agent configuration")
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig, description="Runtime control-plane configuration")

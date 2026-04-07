@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -110,6 +110,7 @@ class AgentCoreConfig:
     # === 性能配置 ===
     experience_search_timeout_ms: int = 200  # 经验检索超时
     memory_write_async: bool = True  # 异步写入记忆
+    max_turns: int = 12  # 主循环最大回合数，防止无界 tool_use
 
     # === 上下文配置 ===
     # (上下文配置由 ContextPort 实现者内部管理)

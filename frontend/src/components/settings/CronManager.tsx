@@ -45,16 +45,6 @@ interface SchedulerStatus {
   job_count: number;
 }
 
-interface NewScheduleForm {
-  id: string;
-  name: string;
-  task_id: string;
-  trigger_type: 'interval' | 'cron' | 'date';
-  trigger_args: string;
-  coalesce: 'latest' | 'earliest' | 'all';
-  conflict_policy: 'replace' | 'do_nothing' | 'exception';
-}
-
 const triggerTypeLabels: Record<string, string> = {
   interval: '间隔触发',
   cron: 'Cron表达式',

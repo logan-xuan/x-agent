@@ -88,6 +88,14 @@ class DefaultTurnController:
             for result in observed:
                 self.tool_governor.register_result(state, result)
 
+            bridged_result = self._resolve_observed_turn_result(state, observed)
+            if bridged_result is not None:
+                return bridged_result
+
+            if self._request_synthesis_after_rejected_plan(state, tool_plan, governed_plan):
+                state.turn_index += 1
+                continue
+
             if not governed_plan.calls and not observed:
                 state.metadata["no_op_turns"] = state.metadata.get("no_op_turns", 0) + 1
             else:
@@ -144,7 +152,7 @@ class DefaultTurnController:
         return TurnResult(
             kind="final",
             finish_reason=decision.finish_reason or "best_effort_budget_stop",
-            output_text=self._resolve_output_text(state),
+            output_text=self._summarize_tool_results(state) or self._resolve_output_text(state),
             updated_task_frame=state.task_frame,
             artifact_refs=list(state.active_artifact_refs),
             metadata=self._metadata(state, budget_reason=decision.reason, budget_details=decision.details),
@@ -160,6 +168,74 @@ class DefaultTurnController:
                 return result.output
         return None
 
+    def _summarize_tool_results(self, state: TurnState) -> str | None:
+        """Build a bounded best-effort summary instead of leaking one raw tool payload."""
+        snippets: list[str] = []
+        for result in state.tool_results[-4:]:
+            text = (result.output or result.error or "").strip()
+            if not text:
+                continue
+            normalized = " ".join(text.split())
+            prefix = "error" if not result.success else "evidence"
+            snippets.append(f"[{prefix}] {result.tool_name}: {normalized[:240]}")
+
+        if not snippets:
+            return None
+        return "基于当前已获取的信息，先给出最佳努力结果：\n\n" + "\n\n".join(snippets)
+
+    def _resolve_observed_turn_result(
+        self,
+        state: TurnState,
+        observed: list[ToolExecutionResult],
+    ) -> TurnResult | None:
+        for result in reversed(observed):
+            candidate = result.metadata.get("turn_result")
+            if not isinstance(candidate, TurnResult):
+                continue
+
+            merged_metadata = dict(candidate.metadata)
+            merged_metadata.update(
+                self._metadata(
+                    state,
+                    bridged_by=result.tool_name,
+                )
+            )
+            return TurnResult(
+                kind=candidate.kind,
+                finish_reason=candidate.finish_reason,
+                output_text=candidate.output_text,
+                updated_task_frame=candidate.updated_task_frame,
+                artifact_refs=list(candidate.artifact_refs),
+                spawn_packet=candidate.spawn_packet,
+                metadata=merged_metadata,
+            )
+        return None
+
+    def _request_synthesis_after_rejected_plan(
+        self,
+        state: TurnState,
+        tool_plan: ToolExecutionPlan,
+        governed_plan: GovernedToolPlan,
+    ) -> bool:
+        """When all planned calls are rejected, force one synthesis round instead of no-op finishing."""
+        if not tool_plan.calls or governed_plan.calls or not governed_plan.rejected_calls:
+            return False
+
+        rejected_names = [call.tool_name for call in governed_plan.rejected_calls]
+        disabled = state.metadata.setdefault("disabled_tool_names", set())
+        disabled.update(rejected_names)
+        warnings = "; ".join(governed_plan.warnings)
+        state.metadata["runtime_synthesis_instruction"] = (
+            "工具治理已拒绝继续调用以下工具："
+            f"{', '.join(rejected_names)}。"
+            "不要继续调用这些工具。"
+            "请基于当前已获得的证据直接完成综合分析；"
+            "如果用户要求文件交付物且仍可使用 write_file 等非搜索工具，请直接生成交付物。"
+            + (f" 拒绝原因：{warnings}" if warnings else "")
+        )
+        state.metadata["no_op_turns"] = 0
+        return True
+
     def _metadata(self, state: TurnState, **extra: Any) -> dict[str, Any]:
         metadata: dict[str, Any] = {
             "turn_index": state.turn_index,
@@ -169,8 +245,15 @@ class DefaultTurnController:
                 "elapsed_ms": state.budget.elapsed_ms,
                 "total_tokens": state.budget.total_tokens,
                 "total_tool_calls": state.budget.total_tool_calls,
+                "per_tool_calls": dict(state.budget.per_tool_calls),
             },
         }
+        if "model" in state.metadata:
+            metadata["model"] = state.metadata["model"]
+        if "provider" in state.metadata:
+            metadata["provider"] = state.metadata["provider"]
+        if "runtime_event_timeline" in state.metadata:
+            metadata["runtime_event_timeline"] = list(state.metadata["runtime_event_timeline"])
         metadata.update(extra)
         return metadata
 

@@ -59,7 +59,9 @@ class DefaultSessionOrchestrator:
 
         existing = await self.session_store.get(session_key)
         if existing is not None:
-            return await self.lifecycle_manager.activate(existing)
+            activated = await self.lifecycle_manager.activate(existing)
+            await self.session_store.put(activated)
+            return activated
 
         route = await self.route_resolver.resolve(event)
         session = SessionDescriptor(
@@ -82,7 +84,8 @@ class DefaultSessionOrchestrator:
             _ = request
             return request
 
-        await self.lifecycle_manager.activate(session)
+        activated = await self.lifecycle_manager.activate(session)
+        await self.session_store.put(activated)
         return await self.lane_scheduler.enqueue(session.lane, run)
 
     async def spawn_child(self, parent: SessionDescriptor, packet: SpawnPacket) -> SessionDescriptor:
@@ -121,6 +124,10 @@ class DefaultSessionOrchestrator:
             await self.lifecycle_manager.mark_idle(child)
         await self.session_store.put(child)
         return payload
+
+    async def consume_announcements(self, session_key: str) -> list[dict[str, object]]:
+        """Drain queued child announcements for the target session."""
+        return await self.announcement_manager.dequeue_for_session(session_key)
 
     async def archive(self, session_key: str) -> None:
         """Archive a session by key."""

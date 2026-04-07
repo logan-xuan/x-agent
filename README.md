@@ -294,6 +294,12 @@ cd x-agent
 
 # 或重启（自动清理端口、更新依赖）
 ./restart.sh
+
+# 或使用 PM2 守护启动（推荐长期运行）
+./pm2.sh start
+
+# PM2 开发模式（前端走 Vite dev server）
+./pm2.sh start development
 ```
 
 ### 第二步：配置 LLM
@@ -316,6 +322,29 @@ models:
 ### 第三步：开始对话
 
 打开 **http://localhost:5177**，创建你的第一个 Agent，开始对话！
+
+### 可选：使用 PM2 托管
+
+```bash
+# 生产模式：后端前台运行，前端自动 build 后用 preview 提供静态服务
+./pm2.sh start
+
+# 开发模式：前端使用 Vite dev server，便于调试
+./pm2.sh start development
+
+# 重载配置并重启服务
+./pm2.sh restart
+
+# 停止并移除 PM2 中的服务
+./pm2.sh stop
+
+# 查看运行状态和日志
+./pm2.sh status
+./pm2.sh logs x-agent-backend
+./pm2.sh logs x-agent-frontend
+```
+
+统一 PM2 入口是 `./pm2.sh`。它固定使用仓库内 `.pm2` 作为 `PM2_HOME`，避免和系统其他 PM2 实例互相干扰。`ecosystem.config.cjs` 仍然是 PM2 配置文件；后端由 `scripts/pm2-backend.sh` 启动 Python 进程，前端由 `scripts/pm2-frontend.sh` 启动，默认会先 `build` 再 `preview`。
 
 ---
 

@@ -327,3 +327,4 @@ Stores:
 2、提交完代码后，继续严格按照计划和设计进行下一步工作，每个小功能要按照测试要求进行测试验证和codereview，如此循环。
 3、当达到可以小范围端到端测试验证时，你需要通过mcp 调用 chrome devtool 进行端到端的测试。
 4、为了确保专业性，code review 和测试验证需要启用专门的subagent 身份如执行这项工作，各subagent 将执行结构回传各main agent，再决策做下一步工作。
+5、始终尊崇arch/runtime/README.md 指导，查阅相关tasks和设计方案文档，不偏离设计和任务主线。

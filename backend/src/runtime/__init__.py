@@ -13,6 +13,12 @@ from .repositories import (
     SessionRepository,
     StateSnapshotRecord,
     StateSnapshotRepository,
+    StorageArtifactRepository,
+    StorageCompressionEventRepository,
+    StorageSessionRepository,
+    StorageStateSnapshotRepository,
+    StorageSummaryRepository,
+    StorageTranscriptRepository,
     SummaryRecord,
     SummaryRepository,
     TranscriptEntry,
@@ -43,6 +49,7 @@ from .session import (
     SessionLifecycleManager,
     SpawnManager,
 )
+from .service import RuntimeServices, get_runtime_services, reset_runtime_services
 from .types import (
     ArtifactRef,
     BudgetDecision,
@@ -103,6 +110,12 @@ __all__ = [
     "SpawnManager",
     "StateSnapshotRecord",
     "StateSnapshotRepository",
+    "StorageArtifactRepository",
+    "StorageCompressionEventRepository",
+    "StorageSessionRepository",
+    "StorageStateSnapshotRepository",
+    "StorageSummaryRepository",
+    "StorageTranscriptRepository",
     "SummaryRecord",
     "SummaryRepository",
     "TaskFrame",
@@ -114,4 +127,7 @@ __all__ = [
     "TurnRequest",
     "TurnResult",
     "build_default_compression_profiles",
+    "RuntimeServices",
+    "get_runtime_services",
+    "reset_runtime_services",
 ]

@@ -51,6 +51,15 @@ class SessionManager:
         Returns:
             Created session
         """
+        if agent_id and not close_existing:
+            existing_active = await self.get_active_session_by_agent(agent_id)
+            if existing_active is not None:
+                logger.info(
+                    "Reusing existing active session",
+                    extra={"session_id": existing_active.id, "agent_id": agent_id},
+                )
+                return existing_active
+
         # 创建前先获取最近的会话列表，用于后续总结
         previous_sessions = await self.list_sessions(limit=5)
 

@@ -232,7 +232,6 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
     case 'tool':
       // For tool calls, extract relevant information
       const toolName = data.tool_name || module.includes('tool') ? module : 'Unknown Tool';
-      const toolArgs = data.arguments || data.args || data;
 
       return {
         title: `Tool Call: ${toolName}`,

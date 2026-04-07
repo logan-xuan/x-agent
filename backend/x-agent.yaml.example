@@ -63,6 +63,62 @@ logging:
   backup_count: 5
   console: true
 
+runtime:
+  defaults:
+    turn_profile: default
+    compression_profile: balanced
+    session_profile: default
+  turn_profiles:
+    default:
+      max_turns: 12
+      max_wall_time_ms: 180000
+      max_total_tokens: 120000
+      max_tool_calls: 24
+      max_parallel_tools: 4
+      max_spawns: 3
+      compact_trigger_tokens: 80000
+      collapse_trigger_tokens: 60000
+      tool_result_single_chars: 50000
+      tool_result_per_message_chars: 200000
+    child-default:
+      max_turns: 6
+      max_wall_time_ms: 60000
+      max_total_tokens: 40000
+      max_tool_calls: 8
+      max_parallel_tools: 2
+      max_spawns: 0
+      compact_trigger_tokens: 24000
+      collapse_trigger_tokens: 18000
+      tool_result_single_chars: 20000
+      tool_result_per_message_chars: 80000
+  compression_profiles:
+    balanced:
+      mode: balanced
+    aggressive:
+      mode: aggressive
+    conservative:
+      mode: conservative
+  session_profiles:
+    default:
+      child_default_budget_profile: child-default
+    child-default:
+      allow_child_sessions: false
+      child_prompt_mode: minimal
+      child_max_depth: 0
+      child_default_budget_profile: child-default
+  tools:
+    defaults:
+      max_result_size_chars: 50000
+      max_uses_per_turn: 8
+      max_uses_per_session: 50
+      max_parallelism: 2
+      default_timeout_ms: 30000
+      compactable: true
+      persist_large_output: true
+      allow_in_subagent: true
+      cost_weight: 1
+      repeat_signature_limit: 2
+
 # 工具配置
 tools:
   # 终端工具黑名单 - 这些命令将被阻止执行

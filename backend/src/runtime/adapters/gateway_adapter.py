@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..adapters.conversation_adapter import ConversationAdapter
+from ..service import get_runtime_services
 from ..session import DefaultSessionOrchestrator
 from ..types import RouteMeta, SessionDescriptor, TaskFrame, TurnRequest
 
@@ -37,8 +38,14 @@ class GatewayAdapter:
         """Resolve session and build a runtime turn request from a gateway-style event."""
         payload = self.build_event_payload(event)
         session = await self.orchestrator.resolve_or_create(payload)
+        runtime_services = get_runtime_services()
+        if session.budget_profile == "default":
+            session.budget_profile = runtime_services.default_turn_profile
+            await self.orchestrator.session_store.put(session)
         route = session.route or await self.orchestrator.route_resolver.resolve(payload)
         session.route = route
+        await self.orchestrator.session_store.put(session)
+        announcements = await self.orchestrator.consume_announcements(session.session_key)
         request = self.conversation_adapter.build_turn_request(
             session=session,
             route=route,
@@ -48,6 +55,14 @@ class GatewayAdapter:
             metadata={
                 **dict(payload.get("metadata", {})),
                 **dict(metadata or {}),
+                "_runtime_budget_profile": runtime_services.turn_profiles.get(session.budget_profile),
+                "_runtime_compression_profile_name": runtime_services.default_compression_profile,
+                "runtime_announcements": announcements,
+                "runtime_timeout_ms": (
+                    dict(metadata or {}).get("runtime_timeout_ms")
+                    or dict(payload.get("metadata", {})).get("runtime_timeout_ms")
+                    or runtime_services.turn_profiles.get(session.budget_profile).max_wall_time_ms
+                ),
             },
         )
         return session, request
@@ -66,8 +81,14 @@ class GatewayAdapter:
             raise KeyError(f"session not found: {session_key}")
 
         payload = self.build_event_payload(event or {"session_key": session_key, "metadata": {}})
+        runtime_services = get_runtime_services()
+        if resumed.session.budget_profile == "default":
+            resumed.session.budget_profile = runtime_services.default_turn_profile
+            await self.orchestrator.session_store.put(resumed.session)
         route = resumed.session.route or await self.orchestrator.route_resolver.resolve(payload)
         resumed.session.route = route
+        await self.orchestrator.session_store.put(resumed.session)
+        announcements = await self.orchestrator.consume_announcements(resumed.session.session_key)
         task_frame = resumed.latest_snapshot.task_frame if resumed.latest_snapshot is not None else TaskFrame(
             objective=user_input or (resumed.latest_summary.objective if resumed.latest_summary else ""),
         )
@@ -85,6 +106,14 @@ class GatewayAdapter:
             metadata={
                 **dict(payload.get("metadata", {})),
                 **dict(metadata or {}),
+                "_runtime_budget_profile": runtime_services.turn_profiles.get(resumed.session.budget_profile),
+                "_runtime_compression_profile_name": runtime_services.default_compression_profile,
+                "runtime_announcements": announcements,
+                "runtime_timeout_ms": (
+                    dict(metadata or {}).get("runtime_timeout_ms")
+                    or dict(payload.get("metadata", {})).get("runtime_timeout_ms")
+                    or runtime_services.turn_profiles.get(resumed.session.budget_profile).max_wall_time_ms
+                ),
                 "resume": True,
                 "summary_chain_count": len(resumed.summary_chain),
                 "recent_entry_count": len(resumed.recent_entries),

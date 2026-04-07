@@ -42,6 +42,7 @@ from ..tool_middleware import (
     ToolCallContext,
     MiddlewareAction,
 )
+from ...runtime.turn.state import ToolCallSignature
 
 if TYPE_CHECKING:
     from ..hooks import HookRegistry
@@ -228,6 +229,146 @@ class RetryMiddleware(ToolMiddleware):
             ctx.metadata["retry_count"] = 0
             ctx.metadata["max_retries"] = self.max_retries
         return ctx
+
+
+@dataclass
+class _RequestToolBudgetState:
+    """Per-request tool budget state tracked by trace/session id."""
+
+    total_calls: int = 0
+    per_tool_calls: dict[str, int] = field(default_factory=dict)
+    signature_counts: dict[ToolCallSignature, int] = field(default_factory=dict)
+    last_seen_at: float = field(default_factory=time.time)
+
+
+class BudgetControlMiddleware(ToolMiddleware):
+    """Enforce per-request tool budgets and repeated-call breakers."""
+
+    def __init__(
+        self,
+        *,
+        max_tool_calls_total: int = 12,
+        max_tool_calls_by_name: dict[str, int] | None = None,
+        default_repeat_signature_limit: int = 2,
+        repeat_signature_limit_by_name: dict[str, int] | None = None,
+        clamp_web_search_results: int = 5,
+        state_ttl_seconds: int = 3600,
+    ) -> None:
+        self.max_tool_calls_total = max_tool_calls_total
+        self.max_tool_calls_by_name = dict(max_tool_calls_by_name or {})
+        self.default_repeat_signature_limit = default_repeat_signature_limit
+        self.repeat_signature_limit_by_name = dict(repeat_signature_limit_by_name or {})
+        self.clamp_web_search_results = clamp_web_search_results
+        self.state_ttl_seconds = state_ttl_seconds
+        self._states: dict[str, _RequestToolBudgetState] = {}
+
+    async def before_execute(self, ctx: ToolCallContext) -> ToolCallContext:
+        scope_id = self._scope_id()
+        self._prune_states()
+        state = self._states.setdefault(scope_id, _RequestToolBudgetState())
+        state.last_seen_at = time.time()
+
+        if ctx.tool_name == "web_search":
+            max_results = ctx.arguments.get("max_results")
+            if isinstance(max_results, int) and max_results > self.clamp_web_search_results:
+                ctx.arguments["max_results"] = self.clamp_web_search_results
+                ctx.metadata["clamped_max_results"] = self.clamp_web_search_results
+
+        current_total = state.total_calls
+        if self.max_tool_calls_total > 0 and current_total >= self.max_tool_calls_total:
+            return self._abort(ctx, state, scope_id, f"tool budget exhausted ({self.max_tool_calls_total})")
+
+        per_tool_limit = self.max_tool_calls_by_name.get(ctx.tool_name)
+        current_tool_calls = state.per_tool_calls.get(ctx.tool_name, 0)
+        if per_tool_limit is not None and current_tool_calls >= per_tool_limit:
+            return self._abort(
+                ctx,
+                state,
+                scope_id,
+                f"tool '{ctx.tool_name}' budget exhausted ({per_tool_limit})",
+            )
+
+        signature = ToolCallSignature.from_args(ctx.tool_name, ctx.arguments)
+        signature_limit = self.repeat_signature_limit_by_name.get(
+            ctx.tool_name,
+            self.default_repeat_signature_limit,
+        )
+        current_signature_calls = state.signature_counts.get(signature, 0)
+        if signature_limit > 0 and current_signature_calls >= signature_limit:
+            return self._abort(
+                ctx,
+                state,
+                scope_id,
+                f"repeated tool signature blocked for '{ctx.tool_name}'",
+            )
+
+        state.total_calls = current_total + 1
+        state.per_tool_calls[ctx.tool_name] = current_tool_calls + 1
+        state.signature_counts[signature] = current_signature_calls + 1
+        ctx.metadata["tool_budget_scope_id"] = scope_id
+        ctx.metadata["tool_budget_total_calls"] = state.total_calls
+        ctx.metadata["tool_budget_per_tool_calls"] = dict(state.per_tool_calls)
+        return ctx
+
+    def _scope_id(self) -> str:
+        try:
+            from ...conversation.context import get_current_context
+
+            req_ctx = get_current_context()
+        except Exception:
+            req_ctx = None
+
+        if req_ctx is not None:
+            if req_ctx.trace_id:
+                return f"trace:{req_ctx.trace_id}"
+            if req_ctx.session_id:
+                return f"session:{req_ctx.session_id}"
+        return "global"
+
+    def _abort(
+        self,
+        ctx: ToolCallContext,
+        state: _RequestToolBudgetState,
+        scope_id: str,
+        reason: str,
+    ) -> ToolCallContext:
+        ctx.action = MiddlewareAction.ABORT
+        ctx.abort_reason = (
+            f"{reason}. "
+            f"请停止继续调用工具 {ctx.tool_name}，基于已有搜索结果和当前上下文继续完成任务。"
+            "如果需要生成交付物，可以继续使用非搜索类工具。"
+        )
+        ctx.metadata.update(
+            {
+                "budget_exhausted": True,
+                "force_finalize": True,
+                "budget_reason": reason,
+                "exhausted_tool_names": [ctx.tool_name],
+                "tool_budget_scope_id": scope_id,
+                "tool_budget_total_calls": state.total_calls,
+                "tool_budget_per_tool_calls": dict(state.per_tool_calls),
+            }
+        )
+        logger.warning(
+            "Tool execution blocked by budget control",
+            extra={
+                "tool_name": ctx.tool_name,
+                "tool_call_id": ctx.tool_call_id,
+                "reason": reason,
+                "scope_id": scope_id,
+                "tool_budget_total_calls": state.total_calls,
+                "tool_budget_per_tool_calls": dict(state.per_tool_calls),
+            },
+        )
+        return ctx
+
+    def _prune_states(self) -> None:
+        if self.state_ttl_seconds <= 0:
+            return
+        cutoff = time.time() - self.state_ttl_seconds
+        stale = [scope_id for scope_id, state in self._states.items() if state.last_seen_at < cutoff]
+        for scope_id in stale:
+            self._states.pop(scope_id, None)
     
     async def after_execute(self, ctx: ToolCallContext) -> ToolCallContext:
         # 记录重试状态
@@ -438,6 +579,10 @@ def create_tool_middleware_adapter(
     high_risk_tools: list[str] | None = None,
     approval_callback: Callable[[ToolCallContext], Awaitable[bool]] | None = None,
     auto_approve_high_risk: bool = False,
+    max_tool_calls_total: int = 12,
+    max_tool_calls_by_name: dict[str, int] | None = None,
+    default_repeat_signature_limit: int = 2,
+    repeat_signature_limit_by_name: dict[str, int] | None = None,
 ) -> ToolMiddlewareAdapter:
     """创建 ToolMiddlewareAdapter 的工厂函数.
     
@@ -465,8 +610,18 @@ def create_tool_middleware_adapter(
     # 2. 日志中间件
     if enable_logging:
         adapter.use(LoggingMiddleware())
-    
-    # 3. 审批中间件（在执行前检查）
+
+    # 3. 请求级预算与重复调用治理
+    adapter.use(
+        BudgetControlMiddleware(
+            max_tool_calls_total=max_tool_calls_total,
+            max_tool_calls_by_name=max_tool_calls_by_name,
+            default_repeat_signature_limit=default_repeat_signature_limit,
+            repeat_signature_limit_by_name=repeat_signature_limit_by_name,
+        )
+    )
+
+    # 4. 审批中间件（在执行前检查）
     if high_risk_tools:
         adapter.use(ApprovalMiddleware(
             high_risk_tools=high_risk_tools,

@@ -38,6 +38,7 @@ class DefaultCompressionVerifier:
         preserved = {
             "objective": True,
             "unresolved": True,
+            "recent_failures": True,
             "artifact_refs": True,
             "role_ordering": True,
         }
@@ -62,6 +63,13 @@ class DefaultCompressionVerifier:
         ):
             preserved["unresolved"] = False
             reasons.append("compressed unresolved set diverged from task frame")
+
+        if request.metadata.get("recent_failures_before", []) != request.metadata.get(
+            "recent_failures_after",
+            request.metadata.get("recent_failures_before", []),
+        ):
+            preserved["recent_failures"] = False
+            reasons.append("compressed recent failures diverged from source state")
 
         if request.original_messages and not request.compressed_messages:
             reasons.append("compressed messages unexpectedly became empty")

@@ -7,7 +7,12 @@ from typing import Any
 
 from ..types import ArtifactRef, BudgetSnapshot, TaskFrame
 from .artifact_store import ArtifactWriteRequest, InMemoryArtifactStore
-from .compression_verifier import CompressionVerifyRequest, DefaultCompressionVerifier
+from .compression_verifier import (
+    CompressionPostCheck,
+    CompressionVerifyRequest,
+    DefaultCompressionVerifier,
+)
+
 from .memory_flush import MemoryFlushRequest, NoopMemoryFlusher
 
 
@@ -21,6 +26,14 @@ class CompressionPersistConfig:
 
 
 @dataclass
+class CompressionPressureConfig:
+    yellow_pct: float = 0.50
+    orange_pct: float = 0.68
+    red_pct: float = 0.82
+    hard_stop_pct: float = 0.90
+
+
+@dataclass
 class CompressionPruningConfig:
     enabled: bool = True
     ttl_ms: int = 300000
@@ -31,6 +44,14 @@ class CompressionPruningConfig:
     soft_trim_tail_chars: int = 1500
     hard_clear_enabled: bool = True
     hard_clear_placeholder: str = "[Old tool result content cleared]"
+
+
+@dataclass
+class CompressionMicrocompactConfig:
+    enabled: bool = True
+    trigger_pct: float = 0.50
+    max_units_per_pass: int = 8
+    preserve_error_results: bool = True
 
 
 @dataclass
@@ -66,8 +87,10 @@ class CompressionQualityConfig:
 @dataclass
 class CompressionProfile:
     mode: str = "balanced"
+    pressure: CompressionPressureConfig = field(default_factory=CompressionPressureConfig)
     persist: CompressionPersistConfig = field(default_factory=CompressionPersistConfig)
     pruning: CompressionPruningConfig = field(default_factory=CompressionPruningConfig)
+    microcompact: CompressionMicrocompactConfig = field(default_factory=CompressionMicrocompactConfig)
     collapse: CompressionCollapseConfig = field(default_factory=CompressionCollapseConfig)
     autocompact: CompressionAutocompactConfig = field(default_factory=CompressionAutocompactConfig)
     memory_flush: CompressionMemoryFlushConfig = field(default_factory=CompressionMemoryFlushConfig)
@@ -96,6 +119,9 @@ class CompressionResult:
     estimated_input_tokens: int
     operations: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    verifier_result: CompressionPostCheck | None = None
+    rollback_applied: bool = False
+    rollback_reason: str | None = None
 
 
 @dataclass
@@ -133,9 +159,19 @@ class DefaultCompressionPipeline:
 
         current_estimated_tokens = self._estimate_tokens(messages)
 
+        messages, microcompact_applied = self._microcompact(ctx, messages, current_estimated_tokens)
+        if microcompact_applied:
+            operations.append("microcompact")
+            current_estimated_tokens = self._estimate_tokens(messages)
+
         messages, collapse_applied = self._collapse_history(ctx, messages, current_estimated_tokens)
         if collapse_applied:
             operations.append("collapse")
+            current_estimated_tokens = self._estimate_tokens(messages)
+
+        messages, autocompact_applied = self._autocompact(ctx, messages, current_estimated_tokens)
+        if autocompact_applied:
+            operations.append("autocompact")
             current_estimated_tokens = self._estimate_tokens(messages)
 
         if (
@@ -148,7 +184,7 @@ class DefaultCompressionPipeline:
             if flush_result.flushed or flush_result.notes:
                 operations.append("memory_flush")
 
-        verification = None
+        verification: CompressionPostCheck | None = None
         if ctx.profile.quality.require_post_check:
             verification = self.verifier.verify(
                 CompressionVerifyRequest(
@@ -160,16 +196,28 @@ class DefaultCompressionPipeline:
                     metadata={
                         "objective_out_of_band": True,
                         "compressed_unresolved": list(ctx.task_frame.unresolved),
+                        "recent_failures_before": list(ctx.metadata.get("recent_failures", [])),
+                        "recent_failures_after": list(ctx.metadata.get("recent_failures", [])),
                     },
                 )
             )
             if not verification.ok and ctx.profile.quality.rollback_on_invariant_failure:
+                rollback_reason = verification.reasons[0] if verification.reasons else "verification_failed"
                 return CompressionResult(
                     messages=original_messages,
                     active_artifacts=original_artifacts,
                     estimated_input_tokens=self._estimate_tokens(original_messages),
                     operations=[*operations, "rollback"],
-                    metadata={"verification": verification},
+                    metadata={
+                        "verification": verification,
+                        "rollback": {
+                            "applied": True,
+                            "reason": rollback_reason,
+                        },
+                    },
+                    verifier_result=verification,
+                    rollback_applied=True,
+                    rollback_reason=rollback_reason,
                 )
 
         return CompressionResult(
@@ -177,7 +225,16 @@ class DefaultCompressionPipeline:
             active_artifacts=artifacts,
             estimated_input_tokens=current_estimated_tokens,
             operations=operations,
-            metadata={"verification": verification},
+            metadata={
+                "verification": verification,
+                "rollback": {
+                    "applied": False,
+                    "reason": None,
+                },
+            },
+            verifier_result=verification,
+            rollback_applied=False,
+            rollback_reason=None,
         )
 
     async def run_emergency(self, ctx: CompressionContext) -> CompressionResult:
@@ -335,6 +392,83 @@ class DefaultCompressionPipeline:
             *recent,
         ]
         return collapsed, True
+
+    def _microcompact(
+        self,
+        ctx: CompressionContext,
+        messages: list[dict[str, Any]],
+        estimated_input_tokens: int,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        if not ctx.profile.microcompact.enabled:
+            return messages, False
+        if estimated_input_tokens < int(ctx.model_context_window * ctx.profile.microcompact.trigger_pct):
+            return messages, False
+
+        applied = False
+        compacted = 0
+        for index, message in enumerate(messages):
+            if compacted >= ctx.profile.microcompact.max_units_per_pass:
+                break
+            role = message.get("role")
+            if role not in {"tool", "tool_result"}:
+                continue
+            if ctx.profile.microcompact.preserve_error_results and message.get("is_error"):
+                continue
+            content = str(message.get("content", ""))
+            if len(content) <= ctx.profile.pruning.soft_trim_max_chars:
+                continue
+            head = content[: ctx.profile.pruning.soft_trim_head_chars]
+            tail = content[-ctx.profile.pruning.soft_trim_tail_chars :]
+            messages[index]["content"] = f"{head}\n...[microcompact]...\n{tail}"
+            compacted += 1
+            applied = True
+        return messages, applied
+
+    def _autocompact(
+        self,
+        ctx: CompressionContext,
+        messages: list[dict[str, Any]],
+        estimated_input_tokens: int,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        if not ctx.profile.autocompact.enabled:
+            return messages, False
+
+        trigger_tokens = int(ctx.model_context_window * ctx.profile.autocompact.trigger_pct)
+        history_share_limit = int(ctx.model_context_window * ctx.profile.autocompact.max_history_share)
+        needs_autocompact = (
+            estimated_input_tokens >= trigger_tokens
+            or estimated_input_tokens >= history_share_limit
+            or max(ctx.model_context_window - estimated_input_tokens, 0)
+            < ctx.profile.autocompact.reserve_tokens_floor
+        )
+        if not needs_autocompact:
+            return messages, False
+        if len(messages) <= max(ctx.profile.retain_recent_messages // 2, 2):
+            return messages, False
+
+        leading_system = [messages[0]] if messages and messages[0].get("role") == "system" else []
+        working_messages = messages[1:] if leading_system else messages
+        keep_count = max(ctx.profile.retain_recent_messages // 2, 2)
+        recent = working_messages[-keep_count:]
+        archived = working_messages[:-keep_count]
+        if not archived:
+            return messages, False
+
+        summary = self._summarize_messages(archived)
+        summary = summary[: ctx.profile.autocompact.fallback_summary_max_chars]
+        compacted_messages = [
+            *leading_system,
+            {
+                "role": "system",
+                "content": (
+                    "[Auto-compacted history]\n"
+                    f"Objective: {ctx.task_frame.objective or '(empty)'}\n"
+                    f"{summary}"
+                ),
+            },
+            *recent,
+        ]
+        return compacted_messages, True
 
     def _summarize_messages(self, messages: list[dict[str, Any]]) -> str:
         lines: list[str] = []

@@ -114,7 +114,12 @@ class TurnState:
             )
 
         snapshot = BudgetSnapshot.from_profile(
-            budget_profile,
+            budget_profile
+            or (
+                request.metadata.get("_runtime_budget_profile")
+                if isinstance(request.metadata.get("_runtime_budget_profile"), TurnBudgetProfile)
+                else None
+            ),
             profile_name=profile_name or request.session.budget_profile,
         )
         return cls(

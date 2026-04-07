@@ -401,6 +401,718 @@ type CompactionSummary = {
 }
 ```
 
+### 8.4 压缩策略设计
+
+压缩策略的目标不是“尽量删内容”，而是：
+
+- 在可控信息损失下，持续把 active context 保持在稳定区间
+- 优先保留任务完成所需信息，优先移除可回读、可重建、可持久化的大结果
+- 让压缩成为 runtime 的常规机制，而不是溢出后的补救动作
+
+#### 8.4.1 设计原则
+
+##### 1. 先外置，再摘要，最后清除
+
+压缩优先级必须是：
+
+```text
+persist to artifact
+-> soft trim
+-> structured summarize
+-> collapse
+-> durable compact
+-> hard clear
+```
+
+能通过 artifact 引用解决的，不应该直接删。
+
+##### 2. 越靠近当前任务的内容，越难被压缩
+
+应优先保护：
+
+- 当前用户目标
+- 最近用户消息
+- 最近 assistant 决策链
+- 最近错误与失败原因
+- 当前任务涉及的文件读写记录
+- 当前仍未解决的 `unresolved`
+- 最近生成的 artifact refs
+
+##### 3. 压缩对象必须是结构化单元
+
+不要对整段历史做粗暴字符串截断。压缩单元应是：
+
+- 单个 tool result
+- 一轮 turn 内的 tool result group
+- 一段连续历史 segment
+- 一段已经结束的任务 phase
+- 一个 session prefix
+
+#### 8.4.2 压缩压力分级
+
+建议用 context pressure 做统一压缩分级：
+
+| 压力级别 | 上下文占用 | 动作 |
+|---|---:|---|
+| `green` | `< 50%` | 不主动压缩，仅做单条结果持久化 |
+| `yellow` | `50% - 68%` | aggregate budget、TTL prune、轻量 microcompact |
+| `orange` | `68% - 82%` | collapse、auto-compact 预备、memory flush |
+| `red` | `> 82%` | 强制 compact / emergency fallback / best-effort finish |
+
+这里的阈值应来自 `BudgetProfile`，而不是写死在 controller。
+
+#### 8.4.3 压缩对象分类
+
+建议将所有可压缩对象统一分类：
+
+```ts
+type CompressionUnit =
+  | { kind: "tool_result"; id: string; sizeChars: number; turn: number; restorable: boolean }
+  | { kind: "tool_group"; id: string; sizeChars: number; turn: number }
+  | { kind: "history_segment"; id: string; tokenEstimate: number; age: number }
+  | { kind: "session_prefix"; id: string; tokenEstimate: number; compacted: boolean }
+  | { kind: "memory_candidate"; id: string; tokenEstimate: number; durable: boolean }
+```
+
+每个对象都应具备：
+
+- 大小估算
+- 年龄
+- 是否可回读
+- 是否与当前 unresolved 关联
+- 是否包含 read/modified files
+- 是否包含失败信息
+
+#### 8.4.4 信息保留等级
+
+建议定义明确的信息保留等级，避免压缩后丢掉真正关键的任务信息：
+
+| 等级 | 必须保留内容 |
+|---|---|
+| `P0` | 当前目标、doneDefinition、constraints、unresolved、最新用户请求 |
+| `P1` | 最近 assistant 决策、最近错误、文件改动、artifact refs |
+| `P2` | 最近历史摘要、重要中间结论、重要搜索/工具证据 |
+| `P3` | 老旧大结果、已消费完成的命令输出、可回读网页正文 |
+
+压缩时应始终满足：
+
+- `P0` 绝不压缩
+- `P1` 只允许摘要，不允许直接清空
+- `P2` 可 collapse / compact
+- `P3` 优先持久化或清除
+
+#### 8.4.5 各阶段具体策略
+
+##### A. Single Result Persist
+
+触发条件：
+
+- 单个 tool result 超过 `toolResultSingleChars`
+- 或单个结果已超过工具自身 `maxResultSizeChars`
+
+处理方式：
+
+- 原始结果落 `Artifact Store`
+- 生成稳定 preview
+- 上下文保留：
+  - tool name
+  - preview
+  - artifact id
+  - 关键 metadata
+
+适用内容：
+
+- 网页正文
+- 命令长输出
+- 搜索结果集
+- 大型 JSON
+
+##### B. Aggregate Tool Budget
+
+触发条件：
+
+- 同一轮多个并发工具结果总和超过 `toolResultPerMessageChars`
+
+处理方式：
+
+- 按结果大小倒序替换
+- 替换到预算内为止
+- 替换优先级高的对象：
+  - `P3`
+  - 与当前 unresolved 无关的结果
+  - 已有 artifact 的结果
+
+##### C. TTL Pruning
+
+触发条件：
+
+- 会话闲置超过 TTL
+- prompt cache 已失效
+- 下次请求会重写整段前缀
+
+处理方式：
+
+- 仅处理老旧 tool result
+- 保留最近 `N` 个 assistant tail
+- 对可裁剪文本做 head/tail 保留
+- 对图像、二进制结果、不可安全裁剪结果跳过
+
+##### D. Microcompact
+
+触发条件：
+
+- active context 进入 `yellow`
+- 历史工具结果仍然占比较高
+- 当前任务还在进行，但不适合全量 compact
+
+处理方式：
+
+- 将旧 tool result 替换为结构化摘要：
+
+```ts
+type ToolResultCompactView = {
+  tool: string
+  outcome: "ok" | "error"
+  summary: string
+  artifactRef?: string
+  keyFacts?: string[]
+}
+```
+
+适用目标：
+
+- 降低请求体积
+- 保留 turn 级可追踪性
+- 避免过早把细节合并进大摘要
+
+##### E. Context Collapse
+
+触发条件：
+
+- active history 已过长
+- 老历史仍是“多轮 turn 级块”，不适合继续细粒度保留
+
+处理方式：
+
+- 以 segment 为单位折叠
+- 每个 segment 输出一条结构化 collapse summary
+
+```ts
+type CollapsedSegment = {
+  segmentId: string
+  coveredTurns: number[]
+  summary: string
+  decisions: string[]
+  unresolvedAtThatTime: string[]
+  artifacts: string[]
+}
+```
+
+设计目标：
+
+- 比 auto-compact 更细
+- 保留局部任务阶段信息
+- 让后续仍可基于 segment 粒度做补充压缩
+
+##### F. Auto-compact
+
+触发条件：
+
+- 进入 `orange`
+- 预估下次调用会超过安全阈值
+- 或已经命中 prompt-too-long / context overflow
+
+处理方式：
+
+- 将 session prefix 固化为 durable summary
+- 生成新的 summary boundary
+- 从 active history 中移除被摘要的原始前缀
+
+summary 至少保留：
+
+- objective
+- decisions
+- open questions
+- read files
+- modified files
+- recent failures
+- active artifacts
+
+##### G. Memory Flush
+
+触发条件：
+
+- 即将进入 auto-compact
+- 当前 `totalTokens` 已接近 `contextWindow - reserveTokensFloor - softThreshold`
+
+处理方式：
+
+- 运行一轮静默 durable memory capture
+- 将长期事实写入 memory store
+- 不要求产生用户可见回复
+
+#### 8.4.6 压缩选择规则
+
+压缩不是见大就压，而是做选择。
+
+建议为每个 `CompressionUnit` 计算一个压缩优先级分数：
+
+```text
+priority =
+  size_weight
+  + age_weight
+  + restorable_weight
+  - unresolved_relevance_weight
+  - recentness_weight
+  - failure_preservation_weight
+  - file_change_preservation_weight
+```
+
+含义：
+
+- 越大、越旧、越容易回读，越应该先压
+- 越靠近当前 unresolved、越新、越包含错误和文件改动，越应保留
+
+#### 8.4.7 永不直接压缩的内容
+
+以下内容不允许被普通压缩器直接删除：
+
+- 当前用户最后一条消息
+- 当前 `TaskFrame`
+- 当前预算信息
+- 最近一轮 assistant 的行动决策
+- 最近一轮失败原因
+- 最近一轮文件读写摘要
+- 当前 unresolved 列表
+- 当前轮新增的 artifact refs
+
+这些对象只允许：
+
+- 保留原文
+- 或被单独提炼为高优先级结构化摘要
+
+#### 8.4.8 压缩后校验
+
+每次压缩后都必须做 post-check：
+
+```ts
+type CompressionPostCheck = {
+  tokensBefore: number
+  tokensAfter: number
+  freedTokens: number
+  preservedObjective: boolean
+  preservedUnresolved: boolean
+  preservedRecentFailures: boolean
+  preservedArtifactRefs: boolean
+}
+```
+
+若 post-check 不通过：
+
+- 回滚当前压缩结果
+- 升级到更高一级压缩策略
+- 或直接进入 best-effort 收尾
+
+#### 8.4.9 压缩失败回退
+
+压缩流程必须有可预期的失败回退：
+
+1. 正常结构化压缩失败
+   - 使用 fallback summary
+2. fallback summary 仍失败
+   - 丢弃更老的 `P3` 内容，仅保留 `P0/P1`
+3. 仍无法进入安全上下文
+   - 新建 session / reset session
+   - 输出 best effort 提示
+
+禁止行为：
+
+- 在同一坏上下文中无限重复 compact
+- 压缩失败后继续追加更多大结果
+
+#### 8.4.10 压缩策略与调参
+
+压缩策略需要长期观测和调参，至少应记录：
+
+- 每级压缩触发次数
+- 每级压缩平均释放 token
+- 压缩后仍溢出的比率
+- fallback summary 触发次数
+- 由于压缩失败导致 reset session 的次数
+- 哪类工具最容易产生高压缩成本输出
+
+建议后续把压缩相关参数抽成独立 profile：
+
+```ts
+type CompressionProfile = {
+  singleResultChars: number
+  aggregateResultChars: number
+  ttlMs: number
+  microcompactTriggerPct: number
+  collapseTriggerPct: number
+  autocompactTriggerPct: number
+  preserveRecentAssistants: number
+  minCompressionGainTokens: number
+}
+```
+
+#### 8.4.11 CompressionProfile 配置 schema
+
+建议把压缩参数从通用 budget 中独立出来，形成可切换的 profile。
+
+```ts
+type CompressionProfile = {
+  mode: "balanced" | "aggressive" | "conservative"
+
+  pressure: {
+    yellowPct: number
+    orangePct: number
+    redPct: number
+    hardStopPct: number
+  }
+
+  persist: {
+    singleResultChars: number
+    aggregateResultChars: number
+    artifactPreviewChars: number
+    artifactPreviewHeadChars: number
+    artifactPreviewTailChars: number
+  }
+
+  pruning: {
+    enabled: boolean
+    ttlMs: number
+    preserveRecentAssistants: number
+    minPrunableToolChars: number
+    softTrimMaxChars: number
+    softTrimHeadChars: number
+    softTrimTailChars: number
+    hardClearEnabled: boolean
+    hardClearPlaceholder: string
+  }
+
+  microcompact: {
+    enabled: boolean
+    triggerPct: number
+    maxUnitsPerPass: number
+    preserveErrorResults: boolean
+  }
+
+  collapse: {
+    enabled: boolean
+    triggerPct: number
+    maxSegmentTokens: number
+    minSegmentTurns: number
+  }
+
+  autocompact: {
+    enabled: boolean
+    triggerPct: number
+    reserveTokensFloor: number
+    maxHistoryShare: number
+    fallbackSummaryMaxChars: number
+  }
+
+  memoryFlush: {
+    enabled: boolean
+    softThresholdTokens: number
+  }
+
+  quality: {
+    minCompressionGainTokens: number
+    requirePostCheck: boolean
+    rollbackOnInvariantFailure: boolean
+  }
+}
+```
+
+##### 字段约束建议
+
+- `pressure.yellowPct < orangePct < redPct < hardStopPct <= 0.95`
+- `persist.singleResultChars <= persist.aggregateResultChars`
+- `pruning.preserveRecentAssistants >= 1`
+- `autocompact.maxHistoryShare` 建议范围 `0.35 - 0.60`
+- `quality.minCompressionGainTokens` 不宜过小，否则会出现频繁无效压缩
+
+##### 默认 profile 建议
+
+```ts
+const DEFAULT_COMPRESSION_PROFILE: CompressionProfile = {
+  mode: "balanced",
+  pressure: {
+    yellowPct: 0.50,
+    orangePct: 0.68,
+    redPct: 0.82,
+    hardStopPct: 0.90,
+  },
+  persist: {
+    singleResultChars: 50_000,
+    aggregateResultChars: 200_000,
+    artifactPreviewChars: 2_000,
+    artifactPreviewHeadChars: 900,
+    artifactPreviewTailChars: 700,
+  },
+  pruning: {
+    enabled: true,
+    ttlMs: 5 * 60 * 1000,
+    preserveRecentAssistants: 3,
+    minPrunableToolChars: 50_000,
+    softTrimMaxChars: 4_000,
+    softTrimHeadChars: 1_500,
+    softTrimTailChars: 1_500,
+    hardClearEnabled: true,
+    hardClearPlaceholder: "[Old tool result content cleared]",
+  },
+  microcompact: {
+    enabled: true,
+    triggerPct: 0.50,
+    maxUnitsPerPass: 8,
+    preserveErrorResults: true,
+  },
+  collapse: {
+    enabled: true,
+    triggerPct: 0.68,
+    maxSegmentTokens: 12_000,
+    minSegmentTurns: 2,
+  },
+  autocompact: {
+    enabled: true,
+    triggerPct: 0.82,
+    reserveTokensFloor: 20_000,
+    maxHistoryShare: 0.50,
+    fallbackSummaryMaxChars: 8_000,
+  },
+  memoryFlush: {
+    enabled: true,
+    softThresholdTokens: 4_000,
+  },
+  quality: {
+    minCompressionGainTokens: 1_000,
+    requirePostCheck: true,
+    rollbackOnInvariantFailure: true,
+  },
+}
+```
+
+##### profile 使用建议
+
+| Profile | 场景 |
+|---|---|
+| `conservative` | 高准确性代码修改、复杂调试、重要任务 |
+| `balanced` | 默认交互、普通长任务 |
+| `aggressive` | 高工具输出、高抓取量、低成本优先任务 |
+
+#### 8.4.12 CompressionPipeline 接口设计
+
+压缩逻辑不应散落在各处条件分支中，而应由统一 pipeline 编排。
+
+##### 核心接口
+
+```ts
+type CompressionContext = {
+  sessionKey: string
+  turn: number
+  taskFrame: TaskFrame
+  profile: CompressionProfile
+  modelContextWindow: number
+  estimatedInputTokens: number
+  messages: Message[]
+  activeArtifacts: ArtifactRef[]
+  budget: BudgetSnapshot
+}
+
+type CompressionResult = {
+  messages: Message[]
+  newArtifacts: ArtifactRef[]
+  operations: CompressionOperation[]
+  tokensBefore: number
+  tokensAfter: number
+  freedTokens: number
+  postCheck: CompressionPostCheck
+}
+
+type CompressionOperation =
+  | { stage: "persist"; count: number; ids: string[] }
+  | { stage: "aggregate_budget"; count: number; ids: string[] }
+  | { stage: "ttl_prune"; count: number; ids: string[] }
+  | { stage: "microcompact"; count: number; ids: string[] }
+  | { stage: "collapse"; count: number; ids: string[] }
+  | { stage: "autocompact"; count: number; ids: string[] }
+  | { stage: "memory_flush"; count: number; ids: string[] }
+```
+
+##### Stage 接口
+
+```ts
+type CompressionStage = {
+  name:
+    | "persist"
+    | "aggregate_budget"
+    | "ttl_prune"
+    | "microcompact"
+    | "collapse"
+    | "autocompact"
+    | "memory_flush"
+
+  shouldRun(ctx: CompressionContext): boolean
+
+  run(ctx: CompressionContext): Promise<CompressionStageResult>
+}
+
+type CompressionStageResult = {
+  messages: Message[]
+  newArtifacts?: ArtifactRef[]
+  operations?: CompressionOperation[]
+}
+```
+
+##### Pipeline 约束
+
+- 每个 stage 只做一类压缩动作
+- stage 之间只通过 `CompressionContext` 和 `CompressionStageResult` 传值
+- 每个 stage 完成后立即刷新 token estimate
+- 任一 stage 不能绕过 post-check 直接提交危险结果
+
+#### 8.4.13 CompressionPipeline 执行顺序
+
+```ts
+const COMPRESSION_PIPELINE: CompressionStage[] = [
+  persistStage,
+  aggregateBudgetStage,
+  ttlPruneStage,
+  microcompactStage,
+  collapseStage,
+  autocompactStage,
+  memoryFlushStage,
+]
+```
+
+执行时机建议：
+
+- 每轮模型调用前执行一次
+- 工具执行结束后，如新增结果较大，可追加一次轻量预压缩
+- 收到 `prompt_too_long` / `context overflow` 时，允许 emergency rerun
+
+#### 8.4.14 CompressionPipeline 伪代码
+
+```ts
+async function runCompressionPipeline(input: CompressionContext): Promise<CompressionResult> {
+  let ctx = input
+  const tokensBefore = estimateTokens(ctx.messages)
+  const operations: CompressionOperation[] = []
+  const collectedArtifacts: ArtifactRef[] = []
+
+  for (const stage of COMPRESSION_PIPELINE) {
+    if (!stage.shouldRun(ctx)) {
+      continue
+    }
+
+    const beforeStageTokens = estimateTokens(ctx.messages)
+    const stageResult = await stage.run(ctx)
+
+    const nextMessages = stageResult.messages
+    const nextArtifacts = stageResult.newArtifacts ?? []
+    const afterStageTokens = estimateTokens(nextMessages)
+    const gained = beforeStageTokens - afterStageTokens
+
+    if (gained < ctx.profile.quality.minCompressionGainTokens) {
+      // 小于最小收益阈值时，允许跳过提交，但 persist/memory_flush 例外
+      if (stage.name !== "persist" && stage.name !== "memory_flush") {
+        continue
+      }
+    }
+
+    ctx = {
+      ...ctx,
+      messages: nextMessages,
+      activeArtifacts: [...ctx.activeArtifacts, ...nextArtifacts],
+      estimatedInputTokens: afterStageTokens,
+    }
+
+    collectedArtifacts.push(...nextArtifacts)
+    operations.push(...(stageResult.operations ?? []))
+
+    const pressurePct = afterStageTokens / ctx.modelContextWindow
+    if (pressurePct < ctx.profile.pressure.yellowPct) {
+      // 已降到稳定区间，可以提前结束后续高成本压缩
+      break
+    }
+  }
+
+  const tokensAfter = estimateTokens(ctx.messages)
+  const postCheck = verifyCompressionInvariants({
+    before: input.messages,
+    after: ctx.messages,
+    taskFrame: input.taskFrame,
+    artifacts: ctx.activeArtifacts,
+  })
+
+  if (input.profile.quality.requirePostCheck && !isCompressionPostCheckPassed(postCheck)) {
+    if (input.profile.quality.rollbackOnInvariantFailure) {
+      return buildRollbackCompressionResult(input, tokensBefore, postCheck)
+    }
+  }
+
+  return {
+    messages: ctx.messages,
+    newArtifacts: collectedArtifacts,
+    operations,
+    tokensBefore,
+    tokensAfter,
+    freedTokens: Math.max(0, tokensBefore - tokensAfter),
+    postCheck,
+  }
+}
+```
+
+#### 8.4.15 Emergency Compression 伪代码
+
+当正常压缩后仍然过长，或者模型直接返回 `prompt_too_long` / `context overflow`：
+
+```ts
+async function runEmergencyCompression(ctx: CompressionContext): Promise<CompressionResult> {
+  const narrowedProfile = {
+    ...ctx.profile,
+    collapse: { ...ctx.profile.collapse, enabled: true },
+    autocompact: { ...ctx.profile.autocompact, enabled: true },
+  }
+
+  const result = await runCompressionPipeline({
+    ...ctx,
+    profile: narrowedProfile,
+  })
+
+  if (result.tokensAfter / ctx.modelContextWindow <= narrowedProfile.pressure.redPct) {
+    return result
+  }
+
+  return buildFallbackSummaryCompressionResult(ctx)
+}
+```
+
+#### 8.4.16 验证接口
+
+压缩后验证建议独立成一个小模块：
+
+```ts
+type CompressionInvariantVerifier = {
+  verify(params: {
+    before: Message[]
+    after: Message[]
+    taskFrame: TaskFrame
+    artifacts: ArtifactRef[]
+  }): CompressionPostCheck
+}
+```
+
+必须验证：
+
+- objective 仍可恢复
+- unresolved 未丢失
+- 最近失败信息仍可恢复
+- 当前 artifact refs 仍存在
+- 不能出现 role ordering 损坏
+
 ---
 
 ## 9. Tool 治理

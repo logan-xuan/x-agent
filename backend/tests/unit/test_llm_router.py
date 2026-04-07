@@ -159,3 +159,54 @@ async def test_llm_adapter_force_non_streaming_uses_non_streaming_chat():
     assert chunks[0].type.value == "text_delta"
     assert chunks[0].delta == "fast"
     assert chunks[1].type.value == "done"
+
+
+@pytest.mark.asyncio
+async def test_llm_router_consumes_preferred_provider_without_forwarding_it():
+    router = LLMRouter(model_configs=[])
+    primary = FakeProvider(name="primary", chat_content="primary")
+    backup = FakeProvider(name="backup", chat_content="backup")
+    router._primary = primary
+    router._backups = [backup]
+    router._providers = {primary.name: primary, backup.name: backup}
+
+    result = await router.chat(
+        [{"role": "user", "content": "hello"}],
+        stream=False,
+        preferred_provider="backup",
+    )
+
+    assert result.content == "backup"
+    assert primary.chat_calls == 0
+    assert backup.chat_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_router_streaming_returns_best_effort_done_when_provider_breaks_after_content():
+    router = LLMRouter(model_configs=[])
+
+    @dataclass
+    class BrokenStreamingProvider(FakeProvider):
+        async def chat(self, messages, stream=False, **kwargs):
+            self.chat_calls += 1
+            _ = messages
+            _ = kwargs
+            if not stream:
+                return await super().chat(messages, stream=stream, **kwargs)
+
+            async def _stream():
+                yield StreamingLLMResponse(content="partial", is_finished=False, model=self.model_id)
+                raise RuntimeError("incomplete chunked read")
+
+            return _stream()
+
+    provider = BrokenStreamingProvider()
+    router._primary = provider
+    router._backups = []
+    router._providers = {provider.name: provider}
+
+    stream = await router.chat([{"role": "user", "content": "hello"}], stream=True)
+    chunks = [chunk async for chunk in stream]
+
+    assert [chunk.content for chunk in chunks] == ["partial", ""]
+    assert chunks[-1].is_finished is True

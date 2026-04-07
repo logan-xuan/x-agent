@@ -48,6 +48,7 @@ from .types import (
     ToolResultMessage,
     TurnEndEvent,
     TurnStartEvent,
+    UserMessage,
 )
 
 if TYPE_CHECKING:
@@ -150,6 +151,9 @@ class _AgentLoopRunner:
         # 循环状态
         self.turn_index = 0
         self.pending_messages: list[AgentMessage] = []
+        self._force_finalize_reason: str | None = None
+        self._disable_all_tools: bool = False
+        self._disabled_tool_names: set[str] = set()
 
         # 跨 yield 传递结果（async generator 无法 return 值）
         self._last_assistant_msg: AssistantMessage | None = None
@@ -220,6 +224,12 @@ class _AgentLoopRunner:
                 while has_more_tool_calls or self.pending_messages:
                     if self._is_aborted():
                         break
+
+                    if self.config.max_turns > 0 and self.turn_index >= self.config.max_turns:
+                        self._request_force_finalize(
+                            f"max_turns reached ({self.config.max_turns})",
+                            disable_all_tools=True,
+                        )
 
                     async for ev in self._process_pending_messages():
                         yield ev
@@ -309,6 +319,16 @@ class _AgentLoopRunner:
 
         # 转换消息为 LLM 格式
         llm_messages = convert_messages_to_llm(self.current_context.messages)
+        llm_system_prompt = self.current_context.system_prompt
+        if self._disable_all_tools:
+            active_tools = []
+        elif self._disabled_tool_names:
+            active_tools = [
+                tool for tool in self.current_context.tools
+                if tool.name not in self._disabled_tool_names
+            ]
+        else:
+            active_tools = self.current_context.tools
 
         # 上下文压缩 (通过 ContextPort，如果已配置)
         if (
@@ -319,9 +339,11 @@ class _AgentLoopRunner:
                 session_id=self.session_id,
                 messages=llm_messages,
                 system_prompt=self.current_context.system_prompt,
-                tools=[t.to_llm_tool() for t in self.current_context.tools] if self.current_context.tools else [],
+                tools=[t.to_llm_tool() for t in active_tools] if active_tools else [],
             )
             llm_messages = prepared.messages
+            if prepared.system_prompt_override is not None:
+                llm_system_prompt = prepared.system_prompt_override
             if self.logger:
                 context_mode = getattr(
                     getattr(getattr(self.config.context, "_manager", None), "config", None),
@@ -335,17 +357,16 @@ class _AgentLoopRunner:
                     category=LogCategory.AGENT_LOOP,
                     data={
                         "context_mode": context_mode,
-                        "message_count": len(llm_messages),
-                    },
-                )
+                    "message_count": len(llm_messages),
+                },
+            )
 
         # 经验检索: LLM 调用前检索相关历史经验，注入 system prompt
         if self._experience_learner is not None:
             experience_prompt = await self._retrieve_and_format_experience()
             if experience_prompt:
-                self.current_context.system_prompt = (
-                    self.current_context.system_prompt + "\n\n" + experience_prompt
-                )
+                llm_system_prompt = llm_system_prompt + "\n\n" + experience_prompt
+                self.current_context.system_prompt = llm_system_prompt
 
         # 日志: LLM 调用开始
         if self.logger:
@@ -354,14 +375,14 @@ class _AgentLoopRunner:
                 trace_id=self.trace_id,
                 model=self.config.model,
                 provider=self.config.provider,
-                system_prompt=self.current_context.system_prompt,
+                system_prompt=llm_system_prompt,
                 messages=llm_messages,
                 message_count=len(llm_messages),
                 estimated_tokens=estimate_tokens(self.current_context.messages),
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
                 thinking_level=self.config.thinking_level,
-                tools=[t.to_llm_tool() for t in self.current_context.tools] if self.current_context.tools else None,
+                tools=[t.to_llm_tool() for t in active_tools] if active_tools else None,
             ))
 
         llm_call_start_time = time.time()
@@ -370,9 +391,9 @@ class _AgentLoopRunner:
         async for event in _stream_assistant_response(
             llm=self.config.llm,
             llm_call_id=llm_call_id,
-            system_prompt=self.current_context.system_prompt,
+            system_prompt=llm_system_prompt,
             messages=llm_messages,
-            tools=self.current_context.tools,
+            tools=active_tools,
             model=self.config.model,
             provider=self.config.provider,
             abort_event=self.abort_event,
@@ -474,6 +495,16 @@ class _AgentLoopRunner:
                     is_error=event.is_error,
                     details=event.result.details if event.result else {},
                 )
+                if result_msg.details.get("force_finalize"):
+                    self._request_force_finalize(
+                        str(
+                            result_msg.details.get("budget_reason")
+                            or result_msg.details.get("reason")
+                            or "tool budget exhausted"
+                        ),
+                        exhausted_tools=list(result_msg.details.get("exhausted_tool_names", []))
+                        or [event.tool_name],
+                    )
                 self._last_tool_results.append(result_msg)
                 self.current_context.messages.append(result_msg)
                 self.new_messages.append(result_msg)
@@ -613,6 +644,55 @@ class _AgentLoopRunner:
             trace_id=self.trace_id,
             total_duration_ms=total_duration,
         )
+
+    def _request_force_finalize(
+        self,
+        reason: str,
+        *,
+        exhausted_tools: list[str] | None = None,
+        disable_all_tools: bool = False,
+    ) -> None:
+        """Inject one final instruction so the model must converge using current evidence."""
+        if disable_all_tools:
+            self._disable_all_tools = True
+        if exhausted_tools:
+            self._disabled_tool_names.update(exhausted_tools)
+
+        if self._force_finalize_reason is not None:
+            return
+        self._force_finalize_reason = reason
+        if self._disable_all_tools:
+            instruction = (
+                "不要继续调用任何工具。请基于当前已获取的信息、已完成的搜索结果和失败信息，"
+                "直接给出最佳努力的最终答案，并明确说明任何剩余不确定性。"
+            )
+        elif self._disabled_tool_names:
+            disabled = ", ".join(sorted(self._disabled_tool_names))
+            instruction = (
+                f"不要继续调用这些工具：{disabled}。"
+                "请优先基于当前已获取的信息直接完成任务；"
+                "如果必须产出文件、页面或结构化交付物，可以继续使用非搜索类工具完成最终产物。"
+            )
+        else:
+            instruction = (
+                "请基于当前已获取的信息、已完成的搜索结果和失败信息，"
+                "直接给出最佳努力的最终答案，并明确说明任何剩余不确定性。"
+            )
+        self.pending_messages.append(
+            UserMessage.from_text(
+                "系统提示："
+                f"{reason}。"
+                f"{instruction}"
+            )
+        )
+        if self.logger:
+            self.logger.create_log_entry(
+                trace_id=self.trace_id,
+                event="force_finalize_requested",
+                message=f"Force final answer requested: {reason}",
+                category=LogCategory.AGENT_LOOP,
+                data={"reason": reason, "turn_index": self.turn_index},
+            )
 
 
 # ============================================================
