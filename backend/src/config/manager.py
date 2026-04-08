@@ -32,7 +32,11 @@ class ConfigManager:
         if self._initialized:
             return
             
-        self._config_path = config_path or Path("x-agent.yaml")
+        self._config_path = (
+            config_path
+            if config_path is not None
+            else Path(__file__).resolve().parents[2] / "x-agent.yaml"
+        )
         self._config: Config | None = None
         self._callbacks: list[Callable[[Config], None]] = []
         self._watcher = None
