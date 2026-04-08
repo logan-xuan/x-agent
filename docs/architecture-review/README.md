@@ -110,6 +110,37 @@ flowchart LR
     Gateway --> Infra
 ```
 
+## 3.1 极简调度总图（汇报版）
+
+```mermaid
+flowchart LR
+    User["用户"]
+    Client["Web / CLI / 外部渠道"]
+    Entry["FastAPI Endpoint"]
+    Gateway["GatewayDispatcher"]
+    Runtime["runtime\n默认调度入口"]
+    Bridge["AgentBridge"]
+    AgentCore["agent_core\n执行实现层"]
+    LLM["LLM"]
+    Tools["Tools"]
+    Skills["Skills"]
+    Memory["Memory"]
+    Reply["响应回传"]
+
+    User --> Client --> Entry --> Gateway --> Runtime --> Bridge --> AgentCore
+    AgentCore --> LLM
+    AgentCore --> Tools
+    Bridge --> Skills
+    AgentCore --> Memory
+
+    LLM --> AgentCore
+    Tools --> AgentCore
+    Memory --> AgentCore
+    Skills --> Bridge
+
+    AgentCore --> Bridge --> Runtime --> Gateway --> Reply --> Client --> User
+```
+
 ## 4. 全局主链路图
 
 ```mermaid
