@@ -1081,11 +1081,74 @@ class AgentBridge:
             )
 
     async def _runtime_controller_compact(self, state, reason: str):
-        """Mark runtime compaction decisions while letting per-call context compression own the actual pruning."""
+        """Mark runtime compaction decisions while letting runtime compression produce the final payload."""
+        from ..agent_core.context_transform import convert_messages_to_llm
+        from ..runtime.context import CompressionContext
+        from ..runtime.types import CompactResult
+
         state.metadata["last_compaction_reason"] = reason
         state.metadata["compaction_count"] = state.metadata.get("compaction_count", 0) + 1
         state.metadata["request_compact"] = False
-        return state
+
+        profile_name = str(
+            state.request.metadata.get("_runtime_compression_profile_name")
+            or self._runtime_services.default_compression_profile
+        )
+        profile = self._runtime_services.compression_profiles.get(profile_name)
+        if profile is None:
+            profile = self._runtime_services.compression_profiles.get(
+                self._runtime_services.default_compression_profile
+            )
+
+        raw_messages = (
+            [dict(message) for message in state.active_messages]
+            if state.active_messages and all(isinstance(message, dict) for message in state.active_messages)
+            else convert_messages_to_llm(state.active_messages)
+        )
+        estimated_input_tokens = max(
+            sum(len(str(message.get("content", ""))) for message in raw_messages) // 4,
+            1,
+        )
+        model_context_window = state.budget.profile.max_total_tokens or estimated_input_tokens
+
+        if profile is None:
+            return CompactResult(
+                active_messages=list(raw_messages),
+                active_artifact_refs=list(state.active_artifact_refs),
+                task_frame=state.task_frame,
+                metadata={"compaction_source": "passthrough"},
+            )
+
+        result = await self._runtime_compression_pipeline.run(
+            CompressionContext(
+                session_key=state.request.session.session_key,
+                turn=state.turn_index,
+                task_frame=state.task_frame,
+                profile=profile,
+                model_context_window=model_context_window,
+                estimated_input_tokens=estimated_input_tokens,
+                messages=[dict(message) for message in raw_messages],
+                active_artifacts=list(state.active_artifact_refs),
+                budget=state.budget,
+                metadata={
+                    "now_ms": int(time.time() * 1000),
+                    "recent_failures": list(state.metadata.get("runtime_recent_failures", [])),
+                    "compaction_reason": reason,
+                },
+            )
+        )
+        if isinstance(result, CompactResult):
+            return result
+        return CompactResult(
+            active_messages=list(result.messages),
+            active_artifact_refs=list(result.active_artifacts),
+            task_frame=state.task_frame,
+            metadata={
+                "compaction_source": "pipeline",
+                "compression_operations": list(result.operations),
+                **dict(result.metadata),
+            },
+        )
 
     async def _ensure_runtime_turn_bootstrap(self, state) -> None:
         """Load runtime dependencies and session history once per turn request."""

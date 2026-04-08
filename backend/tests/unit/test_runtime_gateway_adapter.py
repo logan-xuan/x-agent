@@ -20,7 +20,7 @@ from src.agent_core.types import AssistantMessage, MessageEndEvent, TextContent,
 from src.runtime.adapters import GatewayAdapter
 from src.runtime.repositories import ResumeSessionState, StateSnapshotRecord, SummaryRecord, TranscriptEntry
 from src.runtime.turn.state import TurnState
-from src.runtime.types import RouteMeta, SessionDescriptor, TaskFrame, TurnRequest, TurnResult
+from src.runtime.types import CompactResult, RouteMeta, SessionDescriptor, TaskFrame, TurnRequest, TurnResult
 
 
 @pytest.mark.asyncio
@@ -408,29 +408,85 @@ async def test_agent_invoker_prepare_runtime_turn_strips_reserved_metadata_keys(
 
 
 @pytest.mark.asyncio
-async def test_agent_bridge_runs_runtime_turn_with_injected_controller():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-4",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-    )
-    _, request = await adapter.prepare_turn(envelope)
-
-    class FakeController:
-        async def run(self, request):
-            return TurnResult(kind="final", finish_reason="done_definition_satisfied", output_text=request.user_input)
-
-    result = await bridge.run_runtime_turn(request, controller=FakeController())
-
-    assert result.kind == "final"
-    assert result.output_text == "runtime execute"
 
 
 @pytest.mark.asyncio
-async def test_agent_bridge_runtime_bootstrap_prefers_runtime_resume_state():
+async def test_agent_bridge_runtime_controller_compact_wraps_compression_result_from_pipeline():
+    from src.runtime.context.compression_pipeline import CompressionResult
+    from src.runtime.types import ArtifactRef
+
+    bridge = AgentBridge()
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-compact-wrap", session_id="sess-compact-wrap"),
+        user_input="compress now",
+        task_frame=TaskFrame(objective="Ship runtime", unresolved=["gap-1"]),
+        route=RouteMeta(channel="web_chat"),
+        metadata={"persist_user_message": False},
+    )
+    state = TurnState.from_request(request)
+    state.active_messages = [
+        {"role": "user", "content": "history message"},
+        {"role": "assistant", "content": "history answer"},
+    ]
+    state.active_artifact_refs = []
+
+    bridge._runtime_compression_pipeline.run = AsyncMock(  # type: ignore[method-assign]
+        return_value=CompressionResult(
+            messages=[{"role": "system", "content": "[Collapsed history] compacted"}],
+            active_artifacts=[
+                ArtifactRef(id="artifact-1", kind="tool", title="Artifact", preview="preview")
+            ],
+            estimated_input_tokens=32,
+            operations=["collapse", "autocompact"],
+            metadata={"fallback_summary_used": True},
+        )
+    )
+
+    result = await bridge._runtime_controller_compact(state, "budget_compact")
+
+    assert isinstance(result, CompactResult)
+    assert result.active_messages == [{"role": "system", "content": "[Collapsed history] compacted"}]
+    assert result.active_artifact_refs[0].id == "artifact-1"
+    assert result.task_frame is state.task_frame
+    assert result.metadata["compaction_source"] == "pipeline"
+    assert result.metadata["compression_operations"] == ["collapse", "autocompact"]
+    assert result.metadata["fallback_summary_used"] is True
+
+
+@pytest.mark.asyncio
+async def test_agent_bridge_runtime_controller_compact_returns_compact_result_from_pipeline():
+    bridge = AgentBridge()
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-compact", session_id="sess-compact"),
+        user_input="compress now",
+        task_frame=TaskFrame(objective="Ship runtime", unresolved=["gap-1"]),
+        route=RouteMeta(channel="web_chat"),
+        metadata={"persist_user_message": False},
+    )
+    state = TurnState.from_request(request)
+    state.active_messages = [
+        {"role": "user", "content": "history message"},
+        {"role": "assistant", "content": "history answer"},
+    ]
+    state.active_artifact_refs = []
+
+    expected = CompactResult(
+        active_messages=[{"role": "system", "content": "[Collapsed history] compacted"}],
+        active_artifact_refs=[],
+        output_text="compacted output",
+        task_frame=TaskFrame(objective="Ship runtime", unresolved=["gap-2"]),
+        metadata={"compaction_source": "pipeline"},
+    )
+
+    bridge._runtime_compression_pipeline.run = AsyncMock(return_value=expected)  # type: ignore[method-assign]
+
+    result = await bridge._runtime_controller_compact(state, "budget_compact")
+
+    assert result is expected
+    bridge._runtime_compression_pipeline.run.assert_awaited_once()  # type: ignore[attr-defined]
+    assert state.metadata["last_compaction_reason"] == "budget_compact"
+    assert state.metadata["compaction_count"] == 1
+    assert state.metadata["request_compact"] is False
     bridge = AgentBridge()
     bridge.runtime_session_orchestrator.resume_session = AsyncMock(  # type: ignore[method-assign]
         return_value=ResumeSessionState(

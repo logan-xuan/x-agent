@@ -287,6 +287,17 @@ class ChildResult:
 
 
 @dataclass
+class CompactResult:
+    """Structured compaction payload returned by runtime context compression."""
+
+    active_messages: list[Any] = field(default_factory=list)
+    active_artifact_refs: list[ArtifactRef] = field(default_factory=list)
+    output_text: str | None = None
+    task_frame: TaskFrame | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class TurnResult:
     """Output envelope returned by the new turn controller."""
 
@@ -356,6 +367,7 @@ __all__ = [
     "BudgetManager",
     "BudgetSnapshot",
     "ChildResult",
+    "CompactResult",
     "FinishReason",
     "GovernedToolPlan",
     "LaneName",

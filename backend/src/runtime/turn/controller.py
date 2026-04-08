@@ -10,6 +10,7 @@ from ..types import (
     AssessmentEngine,
     BudgetDecision,
     BudgetManager,
+    CompactResult,
     GovernedToolPlan,
     ToolExecutionPlan,
     ToolExecutionResult,
@@ -24,7 +25,7 @@ from .tool_governor import DefaultToolGovernor
 
 PlannerFn = Callable[[TurnState], Awaitable[ToolExecutionPlan | None]]
 ExecutorFn = Callable[[GovernedToolPlan, TurnState], Awaitable[list[ToolExecutionResult]]]
-CompactFn = Callable[[TurnState, str], Awaitable[TurnState]]
+CompactFn = Callable[[TurnState, str], Awaitable[TurnState | CompactResult]]
 
 
 async def _default_planner(state: TurnState) -> ToolExecutionPlan | None:
@@ -72,7 +73,10 @@ class DefaultTurnController:
                 return self._finish_from_budget(state, budget_decision)
 
             if budget_decision.action == "compact":
-                state = await self.compact_fn(state, budget_decision.reason or "budget_compact")
+                state = self._apply_compact_result(
+                    state,
+                    await self.compact_fn(state, budget_decision.reason or "budget_compact"),
+                )
 
             plan = await self.planner(state)
             tool_plan = plan or ToolExecutionPlan()
@@ -117,7 +121,10 @@ class DefaultTurnController:
                 state.turn_index += 1
                 continue
             if decision == "compact":
-                state = await self.compact_fn(state, "assessment_compact")
+                state = self._apply_compact_result(
+                    state,
+                    await self.compact_fn(state, "assessment_compact"),
+                )
                 state.turn_index += 1
                 continue
             if decision == "spawn":
@@ -148,14 +155,40 @@ class DefaultTurnController:
                 metadata=self._metadata(state, assessment_notes=assessment.notes),
             )
 
-    def _finish_from_budget(self, state: TurnState, decision: BudgetDecision) -> TurnResult:
+
+    def _apply_compact_result(
+        self,
+        state: TurnState,
+        result: TurnState | CompactResult,
+    ) -> TurnState:
+        if isinstance(result, TurnState):
+            return result
+
+        state.active_messages = list(result.active_messages)
+        state.active_artifact_refs = list(result.active_artifact_refs)
+        if result.output_text:
+            state.metadata["final_output_text"] = result.output_text
+        if result.task_frame is not None:
+            state.request.task_frame = result.task_frame
+        state.metadata.update(result.metadata)
+        return state
+
+    def _finish_from_budget(
+        self,
+        state: TurnState,
+        decision: BudgetDecision,
+    ) -> TurnResult:
         return TurnResult(
             kind="final",
             finish_reason=decision.finish_reason or "best_effort_budget_stop",
             output_text=self._summarize_tool_results(state) or self._resolve_output_text(state),
             updated_task_frame=state.task_frame,
             artifact_refs=list(state.active_artifact_refs),
-            metadata=self._metadata(state, budget_reason=decision.reason, budget_details=decision.details),
+            metadata=self._metadata(
+                state,
+                budget_reason=decision.reason,
+                budget_details=decision.details,
+            ),
         )
 
     def _resolve_output_text(self, state: TurnState) -> str | None:
@@ -254,6 +287,8 @@ class DefaultTurnController:
             metadata["provider"] = state.metadata["provider"]
         if "runtime_event_timeline" in state.metadata:
             metadata["runtime_event_timeline"] = list(state.metadata["runtime_event_timeline"])
+        if "compaction_source" in state.metadata:
+            metadata["compaction_source"] = state.metadata["compaction_source"]
         metadata.update(extra)
         return metadata
 

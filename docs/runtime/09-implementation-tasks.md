@@ -40,8 +40,8 @@
 - `[x] P3-T17`: 已明确当前 debug fast mode fallback policy，默认在短超时窗口下返回 synthetic final
 - `[x] P3-T18`: 已完成当前 provider/model 可用性探测，确认现有 endpoint 上暂无可直接启用的候选 backup model
 - `[x] P3-T19`: 已补齐第二 provider / 第二 key / 第二 endpoint 的 onboarding 路径，支持用 `llm-stream-probe` + `api_key_override` 先验证候选组合
-- `[~] Post-Plan`: runtime 兼容与稳定性回归。当前 focused matrix：`110 passed`
-- `[~] Post-Plan`: runtime 兼容与稳定性回归。当前 focused matrix：runtime-focused `110 passed`，backend full suite（无 coverage gate）`551 passed`
+- `[x] Post-Plan`: runtime 兼容与稳定性回归已完成。当前 focused matrix：`154 passed`
+- `[x] Post-Plan`: runtime 兼容与稳定性回归已完成。当前 focused matrix：runtime unit `154 passed`，runtime integration `2 passed`
 - `[x] P5-T1`: 已定义 runtime 仓储层接口和最小记录对象
 
 ---

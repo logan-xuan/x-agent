@@ -67,7 +67,99 @@ def test_compression_verifier_rejects_missing_recent_failures():
     assert result.preserved_fields["recent_failures"] is False
 
 
-def test_compression_verifier_rejects_inconsistent_objective_snapshot_authenticity():
+
+
+
+
+def test_compression_verifier_rejects_objective_when_only_metadata_echoes_it():
+    verifier = DefaultCompressionVerifier()
+    request = CompressionVerifyRequest(
+        task_frame=TaskFrame(objective="Ship runtime"),
+        original_messages=[{"role": "user", "content": "do the work"}],
+        compressed_messages=[{"role": "system", "content": "[Collapsed history] no objective kept"}],
+        metadata={
+            "objective_after": "Ship runtime",
+        },
+    )
+
+    result = verifier.verify(request)
+
+    assert result.ok is False
+    assert result.preserved_fields["objective"] is False
+
+
+
+def test_compression_verifier_rejects_explicit_objective_snapshot_mismatch():
+    verifier = DefaultCompressionVerifier()
+    request = CompressionVerifyRequest(
+        task_frame=TaskFrame(objective="Ship runtime"),
+        original_messages=[{"role": "user", "content": "do the work"}],
+        compressed_messages=[{"role": "system", "content": "Objective: Ship runtime"}],
+        metadata={"objective_after": "Different objective"},
+    )
+
+    result = verifier.verify(request)
+
+    assert result.ok is False
+    assert result.preserved_fields["objective"] is False
+    assert "objective_mismatch" in result.reasons
+
+
+def test_compression_verifier_does_not_emit_objective_mismatch_for_missing_objective_evidence_only():
+    verifier = DefaultCompressionVerifier()
+    request = CompressionVerifyRequest(
+        task_frame=TaskFrame(objective="Ship runtime"),
+        original_messages=[{"role": "user", "content": "do the work"}],
+        compressed_messages=[{"role": "system", "content": "[Collapsed history] no objective kept"}],
+        metadata={"objective_after": "Ship runtime"},
+    )
+
+    result = verifier.verify(request)
+
+    assert result.ok is False
+    assert "objective_mismatch" not in result.reasons
+
+
+def test_compression_verifier_rejects_lost_key_conclusions():
+    verifier = DefaultCompressionVerifier()
+    request = CompressionVerifyRequest(
+        task_frame=TaskFrame(objective="Ship runtime"),
+        original_messages=[{"role": "assistant", "content": "结论：需要保留 artifact:1"}],
+        compressed_messages=[{"role": "system", "content": "Objective: Ship runtime"}],
+        metadata={
+            "key_conclusions_before": ["保留 artifact:1"],
+            "key_conclusions_after": [],
+        },
+    )
+
+    result = verifier.verify(request)
+
+    assert result.ok is False
+    assert result.preserved_fields["conclusion_fidelity"] is False
+    assert "key_conclusions_lost" in result.reasons
+
+
+
+def test_compression_verifier_rejects_duplicate_objective_mentions():
+    verifier = DefaultCompressionVerifier()
+    request = CompressionVerifyRequest(
+        task_frame=TaskFrame(objective="Ship runtime"),
+        original_messages=[{"role": "user", "content": "do the work"}],
+        compressed_messages=[
+            {"role": "system", "content": "Objective: Ship runtime"},
+            {"role": "assistant", "content": "I am still working on Ship runtime."},
+        ],
+    )
+
+    result = verifier.verify(request)
+
+    assert result.ok is False
+    assert result.preserved_fields["objective"] is False
+    assert "duplicate_objective" in result.reasons
+
+
+
+def test_compression_verifier_allows_objective_snapshot_mismatch_when_objective_is_out_of_band():
     verifier = DefaultCompressionVerifier()
     request = CompressionVerifyRequest(
         task_frame=TaskFrame(objective="Ship runtime"),
@@ -76,12 +168,11 @@ def test_compression_verifier_rejects_inconsistent_objective_snapshot_authentici
         metadata={
             "objective_out_of_band": True,
             "objective_before": "Ship runtime",
-            "objective_after": "Ship auth",
+            "objective_after": "Different objective",
         },
     )
 
     result = verifier.verify(request)
 
-    assert result.ok is False
-    assert result.preserved_fields["objective"] is False
-    assert any("objective" in reason for reason in result.reasons)
+    assert result.ok is True
+    assert "objective_mismatch" not in result.reasons

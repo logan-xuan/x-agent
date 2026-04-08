@@ -6,6 +6,7 @@ from src.runtime.turn.controller import DefaultTurnController
 from src.runtime.turn.state import TurnState
 from src.runtime.turn.tool_governor import DefaultToolGovernor
 from src.runtime.types import (
+    CompactResult,
     ToolPolicy,
     GovernedToolPlan,
     LoopAssessment,
@@ -158,39 +159,94 @@ def test_turn_controller_budget_stop_uses_best_effort_summary_not_raw_last_tool_
     assert "fetch_web_content" in result.output_text
 
 
+
+
 def test_turn_controller_requests_synthesis_when_all_planned_search_calls_are_rejected():
+    observed: dict[str, object] = {}
+
     async def planner(state: TurnState) -> ToolExecutionPlan:
-        if state.metadata.get("runtime_synthesis_instruction"):
-            state.metadata["final_output_text"] = "synthesized final answer"
+        instruction = state.metadata.get("runtime_synthesis_instruction")
+        if instruction:
+            observed["synthesis_instruction"] = instruction
+            state.metadata["final_output_text"] = "synthesized from retained evidence"
             state.metadata["final_candidate_ready"] = True
             return ToolExecutionPlan()
         return ToolExecutionPlan(
-            calls=[
-                ToolCallSpec(tool_name="web_search", arguments={"q": "multi-agent"}),
-            ]
+            calls=[ToolCallSpec(tool_name="web_search", arguments={"q": "runtime redesign"})]
         )
 
     async def executor(plan: GovernedToolPlan, state: TurnState) -> list[ToolExecutionResult]:
-        _ = plan, state
+        observed.setdefault("executed_calls", []).append([call.tool_name for call in plan.calls])
+        _ = state
         return []
 
-    request = _request()
-    request.metadata["_runtime_budget_profile"] = TurnBudgetProfile(max_total_tokens=120000)
     controller = DefaultTurnController(
         planner=planner,
         executor=executor,
         tool_governor=DefaultToolGovernor(
             policies_by_name={
-                "web_search": ToolPolicy(
-                    max_uses_per_turn=0,
-                    repeat_signature_limit=1,
-                )
+                "web_search": ToolPolicy(max_uses_per_turn=0),
             }
         ),
     )
 
-    result = __import__("asyncio").run(controller.run(request))
+    result = __import__("asyncio").run(controller.run(_request()))
 
     assert result.kind == "final"
-    assert result.output_text == "synthesized final answer"
-    assert result.finish_reason == "done_definition_satisfied"
+    assert result.output_text == "synthesized from retained evidence"
+    assert observed["executed_calls"] == [[], []]
+    assert "web_search" in str(observed["synthesis_instruction"])
+    assert "直接完成综合分析" in str(observed["synthesis_instruction"])
+
+
+
+def test_turn_controller_compact_path_consumes_explicit_compact_result():
+    async def planner(state: TurnState) -> ToolExecutionPlan:
+        _ = state
+        return ToolExecutionPlan()
+
+    async def compact_fn(state: TurnState, reason: str) -> CompactResult:
+        assert reason == "assessment_compact"
+        _ = state
+        return CompactResult(
+            active_messages=[{"role": "system", "content": "[Collapsed history] compacted runtime snapshot"}],
+            active_artifact_refs=[],
+            output_text="compacted runtime snapshot",
+            task_frame=TaskFrame(objective="执行任务", unresolved=["step-2"]),
+            metadata={"compaction_source": "pipeline"},
+        )
+
+    class CompactThenFinishAssessment(DefaultAssessmentEngine):
+        def assess(self, state: TurnState) -> LoopAssessment:
+            if not state.metadata.get("compaction_source"):
+                return LoopAssessment(
+                    turn=state.turn_index,
+                    unresolved_count=1,
+                    novelty_score=0.0,
+                    repeated_pattern_score=1.0,
+                    controller_decision="compact",
+                )
+            state.metadata["final_candidate_ready"] = True
+            return LoopAssessment(
+                turn=state.turn_index,
+                unresolved_count=0,
+                novelty_score=1.0,
+                repeated_pattern_score=0.0,
+                controller_decision="finish",
+                finish_reason="done_definition_satisfied",
+            )
+
+    controller = DefaultTurnController(
+        planner=planner,
+        compact_fn=compact_fn,
+        assessment_engine=CompactThenFinishAssessment(),
+    )
+
+    result = __import__("asyncio").run(controller.run(_request()))
+
+    assert result.kind == "final"
+    assert result.output_text == "compacted runtime snapshot"
+    assert result.updated_task_frame.unresolved == ["step-2"]
+    assert result.metadata["turn_index"] == 1
+    assert result.metadata["compaction_source"] == "pipeline"
+    assert result.artifact_refs == []
