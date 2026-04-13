@@ -98,13 +98,13 @@ OWNER_TEMPLATE = """# OWNER.md - 用户画像
 
 ## 基本信息
 - **姓名**: 用户
-- **职业**: 
+- **职业**:
 
 ## 兴趣爱好
-- 
+-
 
 ## 当前目标
-- 
+-
 
 ## 偏好设置
 - 语言: 中文
@@ -183,22 +183,22 @@ BOOTSTRAP_TEMPLATE = """# BOOTSTRAP.md - 首次启动引导
 DAILY_MEMORY_TEMPLATE = """# {date}
 
 ## 今日事件
-- 
+-
 
 ## 重要洞察
-- 
+-
 
 ## 待办事项
-- [ ] 
+- [ ]
 """
 
 
 def get_template(template_name: str) -> str:
     """Get template content by name.
-    
+
     Args:
         template_name: Name of the template (agents, spirit, owner, memory, tools, bootstrap)
-        
+
     Returns:
         Template content string
     """
@@ -215,10 +215,10 @@ def get_template(template_name: str) -> str:
 
 def get_daily_memory_template(date: str) -> str:
     """Get daily memory template with date filled in.
-    
+
     Args:
         date: Date string in YYYY-MM-DD format
-        
+
     Returns:
         Daily memory template with date
     """

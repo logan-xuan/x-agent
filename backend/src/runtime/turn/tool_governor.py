@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..types import GovernedToolPlan, ToolCallSpec, ToolExecutionPlan, ToolExecutionResult, ToolPolicy
+from ..types import (
+    GovernedToolPlan,
+    ToolCallSpec,
+    ToolExecutionPlan,
+    ToolExecutionResult,
+    ToolPolicy,
+)
 from .state import ToolCallSignature, TurnState
 
 
@@ -53,9 +59,15 @@ class DefaultToolGovernor:
                     timeout_ms=timeout_ms,
                 )
             )
-            provisional_tool_usage[call.tool_name] = provisional_tool_usage.get(call.tool_name, 0) + 1
-            provisional_session_usage[call.tool_name] = provisional_session_usage.get(call.tool_name, 0) + 1
-            provisional_signature_counts[signature] = provisional_signature_counts.get(signature, 0) + 1
+            provisional_tool_usage[call.tool_name] = (
+                provisional_tool_usage.get(call.tool_name, 0) + 1
+            )
+            provisional_session_usage[call.tool_name] = (
+                provisional_session_usage.get(call.tool_name, 0) + 1
+            )
+            provisional_signature_counts[signature] = (
+                provisional_signature_counts.get(signature, 0) + 1
+            )
             max_parallelism = min(max_parallelism, policy.max_parallelism)
 
         if not accepted:

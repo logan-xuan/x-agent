@@ -17,5 +17,5 @@ def get_context_bucket(storage: Any) -> dict[str, Any]:
     bucket = getattr(storage, "_runtime_context_bucket", None)
     if bucket is None:
         bucket = _GLOBAL_CONTEXT_BUCKET
-        setattr(storage, "_runtime_context_bucket", bucket)
+        storage._runtime_context_bucket = bucket
     return bucket

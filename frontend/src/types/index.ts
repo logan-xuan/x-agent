@@ -33,6 +33,30 @@ export interface Message {
   metadata?: {
     model?: string;
     tokens?: number;
+    transcript?: {
+      text: string;
+      provider?: string;
+      language?: string;
+    };
+    audio?: {
+      asset_id?: string;
+      public_url?: string;
+      playback_url?: string;
+      mime_type?: string;
+      format?: string;
+      original_filename?: string;
+      duration_ms?: number;
+    };
+    audio_reply?: {
+      asset_id?: string;
+      public_url?: string;
+      playback_url?: string;
+      mime_type?: string;
+      format?: string;
+      provider?: string;
+      voice?: string;
+      duration_ms?: number;
+    };
     // System message fields
     log_type?: 'cli_command' | 'tool_execution' | 'error' | 'info';
     command?: string;

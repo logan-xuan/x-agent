@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import time
 import json
+import time
 from dataclasses import dataclass, field
 from hashlib import sha1
 from typing import Any
@@ -32,7 +32,9 @@ class ToolCallSignature:
     normalized_args_hash: str
 
     @classmethod
-    def from_args(cls, tool_name: str, arguments: dict[str, Any] | None = None) -> "ToolCallSignature":
+    def from_args(
+        cls, tool_name: str, arguments: dict[str, Any] | None = None
+    ) -> ToolCallSignature:
         """Build a signature using a normalized representation of tool arguments."""
         normalized_payload = _normalize_json_like(arguments or {})
         normalized = json.dumps(
@@ -92,7 +94,7 @@ class TurnState:
         budget_profile: TurnBudgetProfile | None = None,
         profile_name: str | None = None,
         started_at_ms: int | None = None,
-    ) -> "TurnState":
+    ) -> TurnState:
         """Create turn state from a normalized runtime request."""
         task_frame = request.task_frame
         if not task_frame.objective:

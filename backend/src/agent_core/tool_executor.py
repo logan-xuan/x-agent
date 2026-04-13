@@ -33,11 +33,13 @@ async def execute_tool_calls(
     abort_event: asyncio.Event | None = None,
     get_steering: Callable[[], asyncio.Coroutine[Any, Any, list[AgentMessage]]] | None = None,
     middleware_pipeline: ToolMiddlewarePipeline | None = None,
-) -> AsyncGenerator[ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent, None]:
+) -> AsyncGenerator[
+    ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent, None
+]:
     """执行工具调用.
-    
+
     顺序执行工具调用，支持 abort、steering 和中间件机制。
-    
+
     Args:
         trace_id: 追踪 ID
         llm_call_id: LLM 调用 ID
@@ -47,7 +49,7 @@ async def execute_tool_calls(
         abort_event: 中止事件
         get_steering: 获取 steering 消息的回调
         middleware_pipeline: 工具中间件管道（可选）
-    
+
     Yields:
         ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent
     """
@@ -88,22 +90,24 @@ async def execute_tool_calls(
 
             # 使用中间件管道执行工具（如果配置了）
             if middleware_pipeline is not None:
-                from .tool_middleware import ToolCallContext, MiddlewareAction
-                
+                from .tool_middleware import MiddlewareAction, ToolCallContext
+
                 # 创建中间件上下文
                 ctx = ToolCallContext(
                     tool_name=tc.name,
                     tool_call_id=tc.id,
                     arguments=tc.arguments,
                 )
-                
+
                 # 执行 before 中间件
                 ctx = await middleware_pipeline.execute_before(ctx)
-                
+
                 # 检查是否中止
                 if ctx.action == MiddlewareAction.ABORT:
                     result = ToolResult(
-                        content=[TextContent(text=ctx.abort_reason or "Execution aborted by middleware")],
+                        content=[
+                            TextContent(text=ctx.abort_reason or "Execution aborted by middleware")
+                        ],
                         details={
                             "aborted": True,
                             "reason": ctx.abort_reason,
@@ -123,10 +127,10 @@ async def execute_tool_calls(
                         abort_event=abort_event,
                     )
                     ctx.result = result
-                    
+
                     # 执行 after 中间件
                     ctx = await middleware_pipeline.execute_after(ctx)
-                    
+
                     # 使用中间件可能修改的结果
                     if ctx.result is not None:
                         result = ctx.result
@@ -180,7 +184,7 @@ async def execute_tool_calls(
             and isinstance(getattr(result, "details", None), dict)
             and result.details.get("force_finalize")
         ):
-            for remaining in tool_calls[i + 1:]:
+            for remaining in tool_calls[i + 1 :]:
                 yield _create_skipped_event(remaining, "Skipped due to tool budget exhaustion")
             break
 
@@ -190,23 +194,20 @@ async def execute_tool_calls(
                 steering = await get_steering()
                 if steering:
                     # 跳过剩余工具
-                    for remaining in tool_calls[i + 1:]:
+                    for remaining in tool_calls[i + 1 :]:
                         yield _create_skipped_event(remaining, "Skipped due to steering")
                     break
             except Exception:
                 pass
 
 
-def _create_skipped_event(
-    tc: ToolCallContent,
-    reason: str
-) -> ToolExecutionEndEvent:
+def _create_skipped_event(tc: ToolCallContent, reason: str) -> ToolExecutionEndEvent:
     """创建跳过事件.
-    
+
     Args:
         tc: 工具调用内容
         reason: 跳过原因
-    
+
     Returns:
         ToolExecutionEndEvent
     """
@@ -234,7 +235,7 @@ async def execute_tool_calls_parallel(
     max_concurrent: int = 5,
 ) -> list[tuple[ToolCallContent, ToolResult, bool, float]]:
     """并行执行工具调用.
-    
+
     Args:
         trace_id: 追踪 ID
         llm_call_id: LLM 调用 ID
@@ -243,7 +244,7 @@ async def execute_tool_calls_parallel(
         tool_calls: 要执行的工具调用列表
         abort_event: 中止事件
         max_concurrent: 最大并发数
-    
+
     Returns:
         list[tuple[ToolCallContent, ToolResult, is_error, duration_ms]]
     """
@@ -251,7 +252,9 @@ async def execute_tool_calls_parallel(
 
     semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def execute_single(tc: ToolCallContent) -> tuple[ToolCallContent, ToolResult, bool, float]:
+    async def execute_single(
+        tc: ToolCallContent,
+    ) -> tuple[ToolCallContent, ToolResult, bool, float]:
         async with semaphore:
             if abort_event and abort_event.is_set():
                 return (

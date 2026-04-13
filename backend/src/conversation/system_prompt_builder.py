@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -77,8 +77,7 @@ _DEFAULT_SYSTEM_PROMPT: str = """You are a personal assistant running inside x-a
 
 # SPIRIT.md 存在时注入的特殊指令
 _SPIRIT_PERSONA_INSTRUCTION: str = (
-    "If SPIRIT.md is present, embody its persona and tone. "
-    "Avoid stiff, generic replies."
+    "If SPIRIT.md is present, embody its persona and tone. Avoid stiff, generic replies."
 )
 
 
@@ -176,7 +175,7 @@ class SystemPromptBuilder:
             )
             return _DEFAULT_SYSTEM_PROMPT
 
-    def load_identity(self) -> "IdentityInfo":
+    def load_identity(self) -> IdentityInfo:
         """加载 AI 身份信息.
 
         解析 IDENTITY.md 文件，提取 name、form、style、emoji。
@@ -258,10 +257,7 @@ class SystemPromptBuilder:
             True 表示全新 workspace
         """
         workspace_dir = Path(self.workspace_path)
-        return not any(
-            (workspace_dir / filename).exists()
-            for filename in BOOTSTRAP_FILE_ORDER
-        )
+        return not any((workspace_dir / filename).exists() for filename in BOOTSTRAP_FILE_ORDER)
 
     def _copy_template(self, filename: str) -> None:
         """从模板目录复制文件到 workspace.
@@ -357,9 +353,7 @@ class SystemPromptBuilder:
                     content_len = len(context_file.content)
                     if total_chars + content_len > MAX_TOTAL_CHARS:
                         allowed = remaining_budget
-                        context_file.content, _ = _truncate_content(
-                            context_file.content, allowed
-                        )
+                        context_file.content, _ = _truncate_content(context_file.content, allowed)
                         context_file.is_truncated = True
 
                 total_chars += len(context_file.content)
@@ -403,7 +397,9 @@ class SystemPromptBuilder:
             raw_content = file_path.read_text(encoding="utf-8", errors="replace")
             keep_tail = filename == "MEMORY.md"
             content, is_truncated = _truncate_content(
-                raw_content, MAX_SINGLE_FILE_CHARS, keep_tail=keep_tail,
+                raw_content,
+                MAX_SINGLE_FILE_CHARS,
+                keep_tail=keep_tail,
             )
 
             if is_truncated:
@@ -575,10 +571,7 @@ class SystemPromptBuilder:
         ]
 
         # SPIRIT.md 特殊处理
-        has_spirit = any(
-            cf.filename == "SPIRIT.md" and not cf.is_missing
-            for cf in context_files
-        )
+        has_spirit = any(cf.filename == "SPIRIT.md" and not cf.is_missing for cf in context_files)
         if has_spirit:
             lines.append(_SPIRIT_PERSONA_INSTRUCTION)
 
@@ -636,11 +629,7 @@ def _truncate_content(
 
     front_size = int(max_chars * 0.7)
     back_size = int(max_chars * 0.2)
-    truncated = (
-        content[:front_size]
-        + "\n\n[... truncated ...]\n\n"
-        + content[-back_size:]
-    )
+    truncated = content[:front_size] + "\n\n[... truncated ...]\n\n" + content[-back_size:]
     return truncated, True
 
 

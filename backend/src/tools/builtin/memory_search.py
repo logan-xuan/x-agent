@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.utils.logger import get_logger
+
 from ..base import BaseTool, ToolParameter, ToolParameterType, ToolResult
 
 logger = get_logger(__name__)
@@ -139,7 +140,7 @@ class MemorySearchTool(BaseTool):
                     extra={"query": query[:50]},
                 )
                 return ToolResult.ok(
-                    f"No relevant memories found for query: \"{query}\"",
+                    f'No relevant memories found for query: "{query}"',
                     result_count=0,
                 )
 
@@ -147,7 +148,11 @@ class MemorySearchTool(BaseTool):
             for index, result in enumerate(results, start=1):
                 entry = result.entry
                 score_display = f"{result.score:.2f}"
-                entry_type = entry.content_type.value if hasattr(entry.content_type, "value") else str(entry.content_type)
+                entry_type = (
+                    entry.content_type.value
+                    if hasattr(entry.content_type, "value")
+                    else str(entry.content_type)
+                )
                 content_preview = entry.content[:300]
                 if len(entry.content) > 300:
                     content_preview += "..."

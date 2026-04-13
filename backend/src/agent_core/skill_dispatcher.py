@@ -21,10 +21,11 @@ if TYPE_CHECKING:
 # 数据类型定义
 # ============================================================================
 
+
 @dataclass
 class SkillCommandSpec:
     """技能命令规格.
-    
+
     Attributes:
         name: 命令名称 (用于 /command)
         skill_name: 技能名称
@@ -32,6 +33,7 @@ class SkillCommandSpec:
         dispatch_kind: 调度类型 ("tool" | None)
         dispatch_tool: Tool Dispatch 时的工具名称
     """
+
     name: str
     skill_name: str
     description: str
@@ -42,7 +44,7 @@ class SkillCommandSpec:
 @dataclass
 class SkillInvocation:
     """技能调用信息.
-    
+
     Attributes:
         skill_name: 技能名称
         command_name: 命令名称
@@ -50,6 +52,7 @@ class SkillInvocation:
         dispatch_mode: 调度模式 ("prompt_rewrite" | "tool_dispatch")
         tool_name: Tool Dispatch 时的工具名称
     """
+
     skill_name: str
     command_name: str
     args: str | None
@@ -61,25 +64,40 @@ class SkillInvocation:
 # 保留命令列表 (内置命令不应被技能覆盖)
 # ============================================================================
 
-RESERVED_COMMANDS = frozenset([
-    "help", "status", "config", "clear", "reset",
-    "model", "think", "verbose", "reasoning",
-    "memory", "skill", "skills", "tools",
-    "abort", "stop", "cancel",
-])
+RESERVED_COMMANDS = frozenset(
+    [
+        "help",
+        "status",
+        "config",
+        "clear",
+        "reset",
+        "model",
+        "think",
+        "verbose",
+        "reasoning",
+        "memory",
+        "skill",
+        "skills",
+        "tools",
+        "abort",
+        "stop",
+        "cancel",
+    ]
+)
 
 
 # ============================================================================
 # 技能命令解析器
 # ============================================================================
 
+
 class SkillCommandResolver:
     """技能命令解析器 (OpenClaw 风格).
-    
+
     解析 Slash 命令格式:
     - /skill_name args  → 直接调用技能
     - /skill pptx args  → 通用技能调用格式
-    
+
     Example:
         resolver = SkillCommandResolver(skill_commands)
         invocation = resolver.resolve("/pptx 请帮我制作一个PPT")
@@ -88,7 +106,7 @@ class SkillCommandResolver:
 
     def __init__(self, skill_commands: list[SkillCommandSpec]) -> None:
         """初始化解析器.
-        
+
         Args:
             skill_commands: 可用的技能命令列表
         """
@@ -102,15 +120,15 @@ class SkillCommandResolver:
 
     def resolve(self, user_input: str) -> SkillInvocation | None:
         """解析用户输入为技能调用.
-        
+
         支持格式:
         - /pptx 请帮我制作PPT
         - /skill pptx 请帮我制作PPT
         - /skill_name args
-        
+
         Args:
             user_input: 用户输入
-        
+
         Returns:
             SkillInvocation 或 None (无匹配)
         """
@@ -151,14 +169,14 @@ class SkillCommandResolver:
 
     def _find_command(self, name: str) -> SkillCommandSpec | None:
         """查找命令规格.
-        
+
         支持模糊匹配:
         - 精确匹配
         - 下划线/连字符互换
-        
+
         Args:
             name: 命令名称 (小写)
-        
+
         Returns:
             SkillCommandSpec 或 None
         """
@@ -175,12 +193,12 @@ class SkillCommandResolver:
 
     def _normalize_command_name(self, name: str) -> str:
         """规范化命令名称.
-        
+
         将空格和下划线统一转换为连字符。
-        
+
         Args:
             name: 原始名称
-        
+
         Returns:
             规范化后的名称
         """
@@ -192,13 +210,13 @@ class SkillCommandResolver:
         args: str | None,
     ) -> SkillInvocation:
         """创建技能调用对象.
-        
+
         根据命令规格决定调度模式。
-        
+
         Args:
             cmd: 命令规格
             args: 用户参数
-        
+
         Returns:
             SkillInvocation
         """
@@ -220,7 +238,7 @@ class SkillCommandResolver:
 
     def list_commands(self) -> list[str]:
         """列出所有可用命令.
-        
+
         Returns:
             命令名称列表
         """
@@ -238,11 +256,12 @@ class SkillCommandResolver:
 # Prompt Rewrite 调度器
 # ============================================================================
 
+
 class SkillPromptRewriter:
     """技能 Prompt 重写器.
-    
+
     将技能调用重写为强制性指令，确保 LLM 遵循技能。
-    
+
     Example:
         rewriter = SkillPromptRewriter()
         prompt = rewriter.rewrite(invocation)
@@ -251,14 +270,14 @@ class SkillPromptRewriter:
 
     def rewrite(self, invocation: SkillInvocation) -> str:
         """重写技能调用为 prompt.
-        
+
         生成强制性指令，要求 LLM:
         1. 读取 SKILL.md
         2. 严格遵循指令
-        
+
         Args:
             invocation: 技能调用信息
-        
+
         Returns:
             重写后的 prompt
         """
@@ -272,20 +291,22 @@ class SkillPromptRewriter:
         ]
 
         if invocation.args:
-            parts.extend([
-                "",
-                "User input:",
-                invocation.args,
-            ])
+            parts.extend(
+                [
+                    "",
+                    "User input:",
+                    invocation.args,
+                ]
+            )
 
         return "\n".join(parts)
 
     def rewrite_simple(self, invocation: SkillInvocation) -> str:
         """简单重写 (用于已经注入了 Skills Section 的场景).
-        
+
         Args:
             invocation: 技能调用信息
-        
+
         Returns:
             重写后的 prompt
         """
@@ -294,11 +315,13 @@ class SkillPromptRewriter:
         ]
 
         if invocation.args:
-            parts.extend([
-                "",
-                "User input:",
-                invocation.args,
-            ])
+            parts.extend(
+                [
+                    "",
+                    "User input:",
+                    invocation.args,
+                ]
+            )
 
         return "\n".join(parts)
 
@@ -307,16 +330,17 @@ class SkillPromptRewriter:
 # 从 SkillManifest 构建 SkillCommandSpec
 # ============================================================================
 
+
 def build_skill_command_specs(
     manifests: list[SkillManifest],
     reserved_names: set[str] | None = None,
 ) -> list[SkillCommandSpec]:
     """从技能清单构建命令规格列表.
-    
+
     Args:
         manifests: 技能清单列表
         reserved_names: 保留的命令名称
-    
+
     Returns:
         SkillCommandSpec 列表
     """
@@ -343,27 +367,29 @@ def build_skill_command_specs(
         dispatch_tool = None
         # TODO: 从 manifest.metadata 解析 command-dispatch 和 command-tool
 
-        specs.append(SkillCommandSpec(
-            name=unique_name,
-            skill_name=manifest.skill_id,
-            description=description,
-            dispatch_kind=dispatch_kind,
-            dispatch_tool=dispatch_tool,
-        ))
+        specs.append(
+            SkillCommandSpec(
+                name=unique_name,
+                skill_name=manifest.skill_id,
+                description=description,
+                dispatch_kind=dispatch_kind,
+                dispatch_tool=dispatch_tool,
+            )
+        )
 
     return specs
 
 
 def _sanitize_command_name(raw: str) -> str:
     """清理命令名称.
-    
+
     - 转小写
     - 非字母数字字符替换为下划线
     - 最大 32 字符
-    
+
     Args:
         raw: 原始名称
-    
+
     Returns:
         清理后的名称
     """
@@ -376,13 +402,13 @@ def _sanitize_command_name(raw: str) -> str:
 
 def _resolve_unique_name(base: str, used: set[str]) -> str:
     """生成唯一的命令名称.
-    
+
     如果 base 已被使用，添加数字后缀。
-    
+
     Args:
         base: 基础名称
         used: 已使用的名称集合
-    
+
     Returns:
         唯一名称
     """

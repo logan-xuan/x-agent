@@ -9,8 +9,8 @@
 所有适配器遵循统一的 Envelope 协议，通过 ChannelRegistry 注册。
 """
 
-from .dingtalk import DingtalkChannelAdapter
 from ..feishu import FeishuChannelAdapter
+from .dingtalk import DingtalkChannelAdapter
 
 __all__ = [
     "DingtalkChannelAdapter",

@@ -23,27 +23,27 @@ if TYPE_CHECKING:
 class PlanStatus(Enum):
     """计划状态."""
 
-    PENDING = "pending"        # 待执行
+    PENDING = "pending"  # 待执行
     IN_PROGRESS = "in_progress"  # 执行中
-    COMPLETED = "completed"    # 已完成
-    FAILED = "failed"          # 失败
-    CANCELLED = "cancelled"    # 已取消
+    COMPLETED = "completed"  # 已完成
+    FAILED = "failed"  # 失败
+    CANCELLED = "cancelled"  # 已取消
 
 
 class StepStatus(Enum):
     """步骤状态."""
 
-    PENDING = "pending"        # 待执行
-    RUNNING = "running"        # 执行中
-    COMPLETED = "completed"    # 已完成
-    FAILED = "failed"          # 失败
-    SKIPPED = "skipped"        # 跳过
+    PENDING = "pending"  # 待执行
+    RUNNING = "running"  # 执行中
+    COMPLETED = "completed"  # 已完成
+    FAILED = "failed"  # 失败
+    SKIPPED = "skipped"  # 跳过
 
 
 @dataclass
 class PlanStep:
     """计划步骤.
-    
+
     Attributes:
         step_id: 步骤唯一标识
         description: 步骤描述
@@ -66,7 +66,7 @@ class PlanStep:
 @dataclass
 class Plan:
     """执行计划.
-    
+
     Attributes:
         plan_id: 计划唯一标识
         goal: 目标描述
@@ -97,10 +97,10 @@ class Plan:
 
 class PlanPort(Protocol):
     """计划管理接口.
-    
+
     agent_core 通过此接口进行任务规划和管理。
     实现者需要提供计划生成、更新、查询等能力。
-    
+
     Example:
         class SimplePlanner:
             async def generate_plan(self, goal, context):
@@ -119,14 +119,14 @@ class PlanPort(Protocol):
         context: AgentContext,
     ) -> Plan:
         """生成执行计划.
-        
+
         Args:
             goal: 用户目标描述
             context: Agent 上下文，包含工具列表等信息
-        
+
         Returns:
             Plan: 生成的执行计划
-        
+
         Raises:
             Exception: 生成失败时抛出异常
         """
@@ -141,14 +141,14 @@ class PlanPort(Protocol):
         error: str | None = None,
     ) -> bool:
         """更新步骤状态.
-        
+
         Args:
             plan_id: 计划ID
             step_id: 步骤ID
             status: 新状态
             result: 执行结果（可选）
             error: 错误信息（可选）
-        
+
         Returns:
             bool: 是否更新成功
         """
@@ -156,10 +156,10 @@ class PlanPort(Protocol):
 
     async def get_plan(self, plan_id: str) -> Plan | None:
         """获取计划详情.
-        
+
         Args:
             plan_id: 计划ID
-        
+
         Returns:
             Plan | None: 计划详情，不存在返回 None
         """
@@ -171,11 +171,11 @@ class PlanPort(Protocol):
         context: AgentContext,
     ) -> tuple[bool, str]:
         """判断是否需要重新规划.
-        
+
         Args:
             plan: 当前计划
             context: 当前上下文
-        
+
         Returns:
             tuple[bool, str]: (是否需要重规划, 原因说明)
         """
@@ -188,12 +188,12 @@ class PlanPort(Protocol):
         context: AgentContext,
     ) -> Plan:
         """重新规划.
-        
+
         Args:
             plan: 原计划
             reason: 重规划原因
             context: 当前上下文
-        
+
         Returns:
             Plan: 新计划
         """

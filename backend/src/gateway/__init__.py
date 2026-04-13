@@ -10,19 +10,19 @@
 - GatewayEvent: 统一响应事件
 """
 
-from .envelope import Envelope, EnvelopeIntent
-from .response import GatewayEvent, GatewayEventType
-from .agent_info import AgentInfo
 from .agent_bridge import AgentBridge
+from .agent_info import AgentInfo
 from .dispatcher import GatewayDispatcher
+from .envelope import Envelope, EnvelopeIntent
 from .errors import (
-    GatewayError,
-    AgentNotFoundError,
-    SessionNotFoundError,
-    EnvelopeValidationError,
-    DispatchError,
     AbortError,
+    AgentNotFoundError,
+    DispatchError,
+    EnvelopeValidationError,
+    GatewayError,
+    SessionNotFoundError,
 )
+from .response import GatewayEvent, GatewayEventType
 
 __all__ = [
     "Envelope",

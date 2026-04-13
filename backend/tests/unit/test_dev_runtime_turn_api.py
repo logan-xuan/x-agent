@@ -1,6 +1,8 @@
 """Unit tests for the runtime turn developer API endpoint."""
 
 import asyncio
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -135,6 +137,38 @@ def test_dev_runtime_turn_endpoint_accepts_runtime_temperature():
     assert response.status_code == 200
     metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
     assert metadata["runtime_temperature"] == 0.2
+
+
+def test_dev_runtime_turn_endpoint_accepts_compression_overrides():
+    client = TestClient(app)
+
+    with patch("src.api.v1.dev.GatewayDispatcher") as mock_dispatcher_cls:
+        dispatcher = mock_dispatcher_cls.return_value
+        dispatcher.execute_runtime_turn = AsyncMock(
+            return_value=TurnResult(
+                kind="final",
+                finish_reason="done_definition_satisfied",
+                output_text="runtime-ok",
+                metadata={},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/dev/runtime-turn",
+            json={
+                "content": "hello runtime",
+                "session_id": "dev-session",
+                "channel_type": "web_chat",
+                "channel_protocol": "rest_api",
+                "runtime_compression_profile_name": "aggressive",
+                "runtime_compression_context_window": 4000,
+            },
+        )
+
+    assert response.status_code == 200
+    metadata = dispatcher.execute_runtime_turn.await_args.kwargs["metadata"]
+    assert metadata["_runtime_compression_profile_name"] == "aggressive"
+    assert metadata["runtime_compression_context_window"] == 4000
 
 
 def test_dev_runtime_turn_endpoint_accepts_force_non_streaming():
@@ -348,6 +382,133 @@ def test_dev_runtime_turn_endpoint_rejects_invalid_channel_type():
 
     assert response.status_code == 400
     assert "Unsupported channel_type" in response.json()["detail"]
+
+
+def test_dev_prompt_logs_prefers_runtime_prepared_request_for_same_call_id(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "prompt-llm.log"
+    entries = [
+        {
+            "timestamp": "2026-04-09T20:00:00",
+            "session_id": "sess-1",
+            "trace_id": "trace-1",
+            "provider": "primary",
+            "model": "glm-5",
+            "latency_ms": 0,
+            "success": True,
+            "source": "runtime_prepared",
+            "call_id": "runtime-call-1",
+            "request": {
+                "message_count": 2,
+                "messages": [
+                    {"role": "system", "content": "runtime system"},
+                    {
+                        "role": "tool",
+                        "content": "[Memory-flushed tool result]\nTool: web_search\nArtifact: artifact:1",
+                    },
+                ],
+                "compression_operations": ["memory_flush"],
+            },
+            "response": "",
+        },
+        {
+            "timestamp": "2026-04-09T20:00:01",
+            "session_id": "sess-1",
+            "trace_id": "trace-1",
+            "provider": "primary",
+            "model": "glm-5",
+            "latency_ms": 1234,
+            "success": True,
+            "source": "router",
+            "call_id": "runtime-call-1",
+            "request": {
+                "message_count": 2,
+                "messages": [
+                    {"role": "system", "content": "router system"},
+                    {"role": "tool", "content": "ORIGINAL TOOL PAYLOAD"},
+                ],
+            },
+            "response": "ok",
+            "token_usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        },
+    ]
+    with log_path.open("w", encoding="utf-8") as handle:
+        for entry in entries:
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": entry["timestamp"],
+                        "module": "llm_prompt",
+                        "message": json.dumps(entry, ensure_ascii=False),
+                        "trace_id": entry["trace_id"],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+    client = TestClient(app)
+    with patch("src.api.v1.dev.PROMPT_LOG_PATH", log_path):
+        response = client.get("/api/v1/dev/prompt-logs?limit=20")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    log = data["logs"][0]
+    assert log["trace_id"] == "trace-1"
+    assert log["call_id"] == "runtime-call-1"
+    assert log["source"] == "runtime_prepared"
+    assert log["request"]["messages"][1]["content"].startswith("[Memory-flushed tool result]")
+    assert log["response"] == "ok"
+    assert log["latency_ms"] == 1234
+    assert log["token_usage"]["total_tokens"] == 30
+
+
+def test_dev_prompt_logs_falls_back_to_router_entries_without_runtime_snapshot(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "prompt-llm.log"
+    entry = {
+        "timestamp": "2026-04-09T20:00:01",
+        "session_id": "sess-1",
+        "trace_id": "trace-1",
+        "provider": "primary",
+        "model": "glm-5",
+        "latency_ms": 1234,
+        "success": True,
+        "source": "router",
+        "call_id": "runtime-call-1",
+        "request": {
+            "message_count": 1,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        "response": "ok",
+    }
+    log_path.write_text(
+        json.dumps(
+            {
+                "timestamp": entry["timestamp"],
+                "module": "llm_prompt",
+                "message": json.dumps(entry, ensure_ascii=False),
+                "trace_id": entry["trace_id"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    client = TestClient(app)
+    with patch("src.api.v1.dev.PROMPT_LOG_PATH", log_path):
+        response = client.get("/api/v1/dev/prompt-logs?limit=20")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    log = data["logs"][0]
+    assert log["source"] == "router"
+    assert log["request"]["messages"][0]["content"] == "hello"
 
 
 def test_dev_llm_stream_probe_endpoint_reports_timings():

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from .turn.finish_reason import FinishReason
 
+if TYPE_CHECKING:
+    from .turn.state import TurnState
 
 LaneName = Literal["main", "followup", "subagent", "cron", "background_tool"]
 SessionStatus = Literal["active", "idle", "compacted", "archived"]
@@ -127,7 +129,7 @@ class BudgetSnapshot:
         profile: TurnBudgetProfile | None = None,
         *,
         profile_name: str = "default",
-    ) -> "BudgetSnapshot":
+    ) -> BudgetSnapshot:
         """Create a mutable budget snapshot from a static budget profile."""
         return cls(profile=profile or TurnBudgetProfile(), profile_name=profile_name)
 
@@ -166,15 +168,15 @@ class BudgetDecision:
     details: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def ok(cls) -> "BudgetDecision":
+    def ok(cls) -> BudgetDecision:
         return cls(action="ok")
 
     @classmethod
-    def warn(cls, reason: str, **details: Any) -> "BudgetDecision":
+    def warn(cls, reason: str, **details: Any) -> BudgetDecision:
         return cls(action="warn", reason=reason, details=details)
 
     @classmethod
-    def compact(cls, reason: str, **details: Any) -> "BudgetDecision":
+    def compact(cls, reason: str, **details: Any) -> BudgetDecision:
         return cls(action="compact", reason=reason, details=details)
 
     @classmethod
@@ -183,7 +185,7 @@ class BudgetDecision:
         reason: str,
         finish_reason: FinishReason,
         **details: Any,
-    ) -> "BudgetDecision":
+    ) -> BudgetDecision:
         return cls(
             action="stop",
             reason=reason,
@@ -203,11 +205,9 @@ class LoopAssessment:
     risk_level: RiskLevel = "low"
     budget_remaining: BudgetSnapshot | None = None
     suggested_next_action: str = ""
-    controller_decision: Literal["continue", "finish", "compact", "abort", "spawn"] = (
-        "continue"
-    )
+    controller_decision: Literal["continue", "finish", "compact", "abort", "spawn"] = "continue"
     finish_reason: FinishReason | None = None
-    spawn_packet: "SpawnPacket | None" = None
+    spawn_packet: SpawnPacket | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -335,7 +335,7 @@ class TurnController(Protocol):
 class BudgetManager(Protocol):
     """Protocol implemented by budget evaluators."""
 
-    def evaluate(self, state: "TurnState") -> BudgetDecision:
+    def evaluate(self, state: TurnState) -> BudgetDecision:
         """Evaluate whether the current state can continue."""
 
 
@@ -343,7 +343,7 @@ class BudgetManager(Protocol):
 class AssessmentEngine(Protocol):
     """Protocol implemented by loop assessment engines."""
 
-    def assess(self, state: "TurnState") -> LoopAssessment:
+    def assess(self, state: TurnState) -> LoopAssessment:
         """Assess whether the loop is still making progress."""
 
 
@@ -351,10 +351,10 @@ class AssessmentEngine(Protocol):
 class ToolGovernor(Protocol):
     """Protocol implemented by tool policy guards."""
 
-    def validate_plan(self, plan: ToolExecutionPlan, state: "TurnState") -> GovernedToolPlan:
+    def validate_plan(self, plan: ToolExecutionPlan, state: TurnState) -> GovernedToolPlan:
         """Validate a planned tool execution batch."""
 
-    def register_result(self, state: "TurnState", result: ToolExecutionResult) -> None:
+    def register_result(self, state: TurnState, result: ToolExecutionResult) -> None:
         """Record tool execution feedback for repeated-pattern detection."""
 
 

@@ -38,10 +38,10 @@ from ..types import (
 
 def convert_event_to_websocket(event: AgentEvent) -> dict[str, Any] | None:
     """将 AgentEvent 转换为 WebSocket JSON 消息.
-    
+
     Args:
         event: AgentEvent 实例
-        
+
     Returns:
         WebSocket JSON 消息字典，如果是内部事件则返回 None
     """
@@ -61,13 +61,16 @@ def convert_event_to_websocket(event: AgentEvent) -> dict[str, Any] | None:
         return _convert_tool_update(event)
 
     # 内部事件不发送
-    if isinstance(event, (
-        AgentStartEvent,
-        AgentEndEvent,
-        TurnStartEvent,
-        TurnEndEvent,
-        MessageStartEvent,
-    )):
+    if isinstance(
+        event,
+        (
+            AgentStartEvent,
+            AgentEndEvent,
+            TurnStartEvent,
+            TurnEndEvent,
+            MessageStartEvent,
+        ),
+    ):
         return None
 
     return None

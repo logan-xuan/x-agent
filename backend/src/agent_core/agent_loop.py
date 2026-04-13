@@ -61,6 +61,7 @@ if TYPE_CHECKING:
 # 公共 API（签名不变）
 # ============================================================
 
+
 async def agent_loop(
     prompts: list[AgentMessage],
     context: AgentContext,
@@ -99,6 +100,7 @@ async def agent_loop(
 # 内部执行器
 # ============================================================
 
+
 class _AgentLoopRunner:
     """Agent Loop 内部执行器.
 
@@ -132,13 +134,15 @@ class _AgentLoopRunner:
         else:
             self.trace_id = str(uuid.uuid4())[:12]
         # session_id 从 Identity 获取，确保与全局一致
-        self.session_id: str = (req_ctx.session_id if req_ctx and req_ctx.session_id else self.trace_id)
+        self.session_id: str = (
+            req_ctx.session_id if req_ctx and req_ctx.session_id else self.trace_id
+        )
         # agent_id 从 Identity 获取
         self.agent_id: str = req_ctx.agent_id if req_ctx else self.trace_id
         self.start_time = time.time()
 
         # 日志器（可选）
-        self.logger: AgentLogger | None = getattr(config, 'logger', None)
+        self.logger: AgentLogger | None = getattr(config, "logger", None)
 
         # 上下文和消息
         self.new_messages: list[AgentMessage] = list(prompts)
@@ -324,17 +328,15 @@ class _AgentLoopRunner:
             active_tools = []
         elif self._disabled_tool_names:
             active_tools = [
-                tool for tool in self.current_context.tools
+                tool
+                for tool in self.current_context.tools
                 if tool.name not in self._disabled_tool_names
             ]
         else:
             active_tools = self.current_context.tools
 
         # 上下文压缩 (通过 ContextPort，如果已配置)
-        if (
-            self.config.context is not None
-            and self.config.enable_context_compression
-        ):
+        if self.config.context is not None and self.config.enable_context_compression:
             prepared = await self.config.context.prepare_context(
                 session_id=self.session_id,
                 messages=llm_messages,
@@ -357,9 +359,9 @@ class _AgentLoopRunner:
                     category=LogCategory.AGENT_LOOP,
                     data={
                         "context_mode": context_mode,
-                    "message_count": len(llm_messages),
-                },
-            )
+                        "message_count": len(llm_messages),
+                    },
+                )
 
         # 经验检索: LLM 调用前检索相关历史经验，注入 system prompt
         if self._experience_learner is not None:
@@ -370,20 +372,22 @@ class _AgentLoopRunner:
 
         # 日志: LLM 调用开始
         if self.logger:
-            self.logger.log_llm_call_start(LLMCallLog(
-                call_id=llm_call_id,
-                trace_id=self.trace_id,
-                model=self.config.model,
-                provider=self.config.provider,
-                system_prompt=llm_system_prompt,
-                messages=llm_messages,
-                message_count=len(llm_messages),
-                estimated_tokens=estimate_tokens(self.current_context.messages),
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                thinking_level=self.config.thinking_level,
-                tools=[t.to_llm_tool() for t in active_tools] if active_tools else None,
-            ))
+            self.logger.log_llm_call_start(
+                LLMCallLog(
+                    call_id=llm_call_id,
+                    trace_id=self.trace_id,
+                    model=self.config.model,
+                    provider=self.config.provider,
+                    system_prompt=llm_system_prompt,
+                    messages=llm_messages,
+                    message_count=len(llm_messages),
+                    estimated_tokens=estimate_tokens(self.current_context.messages),
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                    thinking_level=self.config.thinking_level,
+                    tools=[t.to_llm_tool() for t in active_tools] if active_tools else None,
+                )
+            )
 
         llm_call_start_time = time.time()
 
@@ -400,9 +404,12 @@ class _AgentLoopRunner:
         ):
             yield event
 
-            if isinstance(event, MessageEndEvent) and event.message:
-                if isinstance(event.message, AssistantMessage):
-                    self._last_assistant_msg = event.message
+            if (
+                isinstance(event, MessageEndEvent)
+                and event.message
+                and isinstance(event.message, AssistantMessage)
+            ):
+                self._last_assistant_msg = event.message
 
         if self._last_assistant_msg is None:
             return
@@ -438,13 +445,15 @@ class _AgentLoopRunner:
         # 日志: 工具调用开始
         if self.logger:
             for tc in tool_calls:
-                self.logger.log_tool_call_start(ToolCallLog(
-                    call_id=tc.id,
-                    trace_id=self.trace_id,
-                    llm_call_id=llm_call_id,
-                    tool_name=tc.name,
-                    arguments=tc.arguments,
-                ))
+                self.logger.log_tool_call_start(
+                    ToolCallLog(
+                        call_id=tc.id,
+                        trace_id=self.trace_id,
+                        llm_call_id=llm_call_id,
+                        tool_name=tc.name,
+                        arguments=tc.arguments,
+                    )
+                )
 
         # 执行工具调用
         async for event in execute_tool_calls(
@@ -467,7 +476,9 @@ class _AgentLoopRunner:
                         result=event.result,
                         duration_ms=event.duration_ms,
                         is_error=event.is_error,
-                        error=str(event.result.details.get("error", "")) if event.is_error and event.result else None,
+                        error=str(event.result.details.get("error", ""))
+                        if event.is_error and event.result
+                        else None,
                     )
 
                 # 收集工具调用日志用于经验提取
@@ -480,13 +491,15 @@ class _AgentLoopRunner:
                                 text_parts.append(content_item.text)
                         result_text = " ".join(text_parts)[:200]
 
-                    self._tool_call_logs.append({
-                        "tool_name": event.tool_name,
-                        "arguments": {},
-                        "is_error": event.is_error,
-                        "duration_ms": event.duration_ms,
-                        "result_summary": result_text,
-                    })
+                    self._tool_call_logs.append(
+                        {
+                            "tool_name": event.tool_name,
+                            "arguments": {},
+                            "is_error": event.is_error,
+                            "duration_ms": event.duration_ms,
+                            "result_summary": result_text,
+                        }
+                    )
 
                 result_msg = ToolResultMessage(
                     tool_call_id=event.tool_call_id,
@@ -510,16 +523,24 @@ class _AgentLoopRunner:
                 self.new_messages.append(result_msg)
 
                 try:
-                    from src.services.context import get_session_state_updater, get_tool_result_archiver
+                    from src.services.context import (
+                        get_session_state_updater,
+                        get_tool_result_archiver,
+                    )
                 except ImportError:
-                    from backend.src.services.context import get_session_state_updater, get_tool_result_archiver  # type: ignore
+                    from backend.src.services.context import (  # type: ignore
+                        get_session_state_updater,
+                        get_tool_result_archiver,
+                    )
 
                 archiver = get_tool_result_archiver()
                 updater = get_session_state_updater()
                 archived = {}
                 if archiver is not None and event.result is not None:
                     text_parts = [
-                        content.text for content in event.result.content if isinstance(content, TextContent)
+                        content.text
+                        for content in event.result.content
+                        if isinstance(content, TextContent)
                     ]
                     archived = await archiver.archive(
                         session_id=self.session_id,
@@ -542,7 +563,9 @@ class _AgentLoopRunner:
                         session_id=self.session_id,
                         agent_id=self.agent_id,
                         mode="research",
-                        new_messages=[{"role": "user", "content": latest_user}] if latest_user else [],
+                        new_messages=[{"role": "user", "content": latest_user}]
+                        if latest_user
+                        else [],
                         tool_results=[{"tool_name": event.tool_name, **archived}],
                         delegate_results=[],
                     )
@@ -612,10 +635,7 @@ class _AgentLoopRunner:
         total_duration = (time.time() - self.start_time) * 1000
 
         # 经验提取: 对话结束后异步分析工具调用序列，提取经验模式
-        if (
-            self._experience_learner is not None
-            and self._tool_call_logs
-        ):
+        if self._experience_learner is not None and self._tool_call_logs:
             asyncio.create_task(
                 self._experience_learner.extract_experience(
                     trace_id=self.trace_id,
@@ -678,13 +698,7 @@ class _AgentLoopRunner:
                 "请基于当前已获取的信息、已完成的搜索结果和失败信息，"
                 "直接给出最佳努力的最终答案，并明确说明任何剩余不确定性。"
             )
-        self.pending_messages.append(
-            UserMessage.from_text(
-                "系统提示："
-                f"{reason}。"
-                f"{instruction}"
-            )
-        )
+        self.pending_messages.append(UserMessage.from_text(f"系统提示：{reason}。{instruction}"))
         if self.logger:
             self.logger.create_log_entry(
                 trace_id=self.trace_id,
@@ -698,6 +712,7 @@ class _AgentLoopRunner:
 # ============================================================
 # 模块级辅助函数（不依赖 runner 状态）
 # ============================================================
+
 
 async def _stream_assistant_response(
     llm: LLMPort,
@@ -759,11 +774,13 @@ async def _stream_assistant_response(
                 )
 
             elif chunk.type == StreamChunkType.TOOL_CALL:
-                partial_message.content.append(ToolCallContent(
-                    id=chunk.tool_call_id,
-                    name=chunk.tool_name,
-                    arguments=chunk.arguments,
-                ))
+                partial_message.content.append(
+                    ToolCallContent(
+                        id=chunk.tool_call_id,
+                        name=chunk.tool_name,
+                        arguments=chunk.arguments,
+                    )
+                )
                 yield MessageUpdateEvent(
                     message=partial_message,
                     delta="",

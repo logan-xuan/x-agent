@@ -9,7 +9,7 @@
 
 Example:
     from agent_core.builtin_middlewares import TimingMiddleware, RetryMiddleware
-    
+
     pipeline = ToolMiddlewarePipeline()
     pipeline.use(TimingMiddleware()).use(RetryMiddleware(max_retries=3))
 """
@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 
 class TimingMiddleware(ToolMiddleware):
     """记录工具执行耗时.
-    
+
     在 before_execute 中记录开始时间，
     在 after_execute 中计算并记录耗时。
-    
+
     Example:
         pipeline.use(TimingMiddleware())
-        
+
         # 执行后，ctx.metadata 中将包含:
         # {
         #     "execution_time_ms": 123.45,
@@ -60,18 +60,18 @@ class TimingMiddleware(ToolMiddleware):
                     "tool_name": ctx.tool_name,
                     "tool_call_id": ctx.tool_call_id,
                     "execution_time_ms": ctx.metadata["execution_time_ms"],
-                }
+                },
             )
         return ctx
 
 
 class RetryMiddleware(ToolMiddleware):
     """工具执行失败时自动重试.
-    
+
     通过检查 ctx.error 来判断是否需要重试。
     注意：此中间件需要在实际执行工具前被调用，
     它会包装工具执行逻辑。
-    
+
     Example:
         pipeline.use(RetryMiddleware(max_retries=3, retry_delay=1.0))
     """
@@ -84,7 +84,7 @@ class RetryMiddleware(ToolMiddleware):
         retry_on_error_types: list[type] | None = None,
     ):
         """初始化重试中间件.
-        
+
         Args:
             max_retries: 最大重试次数
             retry_delay: 重试间隔（秒）
@@ -99,21 +99,14 @@ class RetryMiddleware(ToolMiddleware):
 
     def _should_retry(self, error: str | None) -> bool:
         """判断是否应该重试.
-        
+
         Args:
             error: 错误信息
-        
+
         Returns:
             bool: 是否应该重试
         """
-        if not error:
-            return False
-
-        # 如果指定了错误类型，检查是否匹配
-        # 注意：这里只能根据错误字符串简单判断
-        # 实际使用时可能需要更复杂的逻辑
-
-        return True
+        return error is not None
 
     async def before_execute(self, ctx: ToolCallContext) -> ToolCallContext:
         """初始化重试计数."""
@@ -123,13 +116,13 @@ class RetryMiddleware(ToolMiddleware):
 
     async def after_execute(self, ctx: ToolCallContext) -> ToolCallContext:
         """检查是否需要重试.
-        
+
         注意：此中间件只是记录重试信息，
         实际的重试逻辑需要在调用方实现。
-        
+
         Args:
             ctx: 工具调用上下文
-        
+
         Returns:
             ToolCallContext: 处理后的上下文
         """
@@ -139,7 +132,7 @@ class RetryMiddleware(ToolMiddleware):
             if retry_count < self.max_retries:
                 # 计算延迟时间
                 if self.exponential_backoff:
-                    delay = self.retry_delay * (2 ** retry_count)
+                    delay = self.retry_delay * (2**retry_count)
                 else:
                     delay = self.retry_delay
 
@@ -157,7 +150,7 @@ class RetryMiddleware(ToolMiddleware):
                         "max_retries": self.max_retries,
                         "retry_delay": delay,
                         "error": ctx.error,
-                    }
+                    },
                 )
             else:
                 ctx.metadata["_should_retry"] = False
@@ -168,7 +161,7 @@ class RetryMiddleware(ToolMiddleware):
                         "tool_call_id": ctx.tool_call_id,
                         "max_retries": self.max_retries,
                         "error": ctx.error,
-                    }
+                    },
                 )
         else:
             ctx.metadata["_should_retry"] = False
@@ -178,20 +171,20 @@ class RetryMiddleware(ToolMiddleware):
 
 class ApprovalMiddleware(ToolMiddleware):
     """高危工具审批中间件.
-    
+
     对指定的高危工具进行审批检查，可以阻断执行。
-    
+
     Example:
         # 使用默认审批函数
         pipeline.use(ApprovalMiddleware(
             high_risk_tools=["file_delete", "database_drop"]
         ))
-        
+
         # 使用自定义审批函数
         async def my_approval(ctx: ToolCallContext) -> bool:
             # 调用外部审批服务或显示 UI 确认对话框
             return await show_confirmation_dialog(ctx.tool_name, ctx.arguments)
-        
+
         pipeline.use(ApprovalMiddleware(
             high_risk_tools=["file_delete"],
             approval_fn=my_approval
@@ -205,7 +198,7 @@ class ApprovalMiddleware(ToolMiddleware):
         default_approved: bool = False,
     ):
         """初始化审批中间件.
-        
+
         Args:
             high_risk_tools: 高危工具名称列表
             approval_fn: 外部审批函数，接收上下文返回是否批准
@@ -217,10 +210,10 @@ class ApprovalMiddleware(ToolMiddleware):
 
     async def before_execute(self, ctx: ToolCallContext) -> ToolCallContext:
         """检查是否需要审批.
-        
+
         Args:
             ctx: 工具调用上下文
-        
+
         Returns:
             ToolCallContext: 处理后的上下文，可能被标记为 ABORT
         """
@@ -247,7 +240,7 @@ class ApprovalMiddleware(ToolMiddleware):
                             "tool_name": ctx.tool_name,
                             "tool_call_id": ctx.tool_call_id,
                             "arguments": ctx.arguments,
-                        }
+                        },
                     )
                 else:
                     logger.info(
@@ -255,7 +248,7 @@ class ApprovalMiddleware(ToolMiddleware):
                         extra={
                             "tool_name": ctx.tool_name,
                             "tool_call_id": ctx.tool_call_id,
-                        }
+                        },
                     )
             except Exception as e:
                 # 审批函数异常，根据 default_approved 决定
@@ -269,7 +262,7 @@ class ApprovalMiddleware(ToolMiddleware):
                         "tool_name": ctx.tool_name,
                         "tool_call_id": ctx.tool_call_id,
                         "error": str(e),
-                    }
+                    },
                 )
         else:
             # 没有审批函数，使用默认行为
@@ -277,13 +270,15 @@ class ApprovalMiddleware(ToolMiddleware):
 
             if not self.default_approved:
                 ctx.action = MiddlewareAction.ABORT
-                ctx.abort_reason = f"Tool '{ctx.tool_name}' requires approval but no approval function configured"
+                ctx.abort_reason = (
+                    f"Tool '{ctx.tool_name}' requires approval but no approval function configured"
+                )
                 logger.warning(
                     f"Tool '{ctx.tool_name}' blocked: no approval function configured",
                     extra={
                         "tool_name": ctx.tool_name,
                         "tool_call_id": ctx.tool_call_id,
-                    }
+                    },
                 )
 
         return ctx
@@ -298,16 +293,16 @@ class ApprovalMiddleware(ToolMiddleware):
 
 class LoggingMiddleware(ToolMiddleware):
     """工具执行日志记录中间件.
-    
+
     记录工具调用的开始、参数、结果和错误。
-    
+
     Example:
         pipeline.use(LoggingMiddleware(log_level=logging.INFO))
     """
 
     def __init__(self, log_level: int = logging.INFO, log_arguments: bool = True):
         """初始化日志中间件.
-        
+
         Args:
             log_level: 日志级别
             log_arguments: 是否记录参数
@@ -340,7 +335,7 @@ class LoggingMiddleware(ToolMiddleware):
                     "tool_name": ctx.tool_name,
                     "tool_call_id": ctx.tool_call_id,
                     "error": ctx.error,
-                }
+                },
             )
         else:
             logger.log(
@@ -350,20 +345,20 @@ class LoggingMiddleware(ToolMiddleware):
                     "tool_name": ctx.tool_name,
                     "tool_call_id": ctx.tool_call_id,
                     "has_result": ctx.result is not None,
-                }
+                },
             )
         return ctx
 
 
 class ValidationMiddleware(ToolMiddleware):
     """工具参数验证中间件.
-    
+
     验证工具调用的参数是否符合要求。
-    
+
     Example:
         # 验证所有工具
         pipeline.use(ValidationMiddleware())
-        
+
         # 只验证特定工具
         pipeline.use(ValidationMiddleware(
             tool_validators={
@@ -378,7 +373,7 @@ class ValidationMiddleware(ToolMiddleware):
         require_all_params: bool = False,
     ):
         """初始化验证中间件.
-        
+
         Args:
             tool_validators: 工具特定的验证函数字典
             require_all_params: 是否要求所有必需参数都存在
@@ -388,10 +383,10 @@ class ValidationMiddleware(ToolMiddleware):
 
     def _validate(self, ctx: ToolCallContext) -> tuple[bool, str | None]:
         """验证参数.
-        
+
         Args:
             ctx: 工具调用上下文
-        
+
         Returns:
             tuple[bool, str | None]: (是否通过, 错误信息)
         """
@@ -426,7 +421,7 @@ class ValidationMiddleware(ToolMiddleware):
                     "tool_call_id": ctx.tool_call_id,
                     "arguments": ctx.arguments,
                     "error": error_msg,
-                }
+                },
             )
         else:
             logger.debug(
@@ -434,7 +429,7 @@ class ValidationMiddleware(ToolMiddleware):
                 extra={
                     "tool_name": ctx.tool_name,
                     "tool_call_id": ctx.tool_call_id,
-                }
+                },
             )
 
         return ctx

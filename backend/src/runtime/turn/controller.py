@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -155,7 +156,6 @@ class DefaultTurnController:
                 metadata=self._metadata(state, assessment_notes=assessment.notes),
             )
 
-
     def _apply_compact_result(
         self,
         state: TurnState,
@@ -194,11 +194,41 @@ class DefaultTurnController:
     def _resolve_output_text(self, state: TurnState) -> str | None:
         final_output = state.metadata.get("final_output_text")
         if isinstance(final_output, str) and final_output:
-            return final_output
+            return self._inject_generate_image_markdown(state, final_output)
 
         for result in reversed(state.tool_results):
             if result.success and result.output:
-                return result.output
+                return self._inject_generate_image_markdown(state, result.output)
+        return None
+
+    def _inject_generate_image_markdown(self, state: TurnState, text: str) -> str:
+        """Inject first generated image markdown into final output when missing."""
+
+        if not text.strip():
+            return text
+        if re.search(r"!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)", text):
+            return text
+
+        image_url = self._latest_generate_image_url(state)
+        if not image_url:
+            return text
+        return f"![生成图片]({image_url})\n\n{text}"
+
+    def _latest_generate_image_url(self, state: TurnState) -> str | None:
+        """Return the latest successful generate_image public URL."""
+
+        for result in reversed(state.tool_results):
+            if result.tool_name != "generate_image" or not result.success:
+                continue
+            assets = result.metadata.get("assets")
+            if not isinstance(assets, list) or not assets:
+                continue
+            first_asset = assets[0]
+            if not isinstance(first_asset, dict):
+                continue
+            public_url = first_asset.get("public_url")
+            if isinstance(public_url, str) and public_url.strip():
+                return public_url
         return None
 
     def _summarize_tool_results(self, state: TurnState) -> str | None:
@@ -287,8 +317,32 @@ class DefaultTurnController:
             metadata["provider"] = state.metadata["provider"]
         if "runtime_event_timeline" in state.metadata:
             metadata["runtime_event_timeline"] = list(state.metadata["runtime_event_timeline"])
-        if "compaction_source" in state.metadata:
-            metadata["compaction_source"] = state.metadata["compaction_source"]
+        runtime_model_budget = state.metadata.get("runtime_model_budget")
+        if not isinstance(runtime_model_budget, dict):
+            request_budget_hints = state.request.metadata.get("_runtime_model_budget_hints")
+            if isinstance(request_budget_hints, dict):
+                runtime_model_budget = request_budget_hints
+        if isinstance(runtime_model_budget, dict):
+            metadata["runtime_model_budget"] = dict(runtime_model_budget)
+        for key in (
+            "compaction_source",
+            "compression_operations",
+            "budget_state",
+            "verifier_result",
+            "rollback",
+            "rollback_applied",
+            "rollback_reason",
+            "runtime_context_summary",
+        ):
+            if key not in state.metadata:
+                continue
+            value = state.metadata[key]
+            if isinstance(value, dict):
+                metadata[key] = dict(value)
+            elif isinstance(value, list):
+                metadata[key] = list(value)
+            else:
+                metadata[key] = value
         metadata.update(extra)
         return metadata
 

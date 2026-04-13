@@ -49,13 +49,17 @@ class GatewayAdapter:
         request = self.conversation_adapter.build_turn_request(
             session=session,
             route=route,
-            user_input=user_input if user_input is not None else self._content_text(payload.get("content")),
+            user_input=user_input
+            if user_input is not None
+            else self._content_text(payload.get("content")),
             task_frame=task_frame,
             artifact_ids=artifact_ids,
             metadata={
                 **dict(payload.get("metadata", {})),
                 **dict(metadata or {}),
-                "_runtime_budget_profile": runtime_services.turn_profiles.get(session.budget_profile),
+                "_runtime_budget_profile": runtime_services.turn_profiles.get(
+                    session.budget_profile
+                ),
                 "_runtime_compression_profile_name": runtime_services.default_compression_profile,
                 "runtime_announcements": announcements,
                 "runtime_timeout_ms": (
@@ -89,8 +93,13 @@ class GatewayAdapter:
         resumed.session.route = route
         await self.orchestrator.session_store.put(resumed.session)
         announcements = await self.orchestrator.consume_announcements(resumed.session.session_key)
-        task_frame = resumed.latest_snapshot.task_frame if resumed.latest_snapshot is not None else TaskFrame(
-            objective=user_input or (resumed.latest_summary.objective if resumed.latest_summary else ""),
+        task_frame = (
+            resumed.latest_snapshot.task_frame
+            if resumed.latest_snapshot is not None
+            else TaskFrame(
+                objective=user_input
+                or (resumed.latest_summary.objective if resumed.latest_summary else ""),
+            )
         )
         artifact_ids = (
             list(resumed.latest_snapshot.active_artifact_refs)
@@ -106,13 +115,17 @@ class GatewayAdapter:
             metadata={
                 **dict(payload.get("metadata", {})),
                 **dict(metadata or {}),
-                "_runtime_budget_profile": runtime_services.turn_profiles.get(resumed.session.budget_profile),
+                "_runtime_budget_profile": runtime_services.turn_profiles.get(
+                    resumed.session.budget_profile
+                ),
                 "_runtime_compression_profile_name": runtime_services.default_compression_profile,
                 "runtime_announcements": announcements,
                 "runtime_timeout_ms": (
                     dict(metadata or {}).get("runtime_timeout_ms")
                     or dict(payload.get("metadata", {})).get("runtime_timeout_ms")
-                    or runtime_services.turn_profiles.get(resumed.session.budget_profile).max_wall_time_ms
+                    or runtime_services.turn_profiles.get(
+                        resumed.session.budget_profile
+                    ).max_wall_time_ms
                 ),
                 "resume": True,
                 "summary_chain_count": len(resumed.summary_chain),

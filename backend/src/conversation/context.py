@@ -7,11 +7,11 @@
 委托给 :class:`Identity` 值对象，同时保持与现有调用方的完全向后兼容。
 """
 
+import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
-import uuid
-from contextvars import ContextVar
 
 from .identity import (
     AgentType,
@@ -29,12 +29,14 @@ ContextSource = ChannelProtocol
 # 请求级上下文变量
 _current_context: ContextVar["AgentContext"] = ContextVar("agent_context")
 
+
 def get_current_context() -> Optional["AgentContext"]:
     """获取当前请求上下文，如果未设置则返回 None。"""
     try:
         return _current_context.get()
     except LookupError:
         return None
+
 
 def set_current_context(ctx: "AgentContext") -> None:
     """设置当前请求上下文。
@@ -47,6 +49,7 @@ def set_current_context(ctx: "AgentContext") -> None:
         identity_mgr = get_identity_manager()
         identity_mgr.activate(ctx.identity)
 
+
 def clear_current_context() -> None:
     """清除当前请求上下文。"""
     try:
@@ -54,6 +57,7 @@ def clear_current_context() -> None:
         set_current_identity(None)
     except LookupError:
         pass
+
 
 @dataclass
 class AgentContext:
@@ -86,8 +90,8 @@ class AgentContext:
     created_at: datetime = field(default_factory=datetime.utcnow)
 
     # 计时追踪
-    _start_time: Optional[float] = field(default=None, repr=False)
-    _end_time: Optional[float] = field(default=None, repr=False)
+    _start_time: float | None = field(default=None, repr=False)
+    _end_time: float | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self._start_time = datetime.utcnow().timestamp()
@@ -115,11 +119,11 @@ class AgentContext:
         )
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         return self.identity.session_id
 
     @session_id.setter
-    def session_id(self, value: Optional[str]) -> None:
+    def session_id(self, value: str | None) -> None:
         self.identity = Identity(
             session_id=value or str(uuid.uuid4()),
             trace_id=self.identity.trace_id,
@@ -134,11 +138,11 @@ class AgentContext:
         )
 
     @property
-    def user_id(self) -> Optional[str]:
+    def user_id(self) -> str | None:
         return self.identity.user_id
 
     @user_id.setter
-    def user_id(self, value: Optional[str]) -> None:
+    def user_id(self, value: str | None) -> None:
         self.identity = Identity(
             session_id=self.identity.session_id,
             trace_id=self.identity.trace_id,
@@ -153,7 +157,7 @@ class AgentContext:
         )
 
     @property
-    def parent_trace_id(self) -> Optional[str]:
+    def parent_trace_id(self) -> str | None:
         return self.identity.parent_trace_id
 
     @property
@@ -161,7 +165,7 @@ class AgentContext:
         return self.identity.agent_id
 
     @property
-    def channel_id(self) -> Optional[str]:
+    def channel_id(self) -> str | None:
         return self.identity.channel_id
 
     @property
@@ -184,7 +188,7 @@ class AgentContext:
     # --- 计时 -------------------------------------------------------------
 
     @property
-    def elapsed_ms(self) -> Optional[float]:
+    def elapsed_ms(self) -> float | None:
         """自上下文创建以来的耗时（毫秒）。"""
         if self._start_time is None:
             return None
@@ -201,12 +205,14 @@ class AgentContext:
         """转换为日志字典（包含完整身份信息）。"""
         metadata_dict = self.metadata if isinstance(self.metadata, dict) else {}
         result = self.identity.to_dict()
-        result.update({
-            "request_id": self.request_id,
-            "elapsed_ms": self.elapsed_ms,
-            "created_at": self.created_at.isoformat(),
-            "metadata": {k: v for k, v in metadata_dict.items() if not k.startswith("_")},
-        })
+        result.update(
+            {
+                "request_id": self.request_id,
+                "elapsed_ms": self.elapsed_ms,
+                "created_at": self.created_at.isoformat(),
+                "metadata": {k: v for k, v in metadata_dict.items() if not k.startswith("_")},
+            }
+        )
         return result
 
     # --- 子上下文 / 派生 -----------------------------------------------------
@@ -232,7 +238,7 @@ class AgentContext:
         session_id: str,
         *,
         source: str = "cron",
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         channel_type: ChannelType = ChannelType.WEB_CHAT,
         **metadata: Any,
     ) -> "AgentContext":
@@ -269,9 +275,9 @@ class AgentContext:
         cls,
         session_id: str,
         *,
-        agent_id: Optional[str] = None,
-        channel_id: Optional[str] = None,
-        user_id: Optional[str] = None,
+        agent_id: str | None = None,
+        channel_id: str | None = None,
+        user_id: str | None = None,
         agent_type: AgentType = AgentType.MAIN,
         channel_type: ChannelType = ChannelType.WEB_CHAT,
         **metadata: Any,
@@ -292,10 +298,10 @@ class AgentContext:
     @classmethod
     def for_rest_api(
         cls,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         *,
-        agent_id: Optional[str] = None,
-        user_id: Optional[str] = None,
+        agent_id: str | None = None,
+        user_id: str | None = None,
         channel_type: ChannelType = ChannelType.WEB_CHAT,
         **metadata: Any,
     ) -> "AgentContext":
@@ -337,7 +343,7 @@ class ContextManager:
 
     def request(
         self,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         channel_type: ChannelType = ChannelType.WEB_CHAT,
         channel_protocol: ChannelProtocol = ChannelProtocol.WEBSOCKET,
         **metadata: Any,

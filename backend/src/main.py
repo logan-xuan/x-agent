@@ -60,7 +60,11 @@ def _install_global_exception_hooks() -> None:
                 extra={
                     "error_type": type(exception).__name__,
                     "error": str(exception),
-                    "traceback": "".join(traceback.format_exception(type(exception), exception, exception.__traceback__)),
+                    "traceback": "".join(
+                        traceback.format_exception(
+                            type(exception), exception, exception.__traceback__
+                        )
+                    ),
                     "async_context": {k: str(v) for k, v in context.items() if k != "exception"},
                 },
             )
@@ -77,6 +81,7 @@ def _install_global_exception_hooks() -> None:
         pass
 
     logger.info("Global exception hooks installed (sys.excepthook + asyncio handler)")
+
 
 # Global instances
 _config_manager: ConfigManager | None = None
@@ -103,6 +108,7 @@ def get_llm_router() -> LLMRouter:
 def _clear_context_cache() -> None:
     """Clear the context builder cache when IDENTITY.md changes."""
     from .memory.context_builder import get_context_builder
+
     try:
         context_builder = get_context_builder()
         context_builder.clear_cache()
@@ -113,6 +119,7 @@ def _clear_context_cache() -> None:
 
 def _make_memory_sync_callback(manager: Any) -> Callable[[str], None]:
     """Create a file-change callback that syncs memory via MemoryManager."""
+
     def on_memory_file_changed(file_path: str) -> None:
         try:
             manager.sync_to_vectors(file_path)
@@ -121,6 +128,7 @@ def _make_memory_sync_callback(manager: Any) -> Callable[[str], None]:
                 "Failed to sync memory file change",
                 extra={"file_path": file_path, "error": str(exc)},
             )
+
     return on_memory_file_changed
 
 
@@ -156,6 +164,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 2.1 Initialize AgentLogger file persistence
     from .agent_core.logger import AgentLogger
+
     agent_logger = AgentLogger()
     agent_logger.initialize_file_persistence(
         log_file=config.logging.agent_log_file,
@@ -166,11 +175,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info(
         "AgentLogger file persistence initialized",
-        extra={"log_file": config.logging.agent_log_file}
+        extra={"log_file": config.logging.agent_log_file},
     )
 
     # 2.5 Validate configuration
     from .config.validator import validate_config
+
     validation_result = validate_config(config)
     if not validation_result.is_valid:
         for error in validation_result.errors:
@@ -180,7 +190,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     "field": error.field,
                     "message": error.message,
                     "suggestion": error.suggestion,
-                }
+                },
             )
         raise RuntimeError("Configuration validation failed. Check logs for details.")
     for warning in validation_result.warnings:
@@ -190,7 +200,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "field": warning.field,
                 "message": warning.message,
                 "suggestion": warning.suggestion,
-            }
+            },
         )
 
     # 3. Initialize database
@@ -207,6 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         workspace_path = str((backend_dir / raw_workspace_path).resolve())
 
     from .conversation.dao import ensure_default_entities
+
     await ensure_default_entities()
     logger.info("Default entities ensured")
 
@@ -215,7 +226,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "LLM router initialized",
         extra={
-            "primary_model": _llm_router.primary_model.model_id if _llm_router.primary_model else None,
+            "primary_model": _llm_router.primary_model.model_id
+            if _llm_router.primary_model
+            else None,
             "backup_count": len(_llm_router.backup_models),
         },
     )
@@ -229,7 +242,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.llm_router = _llm_router
 
     # 5.5 Initialize Multi-Agent Context Loader (if multi-agent config exists)
-    if hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents:
+    if hasattr(config, "multi_agent") and config.multi_agent and config.multi_agent.agents:
         try:
             from .conversation.multi_agent_context_loader import MultiAgentContextLoader
 
@@ -239,6 +252,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             # 注册全局单例，供 agent_bridge 等模块直接导入使用
             from .conversation.multi_agent_context_loader import set_multi_agent_context_loader
+
             set_multi_agent_context_loader(multi_agent_context_loader)
 
             # Log summary of loaded context files
@@ -248,7 +262,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 extra={
                     "agent_count": len(agent_contexts),
                     "total_context_files": total_files,
-                }
+                },
             )
 
             # Log detailed status for each agent
@@ -261,11 +275,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         "loaded_files": loaded_count,
                         "total_files": len(files),
                         "files": files,
-                    }
+                    },
                 )
 
             # Register all agents to AgentRegistry for health check and discovery
             from .services.agent_registry import AgentCapability, get_agent_registry
+
             registry = get_agent_registry()
             for agent_config in config.multi_agent.agents:
                 # Build capabilities from type and features
@@ -285,7 +300,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             logger.info(
                 "Agents registered to AgentRegistry",
-                extra={"count": len(config.multi_agent.agents)}
+                extra={"count": len(config.multi_agent.agents)},
             )
         except Exception as e:
             logger.error(
@@ -335,18 +350,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 7. Initial sync: Markdown -> Vector Store
     try:
         synced_count = memory_manager.sync_to_vectors()
-        logger.info(
-            "Initial memory sync completed",
-            extra={"synced_entries": synced_count}
-        )
+        logger.info("Initial memory sync completed", extra={"synced_entries": synced_count})
     except Exception as e:
-        logger.warning(
-            "Initial memory sync failed (non-fatal)",
-            extra={"error": str(e)}
-        )
+        logger.warning("Initial memory sync failed (non-fatal)", extra={"error": str(e)})
 
     # 8. Initialize and start cron scheduler
     from .cron.scheduler import get_scheduler as get_cron_scheduler
+
     _cron_scheduler = get_cron_scheduler()
     await _cron_scheduler.initialize()
     await _cron_scheduler.start()
@@ -491,6 +501,7 @@ def create_app() -> FastAPI:
     # === ROUTES ===
     from .agent_core.api import agent_rest_router
     from .api.v1.admin import router as admin_router
+    from .api.v1.assets import router as assets_router
     from .api.v1.config import router as config_router
     from .api.v1.dev import router as dev_router
     from .api.v1.health import router as health_router
@@ -503,6 +514,7 @@ def create_app() -> FastAPI:
     from .gateway.endpoints import websocket_router as agent_websocket_router
 
     app.include_router(health_router, prefix="/api/v1", tags=["Health"])
+    app.include_router(assets_router, prefix="/api/v1", tags=["Assets"])
     app.include_router(config_router, prefix="/api/v1", tags=["Config"])
     app.include_router(stats_router, prefix="/api/v1", tags=["Stats"])
     app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
@@ -517,6 +529,7 @@ def create_app() -> FastAPI:
 
     # Add cron scheduler router
     from .cron.api.router import router as cron_router
+
     app.include_router(cron_router, prefix="/api/v1", tags=["Cron"])
 
     return app

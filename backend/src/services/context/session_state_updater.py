@@ -34,10 +34,20 @@ class SessionStateUpdater:
     ):
         state = await self._store.get(session_id)
         existing = state.to_dict() if state is not None else {}
-        user_messages = [str(msg.get("content", "")) for msg in new_messages if msg.get("role") == "user"]
-        assistant_messages = [str(msg.get("content", "")) for msg in new_messages if msg.get("role") == "assistant"]
-        latest_user_request = user_messages[-1] if user_messages else existing.get("current_goal", {}).get("latest_user_request", "")
-        progress_query = any(token in latest_user_request for token in ["你在处理吗", "进展", "还在", "处理吗"])
+        user_messages = [
+            str(msg.get("content", "")) for msg in new_messages if msg.get("role") == "user"
+        ]
+        assistant_messages = [
+            str(msg.get("content", "")) for msg in new_messages if msg.get("role") == "assistant"
+        ]
+        latest_user_request = (
+            user_messages[-1]
+            if user_messages
+            else existing.get("current_goal", {}).get("latest_user_request", "")
+        )
+        progress_query = any(
+            token in latest_user_request for token in ["你在处理吗", "进展", "还在", "处理吗"]
+        )
         primary_goal = existing.get("current_goal", {}).get("primary_goal", "")
         if user_messages and (not primary_goal or not progress_query):
             primary_goal = user_messages[0]

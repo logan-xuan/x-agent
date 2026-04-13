@@ -58,6 +58,27 @@
 3. **语义护栏与 verifier 扩展**
    - 定义哪些内容不能丢，哪些可以压缩，哪些应该直接淘汰。
 
+### 3.1 当前实现对照（2026-04-08）
+
+基于最新代码，方案 B 已经在 runtime 主链路上落地，当前实现对应关系如下：
+
+1. `backend/src/runtime/context/compression_pipeline.py`
+   - 已显式输出 `budget_state`
+   - 已按 `microcompact -> collapse -> autocompact -> emergency` 做预算驱动收口
+   - 已把 `verifier_result`、`rollback_applied`、`rollback_reason` 作为稳定结果合同返回
+2. `backend/src/runtime/context/compression_verifier.py`
+   - 已覆盖 objective、artifact refs、state conflict、结论保真与压缩收益等护栏
+   - 已支持 `objective_out_of_band` 例外语义
+3. `backend/src/gateway/agent_bridge.py`
+   - `_runtime_prepare_model_input()` 与 `_runtime_controller_compact()` 已复用同一套 runtime 压缩结果
+   - bridge 会继续透传 `compression_operations`、`budget_state` 与 rollback/verifier 元数据
+4. `backend/src/runtime/turn/controller.py`
+   - `DefaultTurnController._apply_compact_result()` 已消费 compact 后的 messages、artifact refs 与 metadata
+5. `backend/src/config/models.py`、`backend/src/runtime/context/profile_provider.py`、`backend/src/runtime/service.py`
+   - 已维持命名 profile 作为唯一配置入口，并在加载期执行约束校验
+
+这意味着本方案没有停留在“目标态设计”，而是已经和当前 runtime 代码闭环对齐；同时仍然保持 runtime-only scope，没有扩展到 legacy compression manager。
+
 ---
 
 ## 4. 三层压缩动作分工

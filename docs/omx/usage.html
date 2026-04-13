@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OMX 使用文档</title>
+    <style>
+      :root {
+        --paper: #f5efe2;
+        --paper-strong: #ebe0c6;
+        --ink: #182028;
+        --muted: #5d645f;
+        --teal: #0f766e;
+        --teal-soft: rgba(15, 118, 110, 0.12);
+        --orange: #c24d2c;
+        --orange-soft: rgba(194, 77, 44, 0.12);
+        --line: rgba(24, 32, 40, 0.12);
+        --shadow: 0 18px 40px rgba(32, 30, 20, 0.12);
+        --mono: "SFMono-Regular", "Menlo", "Monaco", monospace;
+        --sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif;
+        --serif: "Baskerville", "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--sans);
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 28%),
+          radial-gradient(circle at 92% 12%, rgba(194, 77, 44, 0.12), transparent 24%),
+          linear-gradient(180deg, #f8f3e8 0%, #f3ead8 100%);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(24, 32, 40, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(24, 32, 40, 0.035) 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.8), transparent 92%);
+      }
+
+      a {
+        color: var(--teal);
+      }
+
+      .page {
+        width: min(1380px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 32px 0 56px;
+      }
+
+      .hero {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        padding: 34px 36px 30px;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(245, 239, 226, 0.76)),
+          linear-gradient(130deg, rgba(15, 118, 110, 0.08), rgba(194, 77, 44, 0.08));
+        box-shadow: var(--shadow);
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: auto -10% -65% auto;
+        width: 420px;
+        height: 420px;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle, rgba(15, 118, 110, 0.16), rgba(15, 118, 110, 0));
+        transform: rotate(-12deg);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 16px;
+        padding: 8px 14px;
+        border: 1px solid rgba(15, 118, 110, 0.18);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.74);
+        color: var(--teal);
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--orange);
+        box-shadow: 0 0 0 6px rgba(194, 77, 44, 0.1);
+      }
+
+      h1 {
+        position: relative;
+        z-index: 1;
+        margin: 0;
+        font-family: var(--serif);
+        font-size: clamp(2.9rem, 6vw, 5rem);
+        line-height: 0.96;
+        letter-spacing: -0.04em;
+      }
+
+      .subtitle {
+        position: relative;
+        z-index: 1;
+        max-width: 840px;
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: 1.06rem;
+        line-height: 1.8;
+      }
+
+      .meta-grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 28px;
+      }
+
+      .meta-card {
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.72);
+        backdrop-filter: blur(8px);
+      }
+
+      .meta-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .meta-card span {
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 290px minmax(0, 1fr);
+        gap: 24px;
+        margin-top: 28px;
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 20px;
+        align-self: start;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.76);
+        box-shadow: var(--shadow);
+      }
+
+      .sidebar h2 {
+        margin: 0 0 16px;
+        font-size: 0.88rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .sidebar a {
+        display: block;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        text-decoration: none;
+        color: var(--ink);
+        transition: transform 180ms ease, background 180ms ease;
+      }
+
+      .sidebar a:hover {
+        background: var(--teal-soft);
+        transform: translateX(4px);
+      }
+
+      .content {
+        display: grid;
+        gap: 20px;
+      }
+
+      .section {
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.8);
+        box-shadow: var(--shadow);
+        animation: rise 560ms ease both;
+      }
+
+      .section:nth-child(2) { animation-delay: 60ms; }
+      .section:nth-child(3) { animation-delay: 120ms; }
+      .section:nth-child(4) { animation-delay: 180ms; }
+      .section:nth-child(5) { animation-delay: 240ms; }
+      .section:nth-child(6) { animation-delay: 300ms; }
+      .section:nth-child(7) { animation-delay: 360ms; }
+      .section:nth-child(8) { animation-delay: 420ms; }
+      .section:nth-child(9) { animation-delay: 480ms; }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .section h2 {
+        margin: 0 0 18px;
+        font-family: var(--serif);
+        font-size: clamp(1.8rem, 3vw, 2.4rem);
+        line-height: 1.05;
+      }
+
+      .section p,
+      .section li {
+        color: #273039;
+        font-size: 1rem;
+        line-height: 1.9;
+      }
+
+      .section ul {
+        margin: 0;
+        padding-left: 1.2rem;
+      }
+
+      .section li + li {
+        margin-top: 10px;
+      }
+
+      .callout {
+        margin: 16px 0 0;
+        padding: 18px 20px;
+        border-left: 4px solid var(--orange);
+        border-radius: 16px;
+        background: var(--orange-soft);
+      }
+
+      .callout strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .grid-2,
+      .grid-3 {
+        display: grid;
+        gap: 16px;
+        margin-top: 18px;
+      }
+
+      .grid-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .panel {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(248, 244, 233, 0.78);
+      }
+
+      .panel h3 {
+        margin: 0 0 10px;
+        font-size: 1.02rem;
+      }
+
+      .code-card {
+        position: relative;
+        overflow: hidden;
+        border-radius: 22px;
+        border: 1px solid rgba(24, 32, 40, 0.08);
+        background: linear-gradient(180deg, #132129, #1d2f39);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      }
+
+      .code-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px 10px;
+        color: rgba(255, 255, 255, 0.84);
+        font-size: 0.9rem;
+      }
+
+      .traffic {
+        display: inline-flex;
+        gap: 8px;
+      }
+
+      .traffic i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.32);
+      }
+
+      .traffic i:nth-child(1) { background: #ff8f72; }
+      .traffic i:nth-child(2) { background: #ffd37a; }
+      .traffic i:nth-child(3) { background: #62d6a5; }
+
+      .copy-btn {
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #f7f2e8;
+        padding: 7px 12px;
+        font-size: 0.82rem;
+        cursor: pointer;
+      }
+
+      .copy-btn:hover {
+        background: rgba(255, 255, 255, 0.14);
+      }
+
+      pre {
+        margin: 0;
+        padding: 0 18px 18px;
+        overflow-x: auto;
+      }
+
+      code {
+        font-family: var(--mono);
+      }
+
+      pre code {
+        display: block;
+        color: #edf8f5;
+        font-size: 0.94rem;
+        line-height: 1.8;
+        white-space: pre;
+      }
+
+      .command-inline {
+        display: inline-block;
+        margin: 4px 8px 4px 0;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.7);
+        font-family: var(--mono);
+        font-size: 0.9rem;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      .step {
+        position: relative;
+        padding: 18px 18px 18px 56px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.74);
+      }
+
+      .step::before {
+        content: attr(data-step);
+        position: absolute;
+        top: 18px;
+        left: 16px;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--teal);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-size: 0.84rem;
+        font-weight: 700;
+      }
+
+      .footer {
+        margin-top: 22px;
+        padding: 24px 26px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--muted);
+      }
+
+      @media (max-width: 1100px) {
+        .meta-grid,
+        .grid-3 {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          position: static;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          width: min(100vw - 20px, 1380px);
+          padding: 16px 0 28px;
+        }
+
+        .hero,
+        .section,
+        .sidebar,
+        .footer {
+          padding: 20px;
+          border-radius: 22px;
+        }
+
+        .meta-grid,
+        .grid-2,
+        .grid-3 {
+          grid-template-columns: 1fr;
+        }
+
+        h1 {
+          font-size: 2.5rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div class="eyebrow">Operational Manual</div>
+        <h1>OMX 使用文档</h1>
+        <p class="subtitle">
+          面向当前仓库 <code>/Users/xuan.lx/Documents/x-agent</code> 的
+          <code>oh-my-codex</code> 实战手册。重点不是罗列命令，而是说明在这个
+          Python/FastAPI 项目里如何把 <code>deep-interview</code>、
+          <code>ralplan</code>、<code>ralph</code>、<code>team</code> 串成稳定工作流。
+        </p>
+        <div class="meta-grid">
+          <div class="meta-card">
+            <strong>更新时间</strong>
+            <span>2026-04-11</span>
+          </div>
+          <div class="meta-card">
+            <strong>OMX 版本</strong>
+            <span>v0.12.4</span>
+          </div>
+          <div class="meta-card">
+            <strong>Codex CLI</strong>
+            <span>0.119.0</span>
+          </div>
+          <div class="meta-card">
+            <strong>项目路径</strong>
+            <span>x-agent</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar">
+          <h2>目录</h2>
+          <a href="#goal">1. 文档目标</a>
+          <a href="#env">2. 当前环境</a>
+          <a href="#quickstart">3. 快速开始</a>
+          <a href="#commands">4. 常用命令</a>
+          <a href="#workflow">5. 推荐工作流</a>
+          <a href="#repo">6. 当前仓库模板</a>
+          <a href="#cases">7. 使用案例</a>
+          <a href="#faq">8. 常见问题</a>
+          <a href="#sources">9. 资料来源</a>
+        </aside>
+
+        <main class="content">
+          <section class="section" id="goal">
+            <h2>1. 文档目标</h2>
+            <p>
+              <code>OMX</code> 运行在 <code>Codex CLI</code> 之上，提供的是工作流编排能力，
+              不是替代执行引擎。对于当前仓库，最有价值的部分是以下四点：
+            </p>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>统一入口</h3>
+                <p>把会话启动、状态目录、技能、提示词和本地配置整合到一条路径里。</p>
+              </div>
+              <div class="panel">
+                <h3>工作流技能</h3>
+                <p>提供 <code>deep-interview</code>、<code>ralplan</code>、<code>ralph</code>、<code>team</code> 这样的高级工作流指令。</p>
+              </div>
+              <div class="panel">
+                <h3>可恢复状态</h3>
+                <p><code>.omx/</code> 持久化计划、日志、state、HUD 和团队协作数据。</p>
+              </div>
+              <div class="panel">
+                <h3>协作升级</h3>
+                <p>需求澄清、方案确认、持续执行和并行团队可以自然串联，而不是一次次从零开始。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="env">
+            <h2>2. 当前环境</h2>
+            <div class="grid-3">
+              <div class="panel">
+                <h3>关键版本</h3>
+                <p><code>oh-my-codex v0.12.4</code><br /><code>codex-cli 0.119.0</code><br /><code>Node.js v23.11.0</code></p>
+              </div>
+              <div class="panel">
+                <h3>项目特点</h3>
+                <p>Python 3.11+、FastAPI、Pydantic v2、SQLAlchemy，重点模块集中在 <code>backend/src/runtime</code>。</p>
+              </div>
+              <div class="panel">
+                <h3>健康状态</h3>
+                <p><code>omx doctor</code> 通过，但 <code>explore</code> 相关 Rust 依赖未就绪，旧技能目录也仍然存在。</p>
+              </div>
+            </div>
+            <div class="callout">
+              <strong>当前最重要的环境判断</strong>
+              <span>可以稳定使用 <code>deep-interview / ralplan / ralph / team</code>，但不要把 <code>omx explore</code> 当主入口。</span>
+            </div>
+          </section>
+
+          <section class="section" id="quickstart">
+            <h2>3. 快速开始</h2>
+            <p>最常用的路径只有一条：进入项目目录，然后用高推理强度启动。</p>
+            <div class="code-card">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>推荐启动方式</span>
+                <button class="copy-btn" data-copy="#start-basic">复制</button>
+              </div>
+              <pre><code id="start-basic">cd /Users/xuan.lx/Documents/x-agent
+omx --high</code></pre>
+            </div>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>强力模式</h3>
+                <p><code>omx --madmax --high</code> 会绕过审批与沙箱，只在你明确承担风险时使用。</p>
+              </div>
+              <div class="panel">
+                <h3>tmux 模式</h3>
+                <p>准备跑 <code>team</code> 时，建议先执行 <code>tmux new -s xagent</code>，再启动 <code>omx</code>。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="commands">
+            <h2>4. 常用命令</h2>
+            <p>
+              只记住下面这些就够了：
+              <span class="command-inline">omx doctor</span>
+              <span class="command-inline">omx status</span>
+              <span class="command-inline">omx hud --watch</span>
+              <span class="command-inline">omx resume</span>
+              <span class="command-inline">omx session search</span>
+            </p>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>状态与诊断</h3>
+                <p><code>doctor</code> 看安装健康，<code>status</code> 看模式状态，<code>hud --watch</code> 适合在第二个终端盯实时面板。</p>
+              </div>
+              <div class="panel">
+                <h3>历史与恢复</h3>
+                <p><code>resume</code> 恢复交互会话，<code>session search</code> 在本地历史里检索线索。</p>
+              </div>
+            </div>
+            <div class="code-card" style="margin-top: 16px;">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>团队运行时命令</span>
+                <button class="copy-btn" data-copy="#team-cmds">复制</button>
+              </div>
+              <pre><code id="team-cmds">omx team 3:executor "fix failing tests"
+omx team status &lt;team-name&gt;
+omx team await &lt;team-name&gt; --timeout-ms 30000 --json
+omx team resume &lt;team-name&gt;
+omx team shutdown &lt;team-name&gt;</code></pre>
+            </div>
+            <div class="callout">
+              <strong>当前实现细节</strong>
+              <span><code>omx team</code> 现在默认给 worker 配独立 worktree，<code>--worktree</code> 已降级为兼容性保留参数。</span>
+            </div>
+          </section>
+
+          <section class="section" id="workflow">
+            <h2>5. 推荐工作流</h2>
+            <div class="timeline">
+              <div class="step" data-step="1">
+                <h3>先澄清</h3>
+                <p><code>$deep-interview</code> 负责明确目标、边界、非目标和决策权限，避免一开始就误解需求。</p>
+              </div>
+              <div class="step" data-step="2">
+                <h3>再规划</h3>
+                <p><code>$ralplan</code> 负责在实现前做共识规划，让方案、风险、验证路径先收敛。</p>
+              </div>
+              <div class="step" data-step="3">
+                <h3>最后执行</h3>
+                <p>单 owner 持续推进用 <code>$ralph</code>，可拆 lane 的大任务用 <code>$team</code>。</p>
+              </div>
+            </div>
+            <div class="grid-2">
+              <div class="code-card">
+                <div class="code-head">
+                  <div class="traffic"><i></i><i></i><i></i></div>
+                  <span>中等任务模板</span>
+                  <button class="copy-btn" data-copy="#workflow-mid">复制</button>
+                </div>
+                <pre><code id="workflow-mid">$deep-interview --quick "重构 runtime compression pipeline，拆开预算决策与语义裁剪"
+$ralplan --interactive "基于澄清后的需求规划实现路径和测试策略"
+$ralph "按已批准方案执行并完成验证"</code></pre>
+              </div>
+              <div class="code-card">
+                <div class="code-head">
+                  <div class="traffic"><i></i><i></i><i></i></div>
+                  <span>大任务模板</span>
+                  <button class="copy-btn" data-copy="#workflow-large">复制</button>
+                </div>
+                <pre><code id="workflow-large">$deep-interview --standard "澄清 runtime compression redesign 的边界、非目标、验证标准"
+$ralplan --interactive --deliberate "产出跨模块的实现计划、风险列表和回归方案"
+$team 3:executor "按批准方案并行推进实现、测试和验证"</code></pre>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="repo">
+            <h2>6. 当前仓库模板</h2>
+            <p>
+              这个仓库的 <code>AGENTS.md</code> 已经写明了单测命令、代码风格和近期重点，因此建议直接把验证门槛写进 prompt，让执行模式不会在“如何算完成”上自由发挥。
+            </p>
+            <div class="code-card">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>Runtime Compression 模板</span>
+                <button class="copy-btn" data-copy="#repo-template">复制</button>
+              </div>
+              <pre><code id="repo-template">$deep-interview --quick "重构 runtime compression redesign，明确 scope、non-goals、回滚策略和验证标准"
+$ralplan --interactive --deliberate "基于澄清后的规格，为 backend runtime compression redesign 生成执行计划和验证路径"
+$team 3:executor "按已批准计划执行 runtime compression redesign，并以 pytest + ruff 作为完成门槛"</code></pre>
+            </div>
+            <div class="code-card" style="margin-top: 16px;">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>Ralph 验证门槛模板</span>
+                <button class="copy-btn" data-copy="#repo-verify">复制</button>
+              </div>
+              <pre><code id="repo-verify">$ralph "实现 runtime compression redesign，完成后必须执行：
+cd backend &amp;&amp;
+pytest --no-cov tests/unit/test_runtime_compression_pipeline.py -q &amp;&amp;
+pytest --no-cov tests/unit/test_runtime_compression_verifier.py -q &amp;&amp;
+pytest --no-cov tests/unit/test_runtime_gateway_adapter.py -q &amp;&amp;
+pytest --no-cov tests/unit/test_runtime_turn_controller.py -q &amp;&amp;
+pytest --no-cov tests/unit/test_runtime_compression_profiles.py -q &amp;&amp;
+ruff check src"</code></pre>
+            </div>
+          </section>
+
+          <section class="section" id="cases">
+            <h2>7. 场景建议与详细案例</h2>
+            <p>
+              这一节不只回答“什么时候用哪个命令”，还回答“为什么这样选”。
+              对当前仓库来说，真正重要的是避免把简单任务做重，或者把复杂任务过早塞进单线程执行。
+            </p>
+
+            <h3>案例一：单文件、小范围、目标明确的修复</h3>
+            <p>例如某个单测已经指向了具体函数，你只需要修一到两个文件，并把验证跑完。</p>
+            <div class="code-card">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>小范围修复模板</span>
+                <button class="copy-btn" data-copy="#case-small">复制</button>
+              </div>
+              <pre><code id="case-small">omx --high
+$ralph "修复 runtime compression verifier 的回滚判断，并执行对应单测验证"</code></pre>
+            </div>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>适用信号</h3>
+                <ul>
+                  <li>已经知道要改哪个函数或文件。</li>
+                  <li>成功标准可以直接写成测试或 lint 命令。</li>
+                  <li>任务不需要先澄清边界，也不需要多人并行。</li>
+                </ul>
+              </div>
+              <div class="panel">
+                <h3>为什么这样选</h3>
+                <ul>
+                  <li>这类任务的风险不在方向错误，而在遗漏验证。</li>
+                  <li><code>deep-interview</code> 的澄清收益小，额外成本反而更高。</li>
+                  <li><code>team</code> 的 tmux 和 lane 协调对小任务来说属于过度设计。</li>
+                  <li><code>ralph</code> 能把“修复 + 验证”合成一条完成链路。</li>
+                </ul>
+              </div>
+            </div>
+
+            <h3 style="margin-top: 22px;">案例二：需求模糊，用户明确说“不要假设”</h3>
+            <p>例如用户只说“把 runtime compression redesign 做好”，但没有明确边界、非目标和回滚策略。</p>
+            <div class="code-card">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>先澄清再规划模板</span>
+                <button class="copy-btn" data-copy="#case-clarify">复制</button>
+              </div>
+              <pre><code id="case-clarify">$deep-interview --quick "澄清 runtime compression redesign 的目标、边界、非目标、回滚策略和验证标准"
+$ralplan --interactive "基于澄清后的结论规划实现路径和测试策略"</code></pre>
+            </div>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>适用信号</h3>
+                <ul>
+                  <li>prompt 里出现“先分析”“先澄清”“不要默认”。</li>
+                  <li>你无法一句话说清楚验收标准。</li>
+                  <li>存在多个互斥方案，但用户还没表态。</li>
+                </ul>
+              </div>
+              <div class="panel">
+                <h3>为什么这样选</h3>
+                <ul>
+                  <li>这类任务最怕一开始就沿着错误假设走太远。</li>
+                  <li><code>deep-interview</code> 先明确“要做什么”和“不要做什么”。</li>
+                  <li><code>ralplan</code> 再把澄清结论变成实现顺序和验证路径。</li>
+                  <li>如果直接进入 <code>ralph</code>，未确认的假设很容易混进实现里。</li>
+                </ul>
+              </div>
+            </div>
+
+            <h3 style="margin-top: 22px;">案例三：跨模块改造，但强耦合，优先单 owner 推进</h3>
+            <p>例如要同时改 <code>runtime/context</code>、<code>runtime/turn</code>、<code>gateway</code>，但每一步都依赖前一步的接口和类型收口。</p>
+            <div class="code-card">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>强耦合改造模板</span>
+                <button class="copy-btn" data-copy="#case-seq">复制</button>
+              </div>
+              <pre><code id="case-seq">$deep-interview --quick "明确跨模块改造的 scope、兼容边界和验证标准"
+$ralplan --interactive --deliberate "为跨 runtime/gateway 的改造生成顺序化计划"
+$ralph "按已批准计划顺序实施，并以 pytest + ruff 作为完成门槛"</code></pre>
+            </div>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>适用信号</h3>
+                <ul>
+                  <li>每一步都依赖上一步的接口或类型变更。</li>
+                  <li>写权限很难切成互不冲突的 2 到 4 份。</li>
+                  <li>实现路径整体偏线性，而不是天然扇出。</li>
+                </ul>
+              </div>
+              <div class="panel">
+                <h3>为什么这样选</h3>
+                <ul>
+                  <li>大任务不等于必须并行，强耦合任务并行反而更容易互相覆盖。</li>
+                  <li><code>ralph</code> 更适合顺序推进、持续验证、单 owner 收口的工作。</li>
+                  <li>这里最重要的是降低合并复杂度，而不是追求表面吞吐。</li>
+                </ul>
+              </div>
+            </div>
+
+            <h3 style="margin-top: 22px;">案例四：可以拆 lane 的大任务，优先 <code>team</code></h3>
+            <p>当任务已经明确，计划也已经批准，并且可以拆成几个相对独立的执行面时，<code>team</code> 的收益会明显高于单线程。</p>
+            <div class="code-card">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>并行团队模板</span>
+                <button class="copy-btn" data-copy="#case-team">复制</button>
+              </div>
+              <pre><code id="case-team">$deep-interview --standard "澄清大任务边界、非目标和完成定义"
+$ralplan --interactive --deliberate "生成可并行执行的 lane 划分、风险和验证计划"
+$team 3:executor "按批准方案并行推进实现、测试和验证"</code></pre>
+            </div>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>适用信号</h3>
+                <ul>
+                  <li>可以清楚写出每个 lane 的文件边界或职责边界。</li>
+                  <li>不同 worker 之间只需要轻量协调。</li>
+                  <li>任务执行时间较长，并且你希望支持中断恢复。</li>
+                </ul>
+              </div>
+              <div class="panel">
+                <h3>为什么这样选</h3>
+                <ul>
+                  <li><code>team</code> 的价值不只是“多几个 agent”，而是 tmux、邮箱、共享状态和恢复能力。</li>
+                  <li>测试和验证可以与实现并行，而不是最后集中补。</li>
+                  <li>对跨目录、长执行时间任务，运行时持久化的收益很高。</li>
+                </ul>
+              </div>
+            </div>
+            <div class="callout">
+              <strong>当前仓库里常见的 lane 切法</strong>
+              <span>lane 1 做 <code>runtime/context</code> 与压缩策略核心实现，lane 2 做 <code>gateway</code> / <code>runtime/turn</code> 适配，lane 3 负责单测补齐、回归验证和 <code>ruff</code> 汇总。</span>
+            </div>
+
+            <h3 style="margin-top: 22px;">案例五：长任务的监控、恢复和二次进入</h3>
+            <p>如果任务已经跑起来了，你要解决的问题通常不是“怎么开始”，而是“现在进行到哪一步”和“断线后如何接回去”。</p>
+            <div class="code-card">
+              <div class="code-head">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <span>监控与恢复模板</span>
+                <button class="copy-btn" data-copy="#case-monitor">复制</button>
+              </div>
+              <pre><code id="case-monitor">cd /Users/xuan.lx/Documents/x-agent
+omx status
+omx hud --watch
+omx resume
+omx team status &lt;team-name&gt;
+omx team await &lt;team-name&gt; --timeout-ms 30000 --json</code></pre>
+            </div>
+            <div class="grid-2">
+              <div class="panel">
+                <h3>适用信号</h3>
+                <ul>
+                  <li>你已经有会话或 team 在跑。</li>
+                  <li>你关心的是当前阶段和结果，而不是重新规划。</li>
+                  <li>你需要把执行和观察放在不同终端里。</li>
+                </ul>
+              </div>
+              <div class="panel">
+                <h3>为什么这样选</h3>
+                <ul>
+                  <li><code>hud --watch</code> 适合观察，不适合判断“是否启动成功”。</li>
+                  <li>先看 <code>omx status</code>，能避免把 <code>hud: inactive</code> 误判成故障。</li>
+                  <li><code>resume</code> 解决交互会话恢复，<code>team status / await</code> 解决团队运行时视角。</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="grid-3" style="margin-top: 20px;">
+              <div class="panel">
+                <h3>只用 <code>omx --high</code></h3>
+                <p>目标明确、文件范围明确、不需要并行 worker，也不需要先澄清需求。</p>
+              </div>
+              <div class="panel">
+                <h3>优先 <code>deep-interview</code></h3>
+                <p>需求还很模糊，边界和非目标不清楚，或者不确定哪些决定能自动做。</p>
+              </div>
+              <div class="panel">
+                <h3>优先 <code>team</code></h3>
+                <p>任务能拆 2 到 4 条独立 lane，需要 tmux worker、共享状态和恢复能力。</p>
+              </div>
+            </div>
+            <div class="callout">
+              <strong>关于 <code>explore</code></strong>
+              <span>当前机器更适合把 <code>deep-interview / ralplan / ralph / team</code> 当主路径；<code>omx explore</code> 由于 Rust 依赖未就绪，暂时不要拿它做主要入口。</span>
+            </div>
+          </section>
+
+          <section class="section" id="faq">
+            <h2>8. 常见问题</h2>
+            <div class="grid-2">
+              <div class="panel">
+                <h3><code>team</code> 启不来</h3>
+                <p>优先检查 <code>tmux -V</code>、<code>echo $TMUX</code>、<code>omx doctor --team</code>。如果不在 tmux 中，体验通常会很差。</p>
+              </div>
+              <div class="panel">
+                <h3>技能列表重复</h3>
+                <p>当前机器上旧目录 <code>~/.agents/skills</code> 还在，虽然是空目录，但可能触发重复显示。</p>
+              </div>
+              <div class="panel">
+                <h3>为什么不推荐先用 <code>explore</code></h3>
+                <p><code>omx doctor</code> 已提示缺少 Rust 预构建或本地 <code>cargo</code>，因此当前环境不适合把它作为主入口。</p>
+              </div>
+              <div class="panel">
+                <h3>最小可用实践是什么</h3>
+                <p>只记三步：<code>cd 项目</code>、<code>omx --high</code>、再按任务规模选择 <code>$deep-interview</code>、<code>$ralplan</code>、<code>$ralph</code>、<code>$team</code>。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="sources">
+            <h2>9. 资料来源</h2>
+            <ul>
+              <li>官方仓库 README：<a href="https://github.com/Yeachan-Heo/oh-my-codex">https://github.com/Yeachan-Heo/oh-my-codex</a></li>
+              <li>本机命令帮助：<code>omx --help</code></li>
+              <li>本机子命令帮助：<code>omx team --help</code>、<code>omx ralph --help</code>、<code>omx session --help</code>、<code>omx hud --help</code></li>
+              <li>本机安装健康检查：<code>omx doctor</code></li>
+            </ul>
+          </section>
+        </main>
+      </div>
+
+      <footer class="footer">
+        这份页面是单文件静态 HTML，可直接本地打开。内容与
+        <code>docs/omx/usage.md</code> 保持一致，适合作为当前仓库的 OMX 使用入口文档。
+      </footer>
+    </div>
+
+    <script>
+      for (const button of document.querySelectorAll(".copy-btn")) {
+        button.addEventListener("click", async () => {
+          const target = document.querySelector(button.dataset.copy);
+          if (!target) return;
+          try {
+            await navigator.clipboard.writeText(target.textContent);
+            const original = button.textContent;
+            button.textContent = "已复制";
+            setTimeout(() => {
+              button.textContent = original;
+            }, 1200);
+          } catch {
+            button.textContent = "复制失败";
+            setTimeout(() => {
+              button.textContent = "复制";
+            }, 1200);
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

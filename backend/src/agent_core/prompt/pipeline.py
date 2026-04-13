@@ -155,10 +155,7 @@ class PromptPipeline:
             await on_before_build(self, context)
 
         # 2-4. 过滤和排序
-        active_sections = [
-            section for section in self._sections
-            if section.should_render(context)
-        ]
+        active_sections = [section for section in self._sections if section.should_render(context)]
         active_sections.sort(key=lambda s: s.priority)
 
         # 5-6. 渲染每个片段
@@ -176,9 +173,7 @@ class PromptPipeline:
 
         # 7. Token 预算裁剪
         if token_budget is not None and rendered_sections:
-            rendered_sections = self._apply_token_budget(
-                rendered_sections, token_budget
-            )
+            rendered_sections = self._apply_token_budget(rendered_sections, token_budget)
 
         # 8. 拼接内容
         contents = [content for _, content in rendered_sections]
@@ -210,9 +205,7 @@ class PromptPipeline:
             裁剪后的片段列表
         """
         # 计算总 token 数
-        total_tokens = sum(
-            _estimate_tokens(content) for _, content in rendered_sections
-        )
+        total_tokens = sum(_estimate_tokens(content) for _, content in rendered_sections)
 
         if total_tokens <= token_budget:
             return rendered_sections
@@ -240,9 +233,7 @@ class PromptPipeline:
                     max_chars = section.max_tokens * 4
                     content = content[:max_chars] + "..."
                     result[idx] = (section, content)
-                    total_tokens = sum(
-                        _estimate_tokens(c) for _, c in result
-                    )
+                    total_tokens = sum(_estimate_tokens(c) for _, c in result)
                     continue
 
             # 移除整个片段

@@ -6,19 +6,21 @@ and job execution status tracking.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class BackoffStrategy(str, Enum):
+class BackoffStrategy(StrEnum):
     """Backoff strategy for retry delays."""
-    FIXED = "fixed"           # 固定间隔
+
+    FIXED = "fixed"  # 固定间隔
     EXPONENTIAL = "exponential"  # 指数退避
-    LINEAR = "linear"         # 线性递增
+    LINEAR = "linear"  # 线性递增
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Job execution status."""
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -30,7 +32,7 @@ class JobStatus(str, Enum):
 @dataclass
 class RetryPolicy:
     """Retry policy configuration.
-    
+
     Attributes:
         max_retries: Maximum number of retry attempts
         backoff_strategy: Strategy for calculating delay between retries
@@ -38,18 +40,19 @@ class RetryPolicy:
         max_delay_seconds: Maximum delay cap (default 5 minutes)
         retry_on_exceptions: List of exception type names to retry on
     """
+
     max_retries: int = 3
     backoff_strategy: BackoffStrategy = BackoffStrategy.EXPONENTIAL
     initial_delay_seconds: float = 5.0
     max_delay_seconds: float = 300.0  # 最大退避 5 分钟
     retry_on_exceptions: list[str] = field(default_factory=lambda: ["Exception"])
-    
+
     def get_delay(self, attempt: int) -> float:
         """根据策略计算第 N 次重试的延迟。
-        
+
         Args:
             attempt: Retry attempt number (1-based)
-            
+
         Returns:
             Delay in seconds
         """
@@ -60,34 +63,34 @@ class RetryPolicy:
         else:  # LINEAR
             delay = self.initial_delay_seconds * attempt
         return min(delay, self.max_delay_seconds)
-    
+
     def should_retry(self, exception: Exception, attempt: int) -> bool:
         """Check if the exception should trigger a retry.
-        
+
         Args:
             exception: The exception that occurred
             attempt: Current attempt number
-            
+
         Returns:
             True if should retry, False otherwise
         """
         if attempt >= self.max_retries:
             return False
-        
+
         exception_type = type(exception).__name__
-        
+
         # Check if exception type matches any in retry_on_exceptions
         for retry_exception in self.retry_on_exceptions:
             if retry_exception == "Exception" or exception_type == retry_exception:
                 return True
-        
+
         return False
 
 
 @dataclass
 class JobExecutionRecord:
     """单次执行记录。
-    
+
     Attributes:
         job_id: Unique job identifier
         execution_id: Unique execution identifier
@@ -98,6 +101,7 @@ class JobExecutionRecord:
         attempt: Current retry attempt number
         result: Execution result data
     """
+
     job_id: str
     execution_id: str
     status: JobStatus
@@ -106,7 +110,7 @@ class JobExecutionRecord:
     error_message: str | None = None
     attempt: int = 1
     result: dict[str, Any] | None = None
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert record to dictionary."""
         return {
@@ -124,10 +128,11 @@ class JobExecutionRecord:
 @dataclass
 class RetryState:
     """Internal retry state tracking for a job.
-    
+
     This is used by the scheduler to track retry attempts and schedule
     the next retry.
     """
+
     job_id: str
     task_id: str
     attempt: int = 0
@@ -135,16 +140,17 @@ class RetryState:
     last_attempt_at: datetime | None = None
     next_retry_at: datetime | None = None
     policy: RetryPolicy = field(default_factory=RetryPolicy)
-    
+
     def increment_attempt(self) -> int:
         """Increment attempt counter and return new value."""
         self.attempt += 1
         self.last_attempt_at = datetime.now()
         return self.attempt
-    
+
     def calculate_next_retry(self) -> datetime:
         """Calculate the next retry time based on policy."""
         delay = self.policy.get_delay(self.attempt)
         from datetime import timedelta
+
         self.next_retry_at = datetime.now() + timedelta(seconds=delay)
         return self.next_retry_at

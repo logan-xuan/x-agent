@@ -21,30 +21,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Optional
-
-from .agent_bridge import AgentBridge
-from .agent_info import AgentInfo
-from ..runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
 
 from ..agent_core.agent import Agent
-from .envelope import Envelope, EnvelopeIntent
-from .response import GatewayEvent, GatewayEventType
-from .errors import (
-    AgentNotFoundError,
-    DispatchError,
-    EnvelopeValidationError,
-    SessionNotFoundError,
-)
-
-from ..conversation.identity import (
-    AgentType,
-    ChannelProtocol,
-    ChannelType,
-    Identity,
-    IdentityManager,
-    get_identity_manager,
-)
 from ..conversation.context import (
     AgentContext,
     get_current_context,
@@ -52,24 +30,38 @@ from ..conversation.context import (
 )
 from ..conversation.dao import (
     DEFAULT_AGENT_ID,
-    DEFAULT_CHANNEL_ID,
-    DEFAULT_USER_ID,
 )
 from ..conversation.dao.models import (
     Agent as AgentORM,
 )
+from ..conversation.identity import (
+    AgentType,
+    get_identity_manager,
+)
+from ..runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
+from .agent_bridge import AgentBridge
+from .agent_info import AgentInfo
+from .envelope import Envelope, EnvelopeIntent
+from .errors import (
+    AgentNotFoundError,
+    EnvelopeValidationError,
+)
+from .response import GatewayEvent, GatewayEventType
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
 def _get_storage_service():
     """获取 StorageService 实例。"""
     from ..services.storage import get_storage_service
+
     return get_storage_service()
 
 
@@ -104,7 +96,7 @@ class GatewayDispatcher:
         envelope: Envelope,
         *,
         abort_event: asyncio.Event | None = None,
-        agent: Optional[Agent] = None,
+        agent: Agent | None = None,
     ) -> AsyncGenerator[GatewayEvent, None]:
         """分发 Envelope 请求。
 
@@ -166,7 +158,8 @@ class GatewayDispatcher:
 
         if envelope.intent == EnvelopeIntent.CHAT:
             async for event in self._dispatch_chat(
-                envelope, agent_info,
+                envelope,
+                agent_info,
                 abort_event=abort_event,
                 agent=agent,
             ):
@@ -205,6 +198,7 @@ class GatewayDispatcher:
         if existing is None:
             # 使用 Agent 名称作为会话标题
             from ..conversation.dao.models import Agent
+
             agent = Agent.from_config(agent_info.agent_id)
             title = f"{agent.agent_name} 对话" if agent else "Agent 对话"
             await session_manager.ensure_session(
@@ -291,18 +285,14 @@ class GatewayDispatcher:
         if envelope.agent_id:
             agent = AgentORM.from_config(envelope.agent_id)
             if agent is None:
-                raise AgentNotFoundError(
-                    f"Agent not found: agent_id={envelope.agent_id}"
-                )
+                raise AgentNotFoundError(f"Agent not found: agent_id={envelope.agent_id}")
             return AgentInfo.from_orm(agent)
 
         # 优先级 2: 通过 agent_name 查找
         if envelope.agent_name:
             agent = self._find_agent_by_name(envelope.agent_name)
             if agent is None:
-                raise AgentNotFoundError(
-                    f"Agent not found: agent_name={envelope.agent_name}"
-                )
+                raise AgentNotFoundError(f"Agent not found: agent_name={envelope.agent_name}")
             return AgentInfo.from_orm(agent)
 
         # 优先级 3: 通过 bindings 解析（channel + peer -> agent）
@@ -340,7 +330,7 @@ class GatewayDispatcher:
 
         return AgentInfo.from_orm(agent)
 
-    async def _resolve_agent_from_session(self, session_id: str) -> Optional[AgentInfo]:
+    async def _resolve_agent_from_session(self, session_id: str) -> AgentInfo | None:
         """通过 session_id 从数据库查找对应的 agent_id，并加载完整 AgentInfo。
 
         当 Envelope 没有携带 agent_id/agent_name/channel 信息时（如 cron 任务触发），
@@ -388,7 +378,7 @@ class GatewayDispatcher:
             )
             return None
 
-    def _find_agent_by_name(self, agent_name: str) -> Optional[AgentORM]:
+    def _find_agent_by_name(self, agent_name: str) -> AgentORM | None:
         """通过 agent_name 查找 Agent（从配置加载）。
 
         Args:
@@ -449,7 +439,7 @@ class GatewayDispatcher:
         agent_info: AgentInfo,
         *,
         abort_event: asyncio.Event | None = None,
-        agent: Optional[Agent] = None,
+        agent: Agent | None = None,
     ) -> AsyncGenerator[GatewayEvent, None]:
         """分发 CHAT 意图的请求，默认走 runtime controller 主链路。"""
         try:
@@ -522,13 +512,17 @@ class GatewayDispatcher:
 
         output_text = result.output_text or ""
         if output_text:
-            yield GatewayEvent.message_end(
+            event = GatewayEvent.message_end(
                 content=output_text,
                 model=str(result.metadata.get("model", "")),
                 stop_reason=result.finish_reason or "",
                 agent_id=agent_info.agent_id,
                 agent_name=agent_info.agent_name,
             )
+            assistant_msg_id = result.metadata.get("runtime_assistant_msg_id")
+            if isinstance(assistant_msg_id, str) and assistant_msg_id:
+                event.data["message_id"] = assistant_msg_id
+            yield event
         elif result.kind == "abort":
             yield GatewayEvent.error(
                 message=result.finish_reason or "runtime turn aborted",

@@ -1,6 +1,7 @@
 /** 管理后台面板 — 查看和管理 User / Agent / Channel / Session */
 
 import { useEffect, useState, useCallback } from 'react';
+import { AgentEditModal, type AgentVoiceConfig } from './AgentEditModal';
 import { Button } from '../ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
 import { Spinner } from '../ui/Spinner';
@@ -25,6 +26,7 @@ interface Agent {
   workspace: string;
   feature: string;
   create_time?: string | null;  // 配置驱动下可能不存在
+  voice: AgentVoiceConfig;
 }
 
 interface Channel {
@@ -226,6 +228,15 @@ function EditModal({
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                   rows={3}
                 />
+              ) : field.type === 'checkbox' ? (
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={formData[field.key] === 'true'}
+                    onChange={(event) => setFormData({ ...formData, [field.key]: String(event.target.checked) })}
+                  />
+                  <span>启用</span>
+                </label>
               ) : (
                 <input
                   type="text"
@@ -349,7 +360,11 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   };
 
   // 更新 Agent
-  const handleUpdateAgent = async (updated: Record<string, string>) => {
+  const handleUpdateAgent = async (updated: {
+    agent_name: string;
+    agent_persona: string;
+    voice: AgentVoiceConfig;
+  }) => {
     if (!editingAgent) return;
     try {
       const response = await adminFetch(`/admin/agents/${editingAgent.agent_id}`, {
@@ -357,9 +372,13 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
         body: JSON.stringify({
           agent_name: updated.agent_name,
           agent_persona: updated.agent_persona,
+          voice: updated.voice,
         }),
       });
-      if (!response.ok) throw new Error('更新失败');
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || '更新失败');
+      }
       setEditingAgent(null);
       showSuccess('更新成功');
       fetchTabData('agents');
@@ -512,6 +531,17 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                       { key: 'agent_type', label: '类型' },
                       { key: 'workspace', label: '工作空间', render: (value) => <span className="text-xs text-gray-500">{String(value || '-')}</span> },
                       { key: 'feature', label: '特性', render: (value) => <span className="text-xs">{String(value || '-').slice(0, 20)}</span> },
+                      {
+                        key: 'voice',
+                        label: '语音',
+                        render: (_value, row) => (
+                          <span className="text-xs">
+                            {row.voice?.enabled
+                              ? `${row.voice.asr_provider} / ${row.voice.tts_provider}${row.voice.reply_enabled ? ' / reply' : ''}`
+                              : '-'}
+                          </span>
+                        ),
+                      },
                     ]}
                     data={agents}
                     actions={(row) => (
@@ -598,16 +628,8 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
         />
       )}
       {editingAgent && (
-        <EditModal
-          title="编辑 Agent"
-          fields={[
-            { key: 'agent_name', label: 'Agent 名称' },
-            { key: 'agent_persona', label: '人设描述', type: 'textarea' },
-          ]}
-          values={{
-            agent_name: editingAgent.agent_name,
-            agent_persona: editingAgent.agent_persona,
-          }}
+        <AgentEditModal
+          agent={editingAgent}
           onSave={handleUpdateAgent}
           onCancel={() => setEditingAgent(null)}
         />

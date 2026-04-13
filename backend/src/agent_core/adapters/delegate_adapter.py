@@ -12,12 +12,12 @@ Example:
         DelegateAdapter,
         create_delegate_adapter,
     )
-    
+
     # 使用工厂函数创建
     adapter = create_delegate_adapter(
         source_agent_id="leader-001",
     )
-    
+
     # 定向委派
     result = await adapter.delegate(
         target_agent_id="worker-001",
@@ -26,7 +26,7 @@ Example:
             description="分析市场数据",
         ),
     )
-    
+
     # 能力匹配委派
     result = await adapter.delegate_by_capability(
         task=DelegateTask.create(
@@ -44,31 +44,33 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ..agent_bus import AgentBus, AgentBusMessage, get_agent_bus
-from ..ports.delegate_port import DelegatePort, DelegateTask, DelegateResult
+from ..ports.delegate_port import DelegateResult, DelegateTask
 
 if TYPE_CHECKING:
-    from ..hooks import HookRegistry
     from ...services.agent_registry import AgentRegistry
+    from ..hooks import HookRegistry
 
 try:
     from ...utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
 class DelegateAdapter:
     """DelegatePort 适配器.
-    
+
     基于 AgentBus 和 AgentRegistry 实现委派逻辑。
-    
+
     职责:
     1. 实现 DelegatePort Protocol
     2. 通过 AgentBus 发送委派请求和接收响应
     3. 通过 AgentRegistry 进行能力匹配
     4. 在委派前后触发对应的 Hook
-    
+
     Attributes:
         _source_agent_id: 发起委派的 Agent ID
         _bus: AgentBus 实例
@@ -76,7 +78,7 @@ class DelegateAdapter:
         _hooks: HookRegistry 实例（可选）
         _trace_id: 分布式追踪 ID（可选）
     """
-    
+
     def __init__(
         self,
         source_agent_id: str,
@@ -86,7 +88,7 @@ class DelegateAdapter:
         trace_id: str | None = None,
     ) -> None:
         """初始化适配器.
-        
+
         Args:
             source_agent_id: 发起委派的 Agent ID
             bus: AgentBus 实例，为 None 时使用全局实例
@@ -99,47 +101,47 @@ class DelegateAdapter:
         self._registry = registry
         self._hooks = hooks
         self._trace_id = trace_id
-        
+
         # 确保 source agent 订阅消息
         self._bus.subscribe(source_agent_id)
-    
+
     @property
     def source_agent_id(self) -> str:
         """获取发起委派的 Agent ID."""
         return self._source_agent_id
-    
+
     def with_trace_id(self, trace_id: str) -> DelegateAdapter:
         """设置追踪 ID（链式调用）.
-        
+
         Args:
             trace_id: 分布式追踪 ID
-            
+
         Returns:
             self，支持链式调用
         """
         self._trace_id = trace_id
         return self
-    
+
     async def delegate(
         self,
         target_agent_id: str,
         task: DelegateTask,
     ) -> DelegateResult:
         """委派任务给指定 Agent.
-        
+
         Args:
             target_agent_id: 目标 Agent ID
             task: 委派任务描述
-            
+
         Returns:
             DelegateResult: 委派结果
         """
         start_time = time.time()
-        
+
         # 触发 ON_AGENT_DELEGATE Hook
         if self._hooks:
             await self._trigger_delegate_hook(target_agent_id, task)
-        
+
         # 创建请求消息
         request = AgentBusMessage.create_request(
             source=self._source_agent_id,
@@ -153,7 +155,7 @@ class DelegateAdapter:
             trace_id=self._trace_id,
             ttl=task.timeout,
         )
-        
+
         logger.info(
             "Delegating task",
             extra={
@@ -163,17 +165,17 @@ class DelegateAdapter:
                 "message_id": request.message_id,
             },
         )
-        
+
         # 更新 registry 中的任务计数
         if self._registry:
             self._registry.increment_tasks(target_agent_id)
-        
+
         try:
             # 发送请求并等待响应
             response = await self._bus.request(request, timeout=task.timeout)
-            
+
             execution_time = (time.time() - start_time) * 1000
-            
+
             # 检查响应类型
             if response.message_type.value == "error":
                 result = DelegateResult.from_error(
@@ -197,7 +199,7 @@ class DelegateAdapter:
                         "delegation_chain": list(response.delegation_chain),
                     },
                 )
-            
+
             logger.info(
                 "Delegation completed",
                 extra={
@@ -206,8 +208,8 @@ class DelegateAdapter:
                     "execution_time_ms": execution_time,
                 },
             )
-            
-        except asyncio.TimeoutError:
+
+        except TimeoutError:
             execution_time = (time.time() - start_time) * 1000
             result = DelegateResult.from_error(
                 error=f"Delegation to '{target_agent_id}' timed out after {task.timeout}s",
@@ -215,7 +217,7 @@ class DelegateAdapter:
                 execution_time_ms=execution_time,
                 metadata={"message_id": request.message_id, "timeout": True},
             )
-            
+
             logger.warning(
                 "Delegation timed out",
                 extra={
@@ -223,7 +225,7 @@ class DelegateAdapter:
                     "timeout_seconds": task.timeout,
                 },
             )
-            
+
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
             result = DelegateResult.from_error(
@@ -232,7 +234,7 @@ class DelegateAdapter:
                 execution_time_ms=execution_time,
                 metadata={"message_id": request.message_id, "error_type": type(e).__name__},
             )
-            
+
             logger.error(
                 "Delegation failed",
                 extra={
@@ -240,27 +242,27 @@ class DelegateAdapter:
                     "error": str(e),
                 },
             )
-            
+
         finally:
             # 更新 registry 中的任务计数
             if self._registry:
                 self._registry.decrement_tasks(target_agent_id)
-        
+
         # 触发 ON_AGENT_DELEGATE_RESULT Hook
         if self._hooks:
             await self._trigger_delegate_result_hook(target_agent_id, task, result)
-        
+
         return result
-    
+
     async def delegate_by_capability(
         self,
         task: DelegateTask,
     ) -> DelegateResult:
         """根据所需能力自动选择 Agent 并委派.
-        
+
         Args:
             task: 委派任务描述（需设置 required_capabilities）
-            
+
         Returns:
             DelegateResult: 委派结果
         """
@@ -269,23 +271,23 @@ class DelegateAdapter:
                 error="AgentRegistry not available for capability matching",
                 execution_time_ms=0,
             )
-        
+
         if not task.required_capabilities:
             return DelegateResult.from_error(
                 error="No required_capabilities specified in task",
                 execution_time_ms=0,
             )
-        
+
         # 查找最佳匹配的 Agent
         best_agent = self._registry.find_best_match(task.required_capabilities)
-        
+
         if best_agent is None:
             return DelegateResult.from_error(
                 error=f"No agent found with capabilities: {task.required_capabilities}",
                 execution_time_ms=0,
                 metadata={"required_capabilities": task.required_capabilities},
             )
-        
+
         logger.info(
             "Agent matched by capability",
             extra={
@@ -294,19 +296,19 @@ class DelegateAdapter:
                 "agent_load": best_agent.load,
             },
         )
-        
+
         # 委派给匹配的 Agent
         return await self.delegate(best_agent.agent_id, task)
-    
+
     async def broadcast(
         self,
         notification: dict[str, Any],
     ) -> int:
         """广播通知给所有 Agent.
-        
+
         Args:
             notification: 通知内容
-            
+
         Returns:
             int: 接收通知的 Agent 数量
         """
@@ -317,14 +319,14 @@ class DelegateAdapter:
             payload=notification,
             trace_id=self._trace_id,
         )
-        
+
         # 发送广播
         await self._bus.send(message)
-        
+
         # 统计接收者数量（排除自己）
         stats = self._bus.get_statistics()
         recipient_count = max(0, stats.get("subscriber_count", 1) - 1)
-        
+
         logger.info(
             "Broadcast notification sent",
             extra={
@@ -333,24 +335,24 @@ class DelegateAdapter:
                 "notification_type": notification.get("type", "unknown"),
             },
         )
-        
+
         return recipient_count
-    
+
     async def delegate_parallel(
         self,
         tasks: list[tuple[str, DelegateTask]],
     ) -> list[DelegateResult]:
         """并行委派多个任务，等待所有完成.
-        
+
         Args:
             tasks: 任务列表，每项为 (target_agent_id, task)
-            
+
         Returns:
             list[DelegateResult]: 结果列表，顺序与输入一致
         """
         if not tasks:
             return []
-        
+
         logger.info(
             "Starting parallel delegation",
             extra={
@@ -358,31 +360,30 @@ class DelegateAdapter:
                 "targets": [t[0] for t in tasks],
             },
         )
-        
+
         # 创建所有委派任务
-        coroutines = [
-            self.delegate(target_agent_id, task)
-            for target_agent_id, task in tasks
-        ]
-        
+        coroutines = [self.delegate(target_agent_id, task) for target_agent_id, task in tasks]
+
         # 并行执行
         results = await asyncio.gather(*coroutines, return_exceptions=True)
-        
+
         # 处理异常
         final_results: list[DelegateResult] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                final_results.append(DelegateResult.from_error(
-                    error=str(result),
-                    agent_id=tasks[i][0],
-                    metadata={"error_type": type(result).__name__},
-                ))
+                final_results.append(
+                    DelegateResult.from_error(
+                        error=str(result),
+                        agent_id=tasks[i][0],
+                        metadata={"error_type": type(result).__name__},
+                    )
+                )
             else:
                 final_results.append(result)
-        
+
         # 统计结果
         success_count = sum(1 for r in final_results if r.success)
-        
+
         logger.info(
             "Parallel delegation completed",
             extra={
@@ -391,11 +392,11 @@ class DelegateAdapter:
                 "failure_count": len(tasks) - success_count,
             },
         )
-        
+
         return final_results
-    
+
     # === 内部方法: Hook 触发 ===
-    
+
     async def _trigger_delegate_hook(
         self,
         target_agent_id: str,
@@ -403,10 +404,10 @@ class DelegateAdapter:
     ) -> None:
         """触发 ON_AGENT_DELEGATE Hook."""
         from ..hooks import HookContext, HookPoint
-        
+
         if self._hooks is None:
             return
-        
+
         hook_ctx = HookContext(
             point=HookPoint.ON_AGENT_DELEGATE,
             data={
@@ -419,7 +420,7 @@ class DelegateAdapter:
             },
         )
         await self._hooks.trigger(hook_ctx)
-    
+
     async def _trigger_delegate_result_hook(
         self,
         target_agent_id: str,
@@ -428,10 +429,10 @@ class DelegateAdapter:
     ) -> None:
         """触发 ON_AGENT_DELEGATE_RESULT Hook."""
         from ..hooks import HookContext, HookPoint
-        
+
         if self._hooks is None:
             return
-        
+
         hook_ctx = HookContext(
             point=HookPoint.ON_AGENT_DELEGATE_RESULT,
             data={
@@ -449,6 +450,7 @@ class DelegateAdapter:
 
 # === 工厂函数 ===
 
+
 def create_delegate_adapter(
     source_agent_id: str,
     bus: AgentBus | None = None,
@@ -457,14 +459,14 @@ def create_delegate_adapter(
     trace_id: str | None = None,
 ) -> DelegateAdapter:
     """创建 DelegateAdapter 的工厂函数.
-    
+
     Args:
         source_agent_id: 发起委派的 Agent ID
         bus: AgentBus 实例，为 None 时使用全局实例
         registry: AgentRegistry 实例，为 None 时尝试获取全局实例
         hooks: Hook 注册中心（可选）
         trace_id: 分布式追踪 ID（可选）
-        
+
     Returns:
         DelegateAdapter 实例
     """
@@ -472,12 +474,11 @@ def create_delegate_adapter(
     if registry is None:
         try:
             from ...services.agent_registry import get_agent_registry
+
             registry = get_agent_registry()
         except ImportError:
-            logger.warning(
-                "AgentRegistry not available, capability matching will be disabled"
-            )
-    
+            logger.warning("AgentRegistry not available, capability matching will be disabled")
+
     adapter = DelegateAdapter(
         source_agent_id=source_agent_id,
         bus=bus,
@@ -485,7 +486,7 @@ def create_delegate_adapter(
         hooks=hooks,
         trace_id=trace_id,
     )
-    
+
     logger.info(
         "DelegateAdapter created",
         extra={
@@ -494,5 +495,5 @@ def create_delegate_adapter(
             "has_hooks": hooks is not None,
         },
     )
-    
+
     return adapter

@@ -16,29 +16,30 @@
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
-
 
 # =============================================================================
 # 枚举类型 (T008-T009)
 # =============================================================================
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     """技能执行风险等级。
-    
+
     决定确认要求和执行策略。
     """
+
     LOW = "low"  # 只读，无副作用
     MEDIUM = "medium"  # 文件修改、内容创建
     HIGH = "high"  # 删除、外部请求、代码执行
     CRITICAL = "critical"  # 系统操作、安全相关
 
 
-class DataAccessLevel(str, Enum):
+class DataAccessLevel(StrEnum):
     """技能操作的数据访问级别。"""
+
     READ_ONLY = "read_only"
     READ_WRITE = "read_write"
     CREATE = "create"
@@ -46,22 +47,24 @@ class DataAccessLevel(str, Enum):
     EXECUTE = "execute"
 
 
-class ApprovalMode(str, Enum):
+class ApprovalMode(StrEnum):
     """技能执行审批模式。
-    
+
     控制用户确认的处理方式。
     """
+
     AUTO = "auto"  # 自动执行
     CONFIRM = "confirm"  # 需要用户确认
     APPROVAL = "approval"  # 需要审批流程
     MANUAL = "manual"  # 仅手动触发
 
 
-class ExecutionStage(str, Enum):
+class ExecutionStage(StrEnum):
     """渐进式技能执行的阶段。
-    
+
     支持试运行、计划生成和回滚能力。
     """
+
     DRY_RUN = "dry_run"  # 模拟执行
     PLAN = "plan"  # 生成执行计划
     CONFIRM = "confirm"  # 等待用户确认
@@ -71,10 +74,11 @@ class ExecutionStage(str, Enum):
 
 class SkillSource(IntEnum):
     """技能注册来源（含优先级）。
-    
+
     数值越小优先级越高。
     同 skill_id 时 USER 技能覆盖 SYSTEM 技能。
     """
+
     USER = 100  # 用户/工作区级别（最高优先级）
     SYSTEM = 200  # 系统内置
 
@@ -87,12 +91,13 @@ class SkillSource(IntEnum):
 @dataclass
 class SkillManifest:
     """完整的技能清单定义。
-    
+
     核心数据模型，包含所有技能元数据。
     映射自 manifest.json 或从 SKILL.md frontmatter 解析。
-    
+
     必需字段: skill_id, name, version, description
     """
+
     # 身份标识
     skill_id: str
     name: str
@@ -100,25 +105,25 @@ class SkillManifest:
     description: str
     vendor: str | None = None
     signature: str | None = None
-    
+
     # 能力描述
     description_detail: str | None = None
     tags: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
     examples: list[str] = field(default_factory=list)
-    
+
     # 输入输出契约
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     error_schema: dict[str, Any] | None = None
-    
+
     # 执行配置
     endpoint: str | None = None
     callable: str | None = None
     timeout_ms: int = 30000
     max_retries: int = 3
     idempotency: bool = False
-    
+
     # 约束条件
     preconditions: list[str] = field(default_factory=list)
     postconditions: list[str] = field(default_factory=list)
@@ -127,7 +132,7 @@ class SkillManifest:
     requires_bins: list[str] = field(default_factory=list)
     requires_env: list[str] = field(default_factory=list)
     requires_config: list[str] = field(default_factory=list)
-    
+
     # 风险与策略
     risk_level: RiskLevel = RiskLevel.LOW
     data_access: DataAccessLevel = DataAccessLevel.READ_ONLY
@@ -138,27 +143,27 @@ class SkillManifest:
     auto_trigger: bool = True
     user_invocable: bool = True
     disable_model_invocation: bool = False
-    
+
     # 可观测性
     telemetry: bool = True
     trace_fields: list[str] = field(default_factory=list)
     redaction_rules: list[str] = field(default_factory=list)
-    
+
     # 渐进式执行
     stages: list[ExecutionStage] = field(default_factory=list)
     supports_dry_run: bool = False
     supports_rollback: bool = False
-    
+
     # 目录结构（运行时元数据）
     path: Path | None = None
     has_scripts: bool = False
     has_references: bool = False
     has_assets: bool = False
-    
+
     # 展示信息
     emoji: str | None = None
     homepage: str | None = None
-    
+
     # 遗留兼容
     keywords: list[str] = field(default_factory=list)
     argument_hint: str | None = None
@@ -167,21 +172,21 @@ class SkillManifest:
     context: str | None = None
     license: str | None = None
     priority: int = 999
-    
+
     # 扩展字段
     extra: dict[str, Any] = field(default_factory=dict)
-    
+
     # 校验正则
     _SKILL_ID_PATTERN = re.compile(r"^[a-z0-9-]+$")
     _VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+.*$")
-    
+
     def __post_init__(self) -> None:
         """初始化后校验清单。"""
         self._validate_skill_id()
         self._validate_version()
         self._validate_name()
         self._validate_description()
-    
+
     def _validate_skill_id(self) -> None:
         """校验 skill_id 格式。"""
         if not self.skill_id:
@@ -192,30 +197,28 @@ class SkillManifest:
             raise ValueError(
                 f"skill_id must be kebab-case (lowercase, numbers, hyphens): {self.skill_id}"
             )
-    
+
     def _validate_version(self) -> None:
         """校验版本号是否遵循 semver。"""
         if not self.version:
             raise ValueError("version is required")
         if not self._VERSION_PATTERN.match(self.version):
-            raise ValueError(
-                f"version must follow semver format (e.g., 1.0.0): {self.version}"
-            )
-    
+            raise ValueError(f"version must follow semver format (e.g., 1.0.0): {self.version}")
+
     def _validate_name(self) -> None:
         """校验名称。"""
         if not self.name:
             raise ValueError("name is required")
         if len(self.name) > 128:
             raise ValueError(f"name too long: {len(self.name)} > 128")
-    
+
     def _validate_description(self) -> None:
         """校验描述。"""
         if not self.description:
             raise ValueError("description is required")
         if len(self.description) > 1024:
             raise ValueError(f"description too long: {len(self.description)} > 1024")
-    
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式。"""
         result: dict[str, Any] = {
@@ -224,13 +227,13 @@ class SkillManifest:
             "version": self.version,
             "description": self.description,
         }
-        
+
         # 可选身份字段
         if self.vendor:
             result["vendor"] = self.vendor
         if self.signature:
             result["signature"] = self.signature
-        
+
         # 能力描述
         if self.description_detail:
             result["description_detail"] = self.description_detail
@@ -240,7 +243,7 @@ class SkillManifest:
             result["domains"] = self.domains
         if self.examples:
             result["examples"] = self.examples
-        
+
         # 输入输出契约
         if self.input_schema:
             result["input_schema"] = self.input_schema
@@ -248,7 +251,7 @@ class SkillManifest:
             result["output_schema"] = self.output_schema
         if self.error_schema:
             result["error_schema"] = self.error_schema
-        
+
         # 执行配置
         if self.endpoint:
             result["endpoint"] = self.endpoint
@@ -257,7 +260,7 @@ class SkillManifest:
         result["timeout_ms"] = self.timeout_ms
         result["max_retries"] = self.max_retries
         result["idempotency"] = self.idempotency
-        
+
         # 风险与策略
         result["risk_level"] = self.risk_level.value
         result["data_access"] = self.data_access.value
@@ -265,26 +268,26 @@ class SkillManifest:
         result["approval_mode"] = self.approval_mode.value
         result["auto_trigger"] = self.auto_trigger
         result["user_invocable"] = self.user_invocable
-        
+
         # 渐进式执行
         result["supports_dry_run"] = self.supports_dry_run
         result["supports_rollback"] = self.supports_rollback
-        
+
         # 目录结构
         if self.path:
             result["path"] = str(self.path)
         result["has_scripts"] = self.has_scripts
         result["has_references"] = self.has_references
         result["has_assets"] = self.has_assets
-        
+
         # 展示信息
         if self.emoji:
             result["emoji"] = self.emoji
         if self.homepage:
             result["homepage"] = self.homepage
-        
+
         return result
-    
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SkillManifest":
         """从字典创建 SkillManifest。"""
@@ -292,20 +295,20 @@ class SkillManifest:
         risk_level = data.get("risk_level", "low")
         if isinstance(risk_level, str):
             risk_level = RiskLevel(risk_level)
-        
+
         data_access = data.get("data_access", "read_only")
         if isinstance(data_access, str):
             data_access = DataAccessLevel(data_access)
-        
+
         approval_mode = data.get("approval_mode", "auto")
         if isinstance(approval_mode, str):
             approval_mode = ApprovalMode(approval_mode)
-        
+
         # 解析路径
         path = data.get("path")
         if path and isinstance(path, str):
             path = Path(path)
-        
+
         return cls(
             skill_id=data["skill_id"],
             name=data["name"],
@@ -370,6 +373,7 @@ class SkillManifest:
 @dataclass
 class SearchBudget:
     """技能搜索的预算约束。"""
+
     max_latency_ms: int = 1000
     max_cost: float = 0.01
 
@@ -377,9 +381,10 @@ class SearchBudget:
 @dataclass
 class SkillSearchContext:
     """技能发现的输入上下文。
-    
+
     包含用户意图和可用参数，用于技能匹配。
     """
+
     user_input: str
     available_params: dict[str, Any] = field(default_factory=dict)
     user_permissions: list[str] = field(default_factory=list)
@@ -395,44 +400,45 @@ class SkillSearchContext:
 @dataclass
 class SkillCard:
     """技能发现输出格式。
-    
+
     提供技能选择的决策支持信息。
     """
+
     # 基本信息
     skill_id: str
     name: str
     description: str
     emoji: str | None = None
-    
+
     # 匹配信息
     relevance_score: float = 0.0
     match_reason: str = ""
-    
+
     # 风险与策略
     risk_level: RiskLevel = RiskLevel.LOW
     side_effect: bool = False
     approval_mode: ApprovalMode = ApprovalMode.AUTO
     approval_required: bool = False
-    
+
     # 参数信息
     input_schema: dict[str, Any] | None = None
     required_params: list[str] = field(default_factory=list)
     available_params: list[str] = field(default_factory=list)
     missing_params: list[str] = field(default_factory=list)
     schema_fit_score: float = 0.0
-    
+
     # 执行选项
     supports_dry_run: bool = False
     supports_rollback: bool = False
-    
+
     # 预估
     estimated_latency_ms: int = 0
     estimated_cost: float = 0.0
-    
+
     # 快速参考
     quick_reference: str = ""
     when_to_use: str = ""
-    
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典。"""
         return {
@@ -468,27 +474,28 @@ class SkillCard:
 @dataclass
 class SkillExecutionContext:
     """技能执行运行时上下文。"""
+
     # 会话信息
     session_id: str
     conversation_id: str = ""
-    
+
     # 用户信息
     user_input: str = ""
     user_permissions: list[str] = field(default_factory=list)
-    
+
     # 参数
     params: dict[str, Any] = field(default_factory=dict)
     missing_params: list[str] = field(default_factory=list)
-    
+
     # 执行阶段
     stage: ExecutionStage = ExecutionStage.COMMIT
     dry_run: bool = False
     auto_confirm: bool = False
-    
+
     # 状态
     state: dict[str, Any] = field(default_factory=dict)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
-    
+
     # 追踪
     trace_id: str = ""
     parent_span_id: str = ""
@@ -502,31 +509,32 @@ class SkillExecutionContext:
 @dataclass
 class SkillExecutionResult:
     """技能执行结果。"""
+
     success: bool
     stage: ExecutionStage = ExecutionStage.COMMIT
-    
+
     # 输出
     output: str = ""
     data: dict[str, Any] = field(default_factory=dict)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
-    
+
     # 错误
     error: str = ""
     error_code: str = ""
     recoverable: bool = False
-    
+
     # 回滚信息
     rollback_available: bool = False
     rollback_data: dict[str, Any] = field(default_factory=dict)
-    
+
     # 遥测
     duration_ms: int = 0
     tokens_used: int = 0
-    
+
     # 确认状态
     confirmation_pending: bool = False
     confirmation_message: str = ""
-    
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典。"""
         return {
@@ -554,20 +562,21 @@ class SkillExecutionResult:
 @dataclass
 class SkillScore:
     """多维度评分结果。
-    
+
     技能相关性在 5 个维度上的评分明细。
     """
+
     skill_id: str
     total: float = 0.0
     breakdown: dict[str, float] = field(default_factory=dict)
-    
+
     # 标准权重
     WEIGHT_SEMANTIC: float = 0.35
     WEIGHT_SCHEMA_FIT: float = 0.25
     WEIGHT_POLICY: float = 0.20
     WEIGHT_LATENCY: float = 0.10
     WEIGHT_RELIABILITY: float = 0.10
-    
+
     def __post_init__(self) -> None:
         """初始化默认评分明细。"""
         if not self.breakdown:
@@ -578,15 +587,15 @@ class SkillScore:
                 "latency": 0.0,
                 "reliability": 0.0,
             }
-    
+
     def calculate_total(self) -> float:
         """计算加权总分。"""
         self.total = (
-            self.breakdown.get("semantic", 0.0) * self.WEIGHT_SEMANTIC +
-            self.breakdown.get("schema_fit", 0.0) * self.WEIGHT_SCHEMA_FIT +
-            self.breakdown.get("policy", 0.0) * self.WEIGHT_POLICY +
-            self.breakdown.get("latency", 0.0) * self.WEIGHT_LATENCY +
-            self.breakdown.get("reliability", 0.0) * self.WEIGHT_RELIABILITY
+            self.breakdown.get("semantic", 0.0) * self.WEIGHT_SEMANTIC
+            + self.breakdown.get("schema_fit", 0.0) * self.WEIGHT_SCHEMA_FIT
+            + self.breakdown.get("policy", 0.0) * self.WEIGHT_POLICY
+            + self.breakdown.get("latency", 0.0) * self.WEIGHT_LATENCY
+            + self.breakdown.get("reliability", 0.0) * self.WEIGHT_RELIABILITY
         )
         return self.total
 
@@ -599,9 +608,10 @@ class SkillScore:
 @dataclass
 class SkillCapabilityVector:
     """语义搜索用能力向量。
-    
+
     包含从技能描述生成的嵌入向量。
     """
+
     skill_id: str
     capability_text: str
     tool_signature: str = ""
@@ -620,19 +630,20 @@ class SkillCapabilityVector:
 @dataclass
 class SkillMetadata:
     """遗留技能元数据（向后兼容）。
-    
+
     已弃用: 请使用 SkillManifest。
     保留此类仅为兼容现有代码。
     """
+
     name: str
     description: str
     path: Path
-    
+
     # 目录结构
     has_scripts: bool = False
     has_references: bool = False
     has_assets: bool = False
-    
+
     # 可选字段
     disable_model_invocation: bool = False
     user_invocable: bool = True
@@ -645,7 +656,7 @@ class SkillMetadata:
     auto_trigger: bool = True
     priority: int = 999
     extra: dict[str, Any] = field(default_factory=dict)
-    
+
     def __post_init__(self) -> None:
         """校验元数据。"""
         if not self.name:
@@ -653,14 +664,12 @@ class SkillMetadata:
         if len(self.name) > 64:
             raise ValueError(f"Skill name too long: {len(self.name)} > 64")
         if not all(c.islower() or c.isdigit() or c in "-_" for c in self.name):
-            raise ValueError(
-                f"Skill name must be lowercase alphanumeric with hyphens: {self.name}"
-            )
+            raise ValueError(f"Skill name must be lowercase alphanumeric with hyphens: {self.name}")
         if not self.description:
             raise ValueError("Skill description is required")
         if len(self.description) > 1024:
             raise ValueError(f"Skill description too long: {len(self.description)} > 1024")
-    
+
     def to_manifest(self) -> SkillManifest:
         """转换为 SkillManifest。"""
         return SkillManifest(
@@ -684,7 +693,7 @@ class SkillMetadata:
             priority=self.priority,
             extra=self.extra,
         )
-    
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典。"""
         return {
@@ -706,7 +715,7 @@ class SkillMetadata:
             "priority": self.priority,
             **self.extra,
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SkillMetadata":
         """从字典创建。"""

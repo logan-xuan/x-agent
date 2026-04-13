@@ -22,35 +22,35 @@ AgentInvoker 是非用户发起的 Agent 对话的统一入口。
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Optional
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Any
 from uuid import uuid4
 
-from .agent_bridge import AgentBridge
-from .agent_info import AgentInfo
-from .connection_registry import get_connection_registry, PushStatus
-from .dispatcher import GatewayDispatcher
-from .message_bus import MessageBus, OutboundMessage, get_message_bus
-from .response import GatewayEvent, GatewayEventType
-from .session_resolver import ActiveSessionResolver
-from ..runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
-
-from ..conversation.identity import ChannelType, ChannelProtocol
 from ..conversation.context import AgentContext, set_current_context
 from ..conversation.dao.models import Agent as AgentORM
+from ..conversation.identity import ChannelType
+from ..runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
+from .agent_bridge import AgentBridge
+from .agent_info import AgentInfo
+from .dispatcher import GatewayDispatcher
+from .message_bus import OutboundMessage, get_message_bus
+from .response import GatewayEventType
+from .session_resolver import ActiveSessionResolver
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
-class InvokeSource(str, Enum):
+class InvokeSource(StrEnum):
     """触发来源。"""
+
     CRON = "cron"
     WEBHOOK = "webhook"
     AGENT = "agent"
@@ -69,6 +69,7 @@ class InvokeResult:
         response: Agent 的回复内容。
         error: 错误信息（如有）。
     """
+
     session_id: str = ""
     trace_id: str = ""
     delivered: bool = False
@@ -120,11 +121,7 @@ class AgentInvoker:
     def _sanitize_runtime_metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
         """Drop reserved runtime/context keys before splatting metadata into context constructors."""
         reserved = {"source", "agent_id", "session_id", "channel_type"}
-        return {
-            key: value
-            for key, value in dict(metadata or {}).items()
-            if key not in reserved
-        }
+        return {key: value for key, value in dict(metadata or {}).items() if key not in reserved}
 
     def _canonicalize_agent_id(self, agent_id: str) -> str:
         """将别名 Agent ID 归一化为配置中的标准 ID。"""
@@ -177,7 +174,9 @@ class AgentInvoker:
         try:
             # 1. Session 解析
             resolved_session_id = await self._resolve_session(
-                session_id, canonical_agent_id, channel_type,
+                session_id,
+                canonical_agent_id,
+                channel_type,
             )
 
             # 2. 构建 Identity + AgentContext
@@ -196,7 +195,8 @@ class AgentInvoker:
 
             # 4. 确保 Session 存在
             await self._dispatcher.ensure_session(
-                resolved_session_id, agent_info,
+                resolved_session_id,
+                agent_info,
             )
 
             # 5. 创建 Agent + 加载历史
@@ -207,8 +207,14 @@ class AgentInvoker:
                 extra={
                     "agent_id": agent_info.agent_id,
                     "workspace": agent_info.workspace,
-                    "system_prompt_length": len(agent._system_prompt) if hasattr(agent, "_system_prompt") else 0,
-                    "system_prompt_head": (agent._system_prompt[:200] if hasattr(agent, "_system_prompt") and agent._system_prompt else ""),
+                    "system_prompt_length": len(agent._system_prompt)
+                    if hasattr(agent, "_system_prompt")
+                    else 0,
+                    "system_prompt_head": (
+                        agent._system_prompt[:200]
+                        if hasattr(agent, "_system_prompt") and agent._system_prompt
+                        else ""
+                    ),
                 },
             )
 
@@ -382,7 +388,7 @@ class AgentInvoker:
     ) -> tuple[bool, bool]:
         """将 Agent 响应推送到客户端。
 
-        注意：消息持久化已在 agent_bridge.py 的 _persist_assistant_messages() 
+        注意：消息持久化已在 agent_bridge.py 的 _persist_assistant_messages()
         中完成（AgentEndEvent 时自动触发），此处只需负责实时推送。
 
         Args:
@@ -423,7 +429,9 @@ class AgentInvoker:
     ):
         """Prepare a runtime turn request for internal triggers without invoking legacy agent_loop."""
         canonical_agent_id = self._canonicalize_agent_id(agent_id)
-        resolved_session_id = await self._resolve_session(session_id, canonical_agent_id, channel_type)
+        resolved_session_id = await self._resolve_session(
+            session_id, canonical_agent_id, channel_type
+        )
         context_metadata = self._sanitize_runtime_metadata(metadata)
         context = AgentContext.for_internal(
             session_id=resolved_session_id,

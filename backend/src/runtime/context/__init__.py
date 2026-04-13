@@ -16,13 +16,23 @@ from .compression_pipeline import (
     CompressionResult,
     DefaultCompressionPipeline,
 )
-from .profile_provider import CompressionProfileProvider, build_default_compression_profiles
-from .compression_verifier import CompressionPostCheck, CompressionVerifyRequest, DefaultCompressionVerifier
+from .compression_verifier import (
+    CompressionPostCheck,
+    CompressionVerifyRequest,
+    DefaultCompressionVerifier,
+)
 from .history_view import DefaultHistoryViewBuilder, HistoryView
-from .memory_flush import MemoryFlushRequest, MemoryFlushResult, NoopMemoryFlusher
+from .memory_flush import (
+    ArtifactBackedMemoryFlusher,
+    MemoryFlushRequest,
+    MemoryFlushResult,
+    NoopMemoryFlusher,
+)
+from .profile_provider import CompressionProfileProvider, build_default_compression_profiles
 
 __all__ = [
     "ArtifactWriteRequest",
+    "ArtifactBackedMemoryFlusher",
     "CompressionContext",
     "CompressionAutocompactConfig",
     "CompressionCollapseConfig",

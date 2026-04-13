@@ -8,18 +8,22 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from ...config.manager import ConfigManager
-from ...conversation.context import get_current_context, set_current_context as set_context, AgentContext
+from ...conversation.context import AgentContext
+from ...conversation.context import set_current_context as set_context
 from ...conversation.identity import ChannelProtocol, ChannelType
 from ...gateway.dispatcher import GatewayDispatcher
 from ...gateway.envelope import Envelope
+from ...models.compression import CompressionEvent
 from ...runtime.types import TurnResult
 from ...services.llm.router import LLMRouter
+from ...services.storage import get_storage_service
 from ...tools.builtin import AliyunWebSearchTool
 from ...utils.logger import get_logger
 
@@ -35,6 +39,7 @@ BACKEND_ROOT = Path(__file__).parent.parent.parent.parent
 
 class PromptTestRequest(BaseModel):
     """Prompt test request model."""
+
     messages: list[dict[str, str]]
     stream: bool = False
     system_prompt: str | None = None
@@ -42,6 +47,7 @@ class PromptTestRequest(BaseModel):
 
 class PromptTestResponse(BaseModel):
     """Prompt test response model."""
+
     content: str
     model: str
     provider: str
@@ -51,6 +57,7 @@ class PromptTestResponse(BaseModel):
 
 class PromptLogEntry(BaseModel):
     """Prompt log entry model."""
+
     timestamp: str
     session_id: str | None
     trace_id: str | None
@@ -58,6 +65,8 @@ class PromptLogEntry(BaseModel):
     model: str
     latency_ms: int
     success: bool
+    call_id: str | None = None
+    source: str | None = None
     request: dict[str, Any]
     response: str
     token_usage: dict[str, int] | None = None
@@ -66,6 +75,7 @@ class PromptLogEntry(BaseModel):
 
 class PromptLogsResponse(BaseModel):
     """Prompt logs response model."""
+
     logs: list[PromptLogEntry]
     total: int
 
@@ -82,6 +92,8 @@ class RuntimeTurnDebugRequest(BaseModel):
     runtime_timeout_ms: int | None = Field(default=30000, ge=1)
     runtime_max_tokens: int | None = Field(default=None, ge=1)
     runtime_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    runtime_compression_profile_name: str | None = None
+    runtime_compression_context_window: int | None = Field(default=None, ge=1000)
     runtime_force_non_streaming: bool = False
     timeout_fallback_mode: Literal["abort", "final"] | None = None
     disable_tools: bool = False
@@ -151,11 +163,11 @@ def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
 
     try:
         # Read all lines and parse JSON
-        with open(PROMPT_LOG_PATH, "r", encoding="utf-8") as f:
+        with open(PROMPT_LOG_PATH, encoding="utf-8") as f:
             lines = f.readlines()
 
-        # Parse last N lines (most recent first)
-        for line in reversed(lines[-limit:]):
+        parsed_logs: list[dict[str, Any]] = []
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
@@ -167,7 +179,7 @@ def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
                 message_content = outer_entry.get("message", "")
 
                 # Parse the inner JSON string to get the actual log data
-                if isinstance(message_content, str) and message_content.startswith('{'):
+                if isinstance(message_content, str) and message_content.startswith("{"):
                     try:
                         inner_entry = json.loads(message_content)
 
@@ -176,18 +188,20 @@ def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
                         combined_entry = {**outer_entry, **inner_entry}
 
                         # Remove the original 'message' field since we've parsed its contents
-                        if 'message' in combined_entry:
-                            del combined_entry['message']
+                        if "message" in combined_entry:
+                            del combined_entry["message"]
 
-                        logs.append(combined_entry)
+                        parsed_logs.append(combined_entry)
                     except json.JSONDecodeError:
-                        logger.warning("Failed to parse inner JSON from message field",
-                                     extra={"line_start": line[:100]})
+                        logger.warning(
+                            "Failed to parse inner JSON from message field",
+                            extra={"line_start": line[:100]},
+                        )
                         # If we can't parse the inner JSON, use the outer object as fallback
-                        logs.append(outer_entry)
+                        parsed_logs.append(outer_entry)
                 else:
                     # If message field is not a JSON string, use the outer object
-                    logs.append(outer_entry)
+                    parsed_logs.append(outer_entry)
 
             except json.JSONDecodeError:
                 logger.warning("Failed to parse log entry", extra={"line": line[:100]})
@@ -197,10 +211,59 @@ def _read_prompt_logs(limit: int = 20) -> list[dict[str, Any]]:
         logger.error("Error reading prompt logs", extra={"error": str(e)})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to read prompt logs: {str(e)}"
-        )
+            detail=f"Failed to read prompt logs: {str(e)}",
+        ) from e
 
-    return logs
+    merged_logs = _merge_prompt_logs(parsed_logs)
+    return list(reversed(merged_logs[-limit:]))
+
+
+def _merge_prompt_logs(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged_by_key: dict[str, dict[str, Any]] = {}
+    ordered_keys: list[str] = []
+
+    for index, entry in enumerate(sorted(logs, key=lambda item: item.get("timestamp", ""))):
+        call_id = str(entry.get("call_id") or "").strip()
+        trace_id = str(entry.get("trace_id") or "").strip()
+        source = str(entry.get("source") or "router").strip() or "router"
+        key = call_id or f"{trace_id}:{entry.get('timestamp','')}:{index}"
+
+        if key not in merged_by_key:
+            merged_by_key[key] = dict(entry)
+            ordered_keys.append(key)
+            continue
+
+        current = merged_by_key[key]
+        request_payload = dict(current.get("request", {}) or {})
+        incoming_request = dict(entry.get("request", {}) or {})
+
+        if source == "runtime_prepared":
+            request_payload = incoming_request
+            current["source"] = "runtime_prepared"
+        elif current.get("source") != "runtime_prepared" and incoming_request:
+            request_payload = incoming_request
+
+        current["request"] = request_payload
+        current["timestamp"] = max(
+            str(current.get("timestamp", "")),
+            str(entry.get("timestamp", "")),
+        )
+        for field in ("session_id", "trace_id", "provider", "model", "error"):
+            incoming_value = entry.get(field)
+            if incoming_value not in (None, ""):
+                current[field] = incoming_value
+        if entry.get("latency_ms") not in (None, 0):
+            current["latency_ms"] = entry.get("latency_ms")
+        if entry.get("response") not in (None, ""):
+            current["response"] = entry.get("response")
+        if entry.get("token_usage") is not None:
+            current["token_usage"] = entry.get("token_usage")
+        if entry.get("success") is False:
+            current["success"] = False
+        current["call_id"] = call_id or current.get("call_id")
+        current["source"] = current.get("source") or source
+
+    return [merged_by_key[key] for key in ordered_keys]
 
 
 def _parse_channel_type(value: str) -> ChannelType:
@@ -226,15 +289,15 @@ def _parse_channel_protocol(value: str) -> ChannelProtocol:
 @router.get("/prompt-logs", response_model=PromptLogsResponse)
 async def get_prompt_logs(limit: int = 20) -> PromptLogsResponse:
     """Get recent prompt interaction logs.
-    
+
     Args:
         limit: Maximum number of log entries to return (default: 20)
-        
+
     Returns:
         List of prompt log entries
     """
     logs = _read_prompt_logs(limit=limit)
-    
+
     # Convert to response model
     entries = []
     for log in logs:
@@ -246,57 +309,59 @@ async def get_prompt_logs(limit: int = 20) -> PromptLogsResponse:
             model=log.get("model", "unknown"),
             latency_ms=log.get("latency_ms", 0),
             success=log.get("success", False),
+            call_id=log.get("call_id"),
+            source=log.get("source"),
             request=log.get("request", {}),
             response=log.get("response", ""),
             token_usage=log.get("token_usage"),
             error=log.get("error"),
         )
         entries.append(entry)
-    
+
     return PromptLogsResponse(logs=entries, total=len(entries))
 
 
 @router.post("/prompt-test", response_model=PromptTestResponse)
 async def test_prompt(request: PromptTestRequest) -> PromptTestResponse:
     """Test a prompt directly with the primary LLM.
-    
+
     Args:
         request: Prompt test request with messages and optional system prompt
-        
+
     Returns:
         LLM response with metadata
     """
     start_time = time.time()
-    
+
     try:
         # Initialize LLM router
         router = LLMRouter()
-        
+
         if not router.primary:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No primary LLM provider available"
+                detail="No primary LLM provider available",
             )
-        
+
         # Build messages
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
         messages.extend(request.messages)
-        
+
         # Set up context for logging
         ctx = AgentContext()
         set_context(ctx)
-        
+
         # Call LLM (non-streaming for simplicity)
         response = await router.chat(
             messages=messages,
             stream=False,
             session_id="dev-test",
         )
-        
+
         latency_ms = int((time.time() - start_time) * 1000)
-        
+
         return PromptTestResponse(
             content=response.content,
             model=router.primary.model_id,
@@ -304,15 +369,15 @@ async def test_prompt(request: PromptTestRequest) -> PromptTestResponse:
             latency_ms=latency_ms,
             token_usage=response.usage,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Prompt test failed", extra={"error": str(e)})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Prompt test failed: {str(e)}"
-        )
+            detail=f"Prompt test failed: {str(e)}",
+        ) from e
 
 
 @router.post("/runtime-turn", response_model=RuntimeTurnDebugResponse)
@@ -327,6 +392,10 @@ async def debug_runtime_turn(request: RuntimeTurnDebugRequest) -> RuntimeTurnDeb
         metadata["runtime_max_tokens"] = request.runtime_max_tokens
     if request.runtime_temperature is not None:
         metadata["runtime_temperature"] = request.runtime_temperature
+    if request.runtime_compression_profile_name is not None:
+        metadata["_runtime_compression_profile_name"] = request.runtime_compression_profile_name
+    if request.runtime_compression_context_window is not None:
+        metadata["runtime_compression_context_window"] = request.runtime_compression_context_window
     if request.runtime_force_non_streaming:
         metadata["runtime_force_non_streaming"] = True
     if request.disable_tools:
@@ -524,41 +593,42 @@ async def _probe_with_base_url_override(
 @router.post("/prompt-test/stream")
 async def test_prompt_stream(request: PromptTestRequest) -> StreamingResponse:
     """Test a prompt with streaming response.
-    
+
     Args:
         request: Prompt test request with messages and optional system prompt
-        
+
     Returns:
         Streaming response with SSE format
     """
+
     async def generate() -> AsyncGenerator[str, None]:
         start_time = time.time()
-        
+
         try:
             # Initialize LLM router
             router = LLMRouter()
-            
+
             if not router.primary:
                 yield f"data: {json.dumps({'error': 'No primary LLM provider available'})}\n\n"
                 return
-            
+
             # Build messages
             messages = []
             if request.system_prompt:
                 messages.append({"role": "system", "content": request.system_prompt})
             messages.extend(request.messages)
-            
+
             # Set up context for logging
             ctx = AgentContext()
             set_context(ctx)
-            
+
             # Call LLM with streaming
             stream = await router.chat(
                 messages=messages,
                 stream=True,
                 session_id="dev-test",
             )
-            
+
             full_content = ""
             async for chunk in stream:
                 full_content += chunk.content
@@ -568,9 +638,9 @@ async def test_prompt_stream(request: PromptTestRequest) -> StreamingResponse:
                     "model": chunk.model or router.primary.model_id,
                 }
                 yield f"data: {json.dumps(data)}\n\n"
-            
+
             latency_ms = int((time.time() - start_time) * 1000)
-            
+
             # Send final message with metadata
             final_data = {
                 "type": "done",
@@ -580,19 +650,19 @@ async def test_prompt_stream(request: PromptTestRequest) -> StreamingResponse:
                 "latency_ms": latency_ms,
             }
             yield f"data: {json.dumps(final_data)}\n\n"
-            
+
         except Exception as e:
             logger.error("Streaming prompt test failed", extra={"error": str(e)})
             error_data = {"type": "error", "error": str(e)}
             yield f"data: {json.dumps(error_data)}\n\n"
-    
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-        }
+        },
     )
 
 
@@ -600,13 +670,16 @@ async def test_prompt_stream(request: PromptTestRequest) -> StreamingResponse:
 # Compression Test APIs
 # =============================================================================
 
+
 class CompressionTestRequest(BaseModel):
     """Compression test request model."""
+
     test_type: str  # "token_counter" | "compressor"
 
 
 class CompressionTestResponse(BaseModel):
     """Compression test response model."""
+
     success: bool
     test_type: str
     output: str
@@ -617,15 +690,15 @@ class CompressionTestResponse(BaseModel):
 @router.post("/compression-test", response_model=CompressionTestResponse)
 async def run_compression_test(request: CompressionTestRequest) -> CompressionTestResponse:
     """Run compression-related unit tests.
-    
+
     Args:
         request: Test request with test_type ("token_counter" or "compressor")
-        
+
     Returns:
         Test execution results with output
     """
     start_time = time.time()
-    
+
     # Validate test type
     valid_tests = ["token_counter", "compressor"]
     if request.test_type not in valid_tests:
@@ -634,18 +707,18 @@ async def run_compression_test(request: CompressionTestRequest) -> CompressionTe
             test_type=request.test_type,
             output="",
             duration_ms=0,
-            error=f"Invalid test type. Must be one of: {', '.join(valid_tests)}"
+            error=f"Invalid test type. Must be one of: {', '.join(valid_tests)}",
         )
-    
+
     # Map test type to test file
     test_files = {
         "token_counter": "tests/unit/test_token_counter.py",
         "compressor": "tests/unit/test_compressor.py",
     }
-    
+
     test_file = test_files[request.test_type]
     test_path = BACKEND_ROOT / test_file
-    
+
     # Check if test file exists
     if not test_path.exists():
         return CompressionTestResponse(
@@ -653,9 +726,9 @@ async def run_compression_test(request: CompressionTestRequest) -> CompressionTe
             test_type=request.test_type,
             output="",
             duration_ms=0,
-            error=f"Test file not found: {test_file}"
+            error=f"Test file not found: {test_file}",
         )
-    
+
     try:
         # Run pytest with verbose output
         result = subprocess.run(
@@ -663,24 +736,26 @@ async def run_compression_test(request: CompressionTestRequest) -> CompressionTe
             cwd=BACKEND_ROOT,
             capture_output=True,
             text=True,
-            timeout=60  # 60 second timeout
+            timeout=60,  # 60 second timeout
         )
-        
+
         duration_ms = int((time.time() - start_time) * 1000)
-        
+
         # Combine stdout and stderr
         output = result.stdout
         if result.stderr:
             output += "\n\n=== STDERR ===\n" + result.stderr
-        
+
         return CompressionTestResponse(
             success=result.returncode == 0,
             test_type=request.test_type,
             output=output,
             duration_ms=duration_ms,
-            error=None if result.returncode == 0 else f"Tests failed with exit code {result.returncode}"
+            error=None
+            if result.returncode == 0
+            else f"Tests failed with exit code {result.returncode}",
         )
-        
+
     except subprocess.TimeoutExpired:
         duration_ms = int((time.time() - start_time) * 1000)
         return CompressionTestResponse(
@@ -688,17 +763,19 @@ async def run_compression_test(request: CompressionTestRequest) -> CompressionTe
             test_type=request.test_type,
             output="",
             duration_ms=duration_ms,
-            error="Test execution timed out (60s)"
+            error="Test execution timed out (60s)",
         )
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
-        logger.error("Compression test failed", extra={"error": str(e), "test_type": request.test_type})
+        logger.error(
+            "Compression test failed", extra={"error": str(e), "test_type": request.test_type}
+        )
         return CompressionTestResponse(
             success=False,
             test_type=request.test_type,
             output="",
             duration_ms=duration_ms,
-            error=f"Failed to run tests: {str(e)}"
+            error=f"Failed to run tests: {str(e)}",
         )
 
 
@@ -715,14 +792,14 @@ async def list_compression_tests() -> dict[str, Any]:
                 "id": "token_counter",
                 "name": "Token计数器测试",
                 "description": "测试TokenCounter的计数准确性，包括中英文、边界条件",
-                "file": "tests/unit/test_token_counter.py"
+                "file": "tests/unit/test_token_counter.py",
             },
             {
                 "id": "compressor",
                 "name": "压缩器测试",
                 "description": "测试ContextCompressor的压缩逻辑、消息列表构建",
-                "file": "tests/unit/test_compressor.py"
-            }
+                "file": "tests/unit/test_compressor.py",
+            },
         ]
     }
 
@@ -731,51 +808,34 @@ async def list_compression_tests() -> dict[str, Any]:
 # Compression Record Query APIs
 # =============================================================================
 
-class CompressionRecordQueryResponse(BaseModel):
-    """Compression record query response model."""
-    records: list[dict]
-    total: int
-
-
-# =============================================================================
-# Compression Record Query APIs
-# =============================================================================
-
-from typing import Any, Dict, List
-from pydantic import BaseModel
-from fastapi import Query
-from sqlalchemy import select
-import json
-from datetime import datetime
-
-from ...models.compression import CompressionEvent
-from ...services.storage import get_storage_service
-
 
 class CompressionRecord(BaseModel):
     """Individual compression record."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
-    sessionId: str
-    originalMessageCount: int
-    compressedMessageCount: int
-    originalTokenCount: int
-    compressedTokenCount: int
-    compressionRatio: float
-    compressionTime: str
-    originalMessages: List[Dict[str, Any]]
-    compressedMessages: List[Dict[str, Any]]
+    session_id: str = Field(alias="sessionId")
+    original_message_count: int = Field(alias="originalMessageCount")
+    compressed_message_count: int = Field(alias="compressedMessageCount")
+    original_token_count: int = Field(alias="originalTokenCount")
+    compressed_token_count: int = Field(alias="compressedTokenCount")
+    compression_ratio: float = Field(alias="compressionRatio")
+    compression_time: str = Field(alias="compressionTime")
+    original_messages: list[dict[str, Any]] = Field(alias="originalMessages")
+    compressed_messages: list[dict[str, Any]] = Field(alias="compressedMessages")
 
 
 class CompressionRecordQueryResponse(BaseModel):
     """Compression record query response model."""
-    records: List[CompressionRecord]
+
+    records: list[CompressionRecord]
     total: int
 
 
 @router.get("/compression-records", response_model=CompressionRecordQueryResponse)
 async def query_compression_records(
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0)
 ) -> CompressionRecordQueryResponse:
     """Query compression history records.
 
@@ -806,8 +866,12 @@ async def query_compression_records(
         records = []
         for event in events:
             try:
-                original_messages = json.loads(event.original_messages) if event.original_messages else []
-                compressed_messages = json.loads(event.compressed_messages) if event.compressed_messages else []
+                original_messages = (
+                    json.loads(event.original_messages) if event.original_messages else []
+                )
+                compressed_messages = (
+                    json.loads(event.compressed_messages) if event.compressed_messages else []
+                )
             except json.JSONDecodeError:
                 # If JSON parsing fails, use empty arrays
                 original_messages = []
@@ -821,16 +885,15 @@ async def query_compression_records(
                 originalTokenCount=event.original_token_count,
                 compressedTokenCount=event.compressed_token_count,
                 compressionRatio=event.compression_ratio,
-                compressionTime=event.compression_time.isoformat() if event.compression_time else "",
+                compressionTime=event.compression_time.isoformat()
+                if event.compression_time
+                else "",
                 originalMessages=original_messages,
-                compressedMessages=compressed_messages
+                compressedMessages=compressed_messages,
             )
             records.append(record)
 
-    return CompressionRecordQueryResponse(
-        records=records,
-        total=total
-    )
+    return CompressionRecordQueryResponse(records=records, total=total)
 
 
 # ============ Web Search Debugging Endpoint (Aliyun OpenSearch) ============
@@ -838,12 +901,14 @@ async def query_compression_records(
 
 class WebSearchRequest(BaseModel):
     """Web search request model."""
+
     query: str
     max_results: int = 5
 
 
 class WebSearchResult(BaseModel):
     """Web search result item."""
+
     title: str
     snippet: str
     url: str
@@ -851,6 +916,7 @@ class WebSearchResult(BaseModel):
 
 class WebSearchResponse(BaseModel):
     """Web search response model."""
+
     success: bool
     query: str
     results: list[WebSearchResult]
@@ -862,30 +928,27 @@ class WebSearchResponse(BaseModel):
 @router.post("/web-search", response_model=WebSearchResponse)
 async def web_search_debug(request: WebSearchRequest) -> WebSearchResponse:
     """Test web search functionality (Aliyun OpenSearch).
-    
+
     Args:
         request: Web search request with query and max_results
-        
+
     Returns:
         Web search results with raw and formatted output
     """
     try:
         # Create web search tool instance (Aliyun OpenSearch)
         tool = AliyunWebSearchTool()
-        
+
         # Execute search
-        result = await tool.execute(
-            query=request.query,
-            max_results=request.max_results
-        )
-        
+        result = await tool.execute(query=request.query, max_results=request.max_results)
+
         # Parse results from formatted output
         parsed_results = []
         if result.success and result.output:
             # Try to extract structured data from formatted output
-            lines = result.output.split('\n')
+            lines = result.output.split("\n")
             current_result = {}
-            
+
             for line in lines:
                 line = line.strip()
                 if not line:
@@ -893,46 +956,42 @@ async def web_search_debug(request: WebSearchRequest) -> WebSearchResponse:
                         parsed_results.append(WebSearchResult(**current_result))
                         current_result = {}
                     continue
-                
-                if line.startswith('🔍') or line.startswith('Search results for:') or line.startswith('No results'):
+
+                if (
+                    line.startswith("🔍")
+                    or line.startswith("Search results for:")
+                    or line.startswith("No results")
+                ):
                     continue
-                
+
                 # Parse numbered results
-                if '.' in line and '**' in line:
+                if "." in line and "**" in line:
                     # Title line
-                    title = line.split('**')[1] if '**' in line else line
-                    current_result['title'] = title.replace('**', '')
-                elif line.startswith('🔗') or line.startswith('URL:'):
-                    current_result['url'] = line.replace('🔗', '').replace('URL:', '').strip()
-                elif not line.startswith(str(range(10))) and 'title' in current_result:
+                    title = line.split("**")[1] if "**" in line else line
+                    current_result["title"] = title.replace("**", "")
+                elif line.startswith("🔗") or line.startswith("URL:"):
+                    current_result["url"] = line.replace("🔗", "").replace("URL:", "").strip()
+                elif not line.startswith(str(range(10))) and "title" in current_result:
                     # Snippet line
-                    current_result['snippet'] = line
-            
+                    current_result["snippet"] = line
+
             # Add last result if exists
-            if current_result and 'title' in current_result:
-                if 'snippet' not in current_result:
-                    current_result['snippet'] = ''
-                if 'url' not in current_result:
-                    current_result['url'] = ''
+            if current_result and "title" in current_result:
+                if "snippet" not in current_result:
+                    current_result["snippet"] = ""
+                if "url" not in current_result:
+                    current_result["url"] = ""
                 parsed_results.append(WebSearchResult(**current_result))
-        
+
         return WebSearchResponse(
             success=result.success,
             query=request.query,
             results=parsed_results,
             output=result.output,
             error=result.error,
-            metadata=result.metadata
+            metadata=result.metadata,
         )
-        
+
     except Exception as e:
-        logger.error(
-            "Web search debug failed",
-            extra={"query": request.query, "error": str(e)}
-        )
-        return WebSearchResponse(
-            success=False,
-            query=request.query,
-            results=[],
-            error=str(e)
-        )
+        logger.error("Web search debug failed", extra={"query": request.query, "error": str(e)})
+        return WebSearchResponse(success=False, query=request.query, results=[], error=str(e))

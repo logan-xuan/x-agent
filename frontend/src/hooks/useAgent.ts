@@ -34,6 +34,45 @@ export interface AgentToolCall {
     durationMs?: number;
 }
 
+export interface AgentAudioAttachment {
+    assetId?: string;
+    publicUrl?: string;
+    mimeType?: string;
+    format?: string;
+    provider?: string;
+    voice?: string;
+    durationMs?: number;
+}
+
+export interface AgentTranscript {
+    text: string;
+    provider?: string;
+    language?: string;
+}
+
+export interface AgentVoiceError {
+    stage: 'asr' | 'tts';
+    message: string;
+    code?: string;
+    recoverable?: boolean;
+}
+
+export type AgentVoicePhase =
+    | 'uploading'
+    | 'transcribing'
+    | 'ready'
+    | 'error';
+
+export interface AgentVoiceState {
+    phase: AgentVoicePhase;
+    label: string;
+    durationMs?: number;
+}
+
+export interface AgentVoiceSendOptions {
+    durationMs?: number;
+}
+
 /** Agent 消息 */
 export interface AgentMessage {
     id: string;
@@ -50,6 +89,10 @@ export interface AgentMessage {
     };
     toolCalls?: AgentToolCall[];
     thinking?: string;
+    audio?: AgentAudioAttachment;
+    transcript?: AgentTranscript;
+    voiceError?: AgentVoiceError;
+    voiceState?: AgentVoiceState;
 }
 
 /** useAgent hook 选项 */
@@ -68,10 +111,123 @@ interface UseAgentReturn {
     streamingModel: string;
     connectionStatus: ConnectionStatus;
     sendMessage: (content: string) => void;
+    sendVoiceMessage: (file: File, options?: AgentVoiceSendOptions) => Promise<void>;
     abort: () => void;
     clearMessages: () => void;
     createSession: (title?: string, agentId?: string) => Promise<{ id: string; title: string }>;
     loadHistory: (sessionId: string) => Promise<void>;
+}
+
+function audioFormatFromFile(file: File): string {
+    const fromName = file.name.split('.').pop()?.toLowerCase();
+    if (fromName) {
+        return fromName;
+    }
+
+    const mime = file.type.toLowerCase();
+    if (mime.includes('webm')) return 'webm';
+    if (mime.includes('wav')) return 'wav';
+    if (mime.includes('mpeg') || mime.includes('mp3')) return 'mp3';
+    if (mime.includes('ogg')) return 'ogg';
+    if (mime.includes('mp4') || mime.includes('m4a')) return 'm4a';
+    return 'webm';
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    bytes.forEach((byte) => {
+        binary += String.fromCharCode(byte);
+    });
+    return window.btoa(binary);
+}
+
+function applyVoiceErrorToLastAssistant(
+    messages: AgentMessage[],
+    voiceError: AgentVoiceError,
+    messageId?: string,
+): AgentMessage[] {
+    if (messageId) {
+        return messages.map((message) => (
+            message.id === messageId
+                ? { ...message, voiceError }
+                : message
+        ));
+    }
+
+    let updated = false;
+    return [...messages].reverse().map((message) => {
+        if (!updated && message.role === 'assistant') {
+            updated = true;
+            return { ...message, voiceError };
+        }
+        return message;
+    }).reverse();
+}
+
+function normalizeDurationMs(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return undefined;
+    }
+    return Math.round(value);
+}
+
+function normalizeAudioAttachment(raw: unknown): AgentAudioAttachment | undefined {
+    if (!raw || typeof raw !== 'object') {
+        return undefined;
+    }
+
+    const candidate = raw as Record<string, unknown>;
+    const publicUrl = typeof candidate.playbackUrl === 'string'
+        ? candidate.playbackUrl
+        : typeof candidate.playback_url === 'string'
+            ? candidate.playback_url
+            : typeof candidate.publicUrl === 'string'
+        ? candidate.publicUrl
+        : typeof candidate.public_url === 'string'
+            ? candidate.public_url
+            : undefined;
+
+    return {
+        assetId: typeof candidate.assetId === 'string'
+            ? candidate.assetId
+            : typeof candidate.asset_id === 'string'
+                ? candidate.asset_id
+                : undefined,
+        publicUrl,
+        mimeType: typeof candidate.mimeType === 'string'
+            ? candidate.mimeType
+            : typeof candidate.mime_type === 'string'
+                ? candidate.mime_type
+                : undefined,
+        format: typeof candidate.format === 'string' ? candidate.format : undefined,
+        provider: typeof candidate.provider === 'string' ? candidate.provider : undefined,
+        voice: typeof candidate.voice === 'string' ? candidate.voice : undefined,
+        durationMs: normalizeDurationMs(
+            typeof candidate.durationMs === 'number' ? candidate.durationMs : candidate.duration_ms,
+        ),
+    };
+}
+
+function deriveAudioDurationMs(file: File): number | undefined {
+    if (typeof file.size !== 'number') {
+        return undefined;
+    }
+
+    const format = audioFormatFromFile(file);
+    const bytesPerSecondMap: Record<string, number> = {
+        mp3: 16000,
+        m4a: 16000,
+        webm: 12000,
+        wav: 32000,
+        ogg: 12000,
+    };
+    const bytesPerSecond = bytesPerSecondMap[format];
+    if (!bytesPerSecond) {
+        return undefined;
+    }
+
+    return Math.max(1000, Math.round((file.size / bytesPerSecond) * 1000));
 }
 
 function normalizeWsBaseUrl(rawUrl?: string): string {
@@ -126,6 +282,7 @@ export function useAgent({
 
     // 跟踪当前消息的工具调用
     const pendingToolCallsRef = useRef<Map<string, AgentToolCall>>(new Map());
+    const pendingVoiceMessageIdRef = useRef<string | null>(null);
 
     // WebSocket URL - 使用新的 agent 端点
     const wsUrl = currentSessionId ? `${wsBaseUrl}/agent/${currentSessionId}` : '';
@@ -189,8 +346,9 @@ export function useAgent({
                         break;
                     }
 
+                    const audioReply = normalizeAudioAttachment(msg.audio_reply);
                     const assistantMessage: AgentMessage = {
-                        id: `assistant-${Date.now()}`,
+                        id: (msg.message_id as string) || `assistant-${Date.now()}`,
                         sessionId: currentSessionId || '',
                         role: 'assistant',
                         content: finalContent,
@@ -201,6 +359,14 @@ export function useAgent({
                         usage: msg.usage as { inputTokens?: number; outputTokens?: number } | undefined,
                         toolCalls: finalizedToolCalls,
                         thinking: streamingThinking || undefined,
+                        audio: audioReply,
+                        voiceState: audioReply
+                            ? {
+                                phase: 'ready',
+                                label: '语音回复已生成',
+                                durationMs: audioReply.durationMs,
+                            }
+                            : undefined,
                     };
 
                     setMessages(prev => [...prev, assistantMessage]);
@@ -211,6 +377,60 @@ export function useAgent({
 
                     // 清空待处理的工具调用
                     pendingToolCallsRef.current.clear();
+                }
+                break;
+
+            case 'transcript':
+                {
+                    const transcriptText = (msg.content as string) || '';
+                    if (!transcriptText.trim()) {
+                        break;
+                    }
+
+                    const transcript: AgentTranscript = {
+                        text: transcriptText,
+                        provider: msg.provider as string | undefined,
+                        language: msg.language as string | undefined,
+                    };
+                    const audioAttachment = normalizeAudioAttachment(msg.audio);
+                    const pendingId = pendingVoiceMessageIdRef.current;
+
+                    if (pendingId) {
+                        setMessages(prev => prev.map((message) => (
+                            message.id === pendingId
+                                ? {
+                                    ...message,
+                                    content: transcriptText,
+                                    audio: audioAttachment,
+                                    transcript,
+                                    voiceState: {
+                                        phase: 'ready',
+                                        label: '语音已转写',
+                                        durationMs: audioAttachment?.durationMs ?? message.voiceState?.durationMs,
+                                    },
+                                }
+                                : message
+                        )));
+                        pendingVoiceMessageIdRef.current = null;
+                    } else {
+                        const userVoiceMessage: AgentMessage = {
+                            id: `user-audio-${Date.now()}`,
+                            sessionId: currentSessionId || '',
+                            role: 'user',
+                            content: transcriptText,
+                            createdAt: new Date().toISOString(),
+                            audio: audioAttachment,
+                            transcript,
+                            voiceState: {
+                                phase: 'ready',
+                                label: '语音已转写',
+                                durationMs: audioAttachment?.durationMs,
+                            },
+                        };
+
+                        setMessages(prev => [...prev, userVoiceMessage]);
+                    }
+                    setIsLoading(true);
                 }
                 break;
 
@@ -257,6 +477,46 @@ export function useAgent({
             case 'error':
                 // 错误消息
                 console.error('[Agent] Error:', msg.message);
+                {
+                    const stage = msg.stage as string | undefined;
+                    const voiceError: AgentVoiceError = {
+                        stage: stage === 'tts' ? 'tts' : 'asr',
+                        message: (msg.message as string) || '语音处理失败，请重试',
+                        code: msg.code as string | undefined,
+                        recoverable: msg.recoverable as boolean | undefined,
+                    };
+
+                    if (stage === 'asr' && pendingVoiceMessageIdRef.current) {
+                        const pendingId = pendingVoiceMessageIdRef.current;
+                        setMessages(prev => prev.map((message) => (
+                            message.id === pendingId
+                                ? {
+                                    ...message,
+                                    content: '语音转写失败',
+                                    audio: normalizeAudioAttachment(msg.audio) || message.audio,
+                                    transcript: {
+                                        text: '语音转写失败',
+                                        provider: message.transcript?.provider,
+                                        language: message.transcript?.language,
+                                    },
+                                    voiceError,
+                                    voiceState: {
+                                        phase: 'error',
+                                        label: '语音转写失败',
+                                        durationMs: message.voiceState?.durationMs,
+                                    },
+                                }
+                                : message
+                        )));
+                        pendingVoiceMessageIdRef.current = null;
+                    } else if (stage === 'tts') {
+                        setMessages(prev => applyVoiceErrorToLastAssistant(
+                            prev,
+                            voiceError,
+                            msg.message_id as string | undefined,
+                        ));
+                    }
+                }
                 setIsLoading(false);
                 break;
 
@@ -350,6 +610,71 @@ export function useAgent({
         send({ content });
     }, [status, currentSessionId, send]);
 
+    const sendVoiceMessage = useCallback(async (file: File, options?: AgentVoiceSendOptions) => {
+        if (status !== 'connected' || !currentSessionId) {
+            return;
+        }
+
+        const audioBuffer = await file.arrayBuffer();
+        const audioBase64 = arrayBufferToBase64(audioBuffer);
+        const previewUrl = URL.createObjectURL(file);
+        const pendingMessageId = `user-audio-${Date.now()}`;
+        const durationMs = options?.durationMs ?? deriveAudioDurationMs(file);
+        pendingVoiceMessageIdRef.current = pendingMessageId;
+
+        const userMessage: AgentMessage = {
+            id: pendingMessageId,
+            sessionId: currentSessionId,
+            role: 'user',
+            content: '语音消息转写中...',
+            createdAt: new Date().toISOString(),
+            audio: {
+                publicUrl: previewUrl,
+                mimeType: file.type || 'audio/webm',
+                format: audioFormatFromFile(file),
+                durationMs,
+            },
+            transcript: {
+                text: '语音消息转写中...',
+            },
+            voiceState: {
+                phase: 'uploading',
+                label: '语音上传中',
+                durationMs,
+            },
+        };
+
+        setMessages(prev => [...prev, userMessage]);
+        setIsLoading(true);
+        setStreamingContent('');
+        setStreamingThinking('');
+        pendingToolCallsRef.current.clear();
+
+        setMessages(prev => prev.map((message) => (
+            message.id === pendingMessageId
+                ? {
+                    ...message,
+                    voiceState: {
+                        phase: 'transcribing',
+                        label: '语音转写中',
+                        durationMs,
+                    },
+                }
+                : message
+        )));
+
+        send({
+            type: 'audio_message',
+            audio: {
+                data: audioBase64,
+                mime_type: file.type || 'audio/webm',
+                format: audioFormatFromFile(file),
+                filename: file.name,
+                ...(durationMs ? { duration_ms: durationMs } : {}),
+            },
+        });
+    }, [status, currentSessionId, send]);
+
     // 中止处理
     const abort = useCallback(() => {
         if (status === 'connected') {
@@ -364,6 +689,7 @@ export function useAgent({
         setStreamingContent('');
         setStreamingThinking('');
         pendingToolCallsRef.current.clear();
+        pendingVoiceMessageIdRef.current = null;
     }, []);
 
     // 创建新会话，调用后端 API 持久化 session 记录
@@ -389,19 +715,46 @@ export function useAgent({
                     }
                     return true;
                 })
-                .map((msg: Message) => ({
-                    id: msg.id,
-                    sessionId: msg.session_id,
-                    role: msg.role as 'user' | 'assistant',
-                    content: msg.content,
-                    createdAt: msg.created_at,
-                    model: msg.metadata?.model,
-                    provider: undefined,
-                    stopReason: undefined,
-                    usage: undefined,
-                    toolCalls: undefined,
-                    thinking: undefined,
-                }));
+                .map((msg: Message) => {
+                    const audio = msg.role === 'assistant'
+                        ? normalizeAudioAttachment(msg.metadata?.audio_reply)
+                        : normalizeAudioAttachment(msg.metadata?.audio);
+
+                    return {
+                        id: msg.id,
+                        sessionId: msg.session_id,
+                        role: msg.role as 'user' | 'assistant',
+                        content: msg.content,
+                        createdAt: msg.created_at,
+                        model: msg.metadata?.model,
+                        provider: undefined,
+                        stopReason: undefined,
+                        usage: undefined,
+                        toolCalls: undefined,
+                        thinking: undefined,
+                        audio,
+                        transcript: msg.metadata?.transcript
+                            ? {
+                                text: msg.metadata.transcript.text,
+                                provider: msg.metadata.transcript.provider,
+                                language: msg.metadata.transcript.language,
+                            }
+                            : undefined,
+                        voiceState: msg.role === 'assistant' && audio
+                            ? {
+                                phase: 'ready',
+                                label: '语音回复已生成',
+                                durationMs: audio.durationMs,
+                            }
+                            : msg.role === 'user' && audio
+                                ? {
+                                    phase: 'ready',
+                                    label: '语音已转写',
+                                    durationMs: audio.durationMs,
+                                }
+                                : undefined,
+                    };
+                });
             setMessages(agentMessages);
             console.log('[Agent] History loaded:', agentMessages.length, 'messages');
         } catch (error) {
@@ -420,6 +773,7 @@ export function useAgent({
         streamingModel,
         connectionStatus: status,
         sendMessage,
+        sendVoiceMessage,
         abort,
         clearMessages,
         createSession,

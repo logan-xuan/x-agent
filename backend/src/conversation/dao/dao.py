@@ -16,8 +16,6 @@ Session 相关操作已迁移到 SessionManager（backend/src/conversation/sessi
 
 from __future__ import annotations
 
-from typing import Optional
-
 from sqlalchemy import select
 
 from ...services.storage import StorageService
@@ -33,7 +31,7 @@ class UserDAO:
     def __init__(self, storage: StorageService) -> None:
         self._storage = storage
 
-    async def create(self, name: str, user_id: Optional[str] = None) -> User:
+    async def create(self, name: str, user_id: str | None = None) -> User:
         """创建用户。
 
         Args:
@@ -55,7 +53,7 @@ class UserDAO:
         logger.info("创建用户", extra={"user_id": user.user_id, "name": name})
         return user
 
-    async def get_by_id(self, user_id: str) -> Optional[User]:
+    async def get_by_id(self, user_id: str) -> User | None:
         """根据 ID 获取用户。"""
         async with self._storage.session() as db_session:
             return await db_session.get(User, user_id)
@@ -68,7 +66,7 @@ class UserDAO:
             )
             return list(result.scalars().all())
 
-    async def update_name(self, user_id: str, name: str) -> Optional[User]:
+    async def update_name(self, user_id: str, name: str) -> User | None:
         """更新用户名称。
 
         Args:

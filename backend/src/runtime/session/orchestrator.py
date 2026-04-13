@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 from ..repositories import (
     ArtifactRepository,
     CompressionEventRecord,
     CompressionEventRepository,
+    InMemoryArtifactRepository,
+    InMemoryCompressionEventRepository,
     InMemorySessionRepository,
     InMemoryStateSnapshotRepository,
     InMemorySummaryRepository,
-    InMemoryArtifactRepository,
-    InMemoryCompressionEventRepository,
     InMemoryTranscriptRepository,
-    SessionRepository,
     ResumeSessionState,
+    SessionRepository,
     StateSnapshotRecord,
     StateSnapshotRepository,
     SummaryRecord,
@@ -25,7 +25,7 @@ from ..repositories import (
     TranscriptEntry,
     TranscriptRepository,
 )
-from ..types import ArtifactRef, ChildResult, RouteMeta, SessionDescriptor, SpawnPacket, TurnRequest
+from ..types import ArtifactRef, ChildResult, SessionDescriptor, SpawnPacket, TurnRequest
 from .announcement_manager import AnnouncementManager
 from .child_session import ChildSessionManager, ChildTurnEnvelope
 from .lane_scheduler import InMemoryLaneScheduler
@@ -39,11 +39,17 @@ class DefaultSessionOrchestrator:
     """Resolve sessions, schedule work, and manage child-session announcements."""
 
     session_store: SessionRepository = field(default_factory=InMemorySessionRepository)
-    transcript_repository: TranscriptRepository = field(default_factory=InMemoryTranscriptRepository)
+    transcript_repository: TranscriptRepository = field(
+        default_factory=InMemoryTranscriptRepository
+    )
     summary_repository: SummaryRepository = field(default_factory=InMemorySummaryRepository)
     artifact_repository: ArtifactRepository = field(default_factory=InMemoryArtifactRepository)
-    compression_event_repository: CompressionEventRepository = field(default_factory=InMemoryCompressionEventRepository)
-    state_snapshot_repository: StateSnapshotRepository = field(default_factory=InMemoryStateSnapshotRepository)
+    compression_event_repository: CompressionEventRepository = field(
+        default_factory=InMemoryCompressionEventRepository
+    )
+    state_snapshot_repository: StateSnapshotRepository = field(
+        default_factory=InMemoryStateSnapshotRepository
+    )
     route_resolver: DefaultRouteResolver = field(default_factory=DefaultRouteResolver)
     lane_scheduler: InMemoryLaneScheduler = field(default_factory=InMemoryLaneScheduler)
     spawn_manager: SpawnManager = field(default_factory=SpawnManager)
@@ -53,7 +59,9 @@ class DefaultSessionOrchestrator:
 
     async def resolve_or_create(self, event: Any) -> SessionDescriptor:
         """Resolve a session from an event-like payload or create a new one."""
-        session_key = self._event_value(event, "session_key") or self._event_value(event, "session_id")
+        session_key = self._event_value(event, "session_key") or self._event_value(
+            event, "session_id"
+        )
         if not session_key:
             session_key = f"session:{uuid4().hex[:8]}"
 
@@ -80,6 +88,7 @@ class DefaultSessionOrchestrator:
 
     async def enqueue_turn(self, session: SessionDescriptor, request: TurnRequest) -> TurnRequest:
         """Schedule a turn request into the correct lane and return it after execution."""
+
         async def run() -> TurnRequest:
             _ = request
             return request
@@ -88,7 +97,9 @@ class DefaultSessionOrchestrator:
         await self.session_store.put(activated)
         return await self.lane_scheduler.enqueue(session.lane, run)
 
-    async def spawn_child(self, parent: SessionDescriptor, packet: SpawnPacket) -> SessionDescriptor:
+    async def spawn_child(
+        self, parent: SessionDescriptor, packet: SpawnPacket
+    ) -> SessionDescriptor:
         """Create and store a child session descriptor."""
         child = await self.spawn_manager.spawn_child(parent, packet, route=parent.route)
         await self.session_store.put(child)
@@ -107,7 +118,9 @@ class DefaultSessionOrchestrator:
             packet=packet,
         )
 
-    async def complete_child(self, child: SessionDescriptor, result: ChildResult) -> dict[str, object]:
+    async def complete_child(
+        self, child: SessionDescriptor, result: ChildResult
+    ) -> dict[str, object]:
         """Build and queue a child completion announcement."""
         if child.parent_session_key is None:
             raise ValueError("child session has no parent_session_key")
@@ -156,7 +169,9 @@ class DefaultSessionOrchestrator:
         await self.artifact_repository.put(artifact, content)
         return artifact
 
-    async def append_compression_event(self, event: CompressionEventRecord) -> CompressionEventRecord:
+    async def append_compression_event(
+        self, event: CompressionEventRecord
+    ) -> CompressionEventRecord:
         """Persist one compression telemetry record and return it."""
         await self.compression_event_repository.append(event)
         return event

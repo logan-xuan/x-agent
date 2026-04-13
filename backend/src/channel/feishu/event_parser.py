@@ -72,9 +72,15 @@ class FeishuEventParser:
                     "event": {
                         "sender": {
                             "sender_id": {
-                                "open_id": getattr(sender.sender_id, "open_id", "") if sender.sender_id else "",
-                                "user_id": getattr(sender.sender_id, "user_id", "") if sender.sender_id else "",
-                                "union_id": getattr(sender.sender_id, "union_id", "") if sender.sender_id else "",
+                                "open_id": getattr(sender.sender_id, "open_id", "")
+                                if sender.sender_id
+                                else "",
+                                "user_id": getattr(sender.sender_id, "user_id", "")
+                                if sender.sender_id
+                                else "",
+                                "union_id": getattr(sender.sender_id, "union_id", "")
+                                if sender.sender_id
+                                else "",
                             },
                             "sender_type": getattr(sender, "sender_type", ""),
                             "tenant_key": getattr(sender, "tenant_key", ""),
@@ -92,13 +98,19 @@ class FeishuEventParser:
                                 {
                                     "key": getattr(mention, "key", ""),
                                     "id": {
-                                        "open_id": getattr(mention.id, "open_id", "") if hasattr(mention, "id") and mention.id else "",
-                                        "user_id": getattr(mention.id, "user_id", "") if hasattr(mention, "id") and mention.id else "",
+                                        "open_id": getattr(mention.id, "open_id", "")
+                                        if hasattr(mention, "id") and mention.id
+                                        else "",
+                                        "user_id": getattr(mention.id, "user_id", "")
+                                        if hasattr(mention, "id") and mention.id
+                                        else "",
                                     },
                                     "name": getattr(mention, "name", ""),
                                 }
                                 for mention in (message.mentions or [])
-                            ] if message.mentions else [],
+                            ]
+                            if message.mentions
+                            else [],
                         },
                     },
                 }

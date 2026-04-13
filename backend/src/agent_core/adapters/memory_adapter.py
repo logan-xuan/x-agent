@@ -15,6 +15,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 class XAgentMemoryAdapter:
     """MemoryPort 适配器，通过注入的 MemoryManager 访问记忆系统.
 

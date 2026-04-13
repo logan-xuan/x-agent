@@ -79,7 +79,7 @@ class InMemoryArtifactStore:
         self.preview_tail_chars = max(preview_tail_chars, 0)
 
     def _dedupe_key(self, item: ArtifactWriteRequest) -> str:
-        payload = f"{item.kind}\n{item.location or ''}\n{item.content}".encode("utf-8")
+        payload = f"{item.kind}\n{item.location or ''}\n{item.content}".encode()
         return hashlib.sha1(payload).hexdigest()
 
     def _build_preview(self, content: str) -> str:

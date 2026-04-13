@@ -24,30 +24,30 @@ if TYPE_CHECKING:
 class SkillCategory(Enum):
     """技能分类."""
 
-    DOCUMENT = "document"      # 文档处理
-    SEARCH = "search"          # 搜索相关
-    CODE = "code"              # 代码相关
+    DOCUMENT = "document"  # 文档处理
+    SEARCH = "search"  # 搜索相关
+    CODE = "code"  # 代码相关
     COMMUNICATION = "communication"  # 通信相关
     AUTOMATION = "automation"  # 自动化
-    ANALYSIS = "analysis"      # 分析类
-    CREATIVE = "creative"      # 创意类
-    UTILITY = "utility"        # 工具类
+    ANALYSIS = "analysis"  # 分析类
+    CREATIVE = "creative"  # 创意类
+    UTILITY = "utility"  # 工具类
 
 
 class SkillStatus(Enum):
     """技能状态."""
 
     REGISTERED = "registered"  # 已注册
-    LOADED = "loaded"          # 已加载
-    ACTIVE = "active"          # 活跃中
-    DISABLED = "disabled"      # 已禁用
-    ERROR = "error"            # 错误状态
+    LOADED = "loaded"  # 已加载
+    ACTIVE = "active"  # 活跃中
+    DISABLED = "disabled"  # 已禁用
+    ERROR = "error"  # 错误状态
 
 
 @dataclass
 class SkillMetadata:
     """技能元数据.
-    
+
     Attributes:
         skill_id: 技能唯一标识
         name: 显示名称
@@ -76,7 +76,7 @@ class SkillMetadata:
 @dataclass
 class SkillContext:
     """技能执行上下文.
-    
+
     Attributes:
         session_id: 会话ID
         user_input: 用户输入
@@ -95,7 +95,7 @@ class SkillContext:
 @dataclass
 class SkillResult:
     """技能执行结果.
-    
+
     Attributes:
         success: 是否成功
         output: 输出内容
@@ -113,21 +113,21 @@ class SkillResult:
 
 class SkillPort(Protocol):
     """技能系统接口.
-    
+
     agent_core 通过此接口管理和执行技能。
     实现者需要提供注册、发现、执行等能力。
-    
+
     Example:
         class SimpleSkillManager:
             def __init__(self):
                 self._skills: dict[str, SkillMetadata] = {}
-            
+
             async def register(self, metadata, executor):
                 self._skills[metadata.skill_id] = {
                     "metadata": metadata,
                     "executor": executor,
                 }
-            
+
             async def execute(self, skill_id, context):
                 skill = self._skills.get(skill_id)
                 if skill:
@@ -141,11 +141,11 @@ class SkillPort(Protocol):
         executor: Callable[[SkillContext], Awaitable[SkillResult]],
     ) -> bool:
         """注册技能.
-        
+
         Args:
             metadata: 技能元数据
             executor: 执行函数
-        
+
         Returns:
             bool: 是否注册成功
         """
@@ -153,10 +153,10 @@ class SkillPort(Protocol):
 
     async def unregister(self, skill_id: str) -> bool:
         """注销技能.
-        
+
         Args:
             skill_id: 技能ID
-        
+
         Returns:
             bool: 是否注销成功
         """
@@ -169,12 +169,12 @@ class SkillPort(Protocol):
         query: str | None = None,
     ) -> list[SkillMetadata]:
         """发现技能.
-        
+
         Args:
             category: 按分类筛选（可选）
             tags: 按标签筛选（可选）
             query: 搜索查询（可选）
-        
+
         Returns:
             list[SkillMetadata]: 匹配的技能列表
         """
@@ -186,14 +186,14 @@ class SkillPort(Protocol):
         context: SkillContext,
     ) -> SkillResult:
         """执行技能.
-        
+
         Args:
             skill_id: 技能ID
             context: 执行上下文
-        
+
         Returns:
             SkillResult: 执行结果
-        
+
         Raises:
             Exception: 执行失败时抛出异常
         """
@@ -201,10 +201,10 @@ class SkillPort(Protocol):
 
     async def get_tools(self, skill_id: str) -> list[AgentTool]:
         """获取技能提供的工具.
-        
+
         Args:
             skill_id: 技能ID
-        
+
         Returns:
             list[AgentTool]: 工具列表
         """
@@ -212,10 +212,10 @@ class SkillPort(Protocol):
 
     async def get_status(self, skill_id: str) -> SkillStatus:
         """获取技能状态.
-        
+
         Args:
             skill_id: 技能ID
-        
+
         Returns:
             SkillStatus: 技能状态
         """

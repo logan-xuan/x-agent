@@ -9,51 +9,53 @@ Event types are organized by category:
 - System events (errors, compression status)
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, TypedDict
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Standard event types for X-Agent streaming protocol.
-    
+
     Categories:
     - Agent outputs: THINKING, TOOL_CALL, TOOL_RESULT, FINAL_ANSWER, MESSAGE
     - User interactions: AWAITING_CONFIRMATION, INPUT_REQUEST
     - System events: ERROR, COMPRESSION_STATUS
     - Special: REFLECTION (enhanced reasoning)
     """
-    
+
     # Agent reasoning and actions
     THINKING = "thinking"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     FINAL_ANSWER = "final_answer"
     MESSAGE = "message"
-    
+
     # Enhanced agent features
     REFLECTION = "reflection"  # Self-reflection events
-    ITERATION = "iteration"     # ReAct loop iteration boundary
-    
+    ITERATION = "iteration"  # ReAct loop iteration boundary
+
     # User interaction
     AWAITING_CONFIRMATION = "awaiting_confirmation"
     INPUT_REQUEST = "input_request"
-    
+
     # System events
     ERROR = "error"
     COMPRESSION_STATUS = "compression_status"
-    
+
     # Backend-only events (not sent to frontend)
     INTERNAL_STATE = "_internal_state"  # Prefix with _ to indicate internal
 
 
 class ThinkingEvent(TypedDict):
     """Event when agent is thinking/reasoning."""
+
     type: str  # EventType.THINKING
     thinking: str
 
 
 class ToolCallEvent(TypedDict):
     """Event when agent calls a tool."""
+
     type: str  # EventType.TOOL_CALL
     tool_name: str
     arguments: dict[str, Any]
@@ -62,6 +64,7 @@ class ToolCallEvent(TypedDict):
 
 class ToolResultEvent(TypedDict):
     """Event when tool execution completes."""
+
     type: str  # EventType.TOOL_RESULT
     tool_name: str
     result: str
@@ -71,6 +74,7 @@ class ToolResultEvent(TypedDict):
 
 class MessageEvent(TypedDict):
     """General message event (final answer or intermediate)."""
+
     type: str  # EventType.MESSAGE
     message: str
     role: str | None  # 'assistant', 'system', etc.
@@ -78,6 +82,7 @@ class MessageEvent(TypedDict):
 
 class ErrorEvent(TypedDict):
     """Error event."""
+
     type: str  # EventType.ERROR
     error: str
     details: dict[str, Any] | None
@@ -85,6 +90,7 @@ class ErrorEvent(TypedDict):
 
 class CompressionStatusEvent(TypedDict):
     """Context compression status event."""
+
     type: str  # EventType.COMPRESSION_STATUS
     compressed: bool
     original_size: int | None
@@ -93,6 +99,7 @@ class CompressionStatusEvent(TypedDict):
 
 class AwaitingConfirmationEvent(TypedDict):
     """Event requesting user confirmation."""
+
     type: str  # EventType.AWAITING_CONFIRMATION
     message: str
     action: str  # Description of what needs confirmation
@@ -101,12 +108,14 @@ class AwaitingConfirmationEvent(TypedDict):
 
 class ReflectionEvent(TypedDict):
     """Self-reflection event for enhanced reasoning."""
+
     type: str  # EventType.REFLECTION
     reflection: str
     trigger: str  # What triggered reflection (e.g., "error", "uncertainty")
 
 
 # Helper functions for creating events
+
 
 def create_thinking_event(thinking: str) -> ThinkingEvent:
     """Create a thinking event."""

@@ -12,7 +12,7 @@ from .compression_verifier import (
     CompressionVerifyRequest,
     DefaultCompressionVerifier,
 )
-from .memory_flush import MemoryFlushRequest, NoopMemoryFlusher
+from .memory_flush import ArtifactBackedMemoryFlusher, MemoryFlushRequest
 
 
 @dataclass
@@ -89,7 +89,9 @@ class CompressionProfile:
     pressure: CompressionPressureConfig = field(default_factory=CompressionPressureConfig)
     persist: CompressionPersistConfig = field(default_factory=CompressionPersistConfig)
     pruning: CompressionPruningConfig = field(default_factory=CompressionPruningConfig)
-    microcompact: CompressionMicrocompactConfig = field(default_factory=CompressionMicrocompactConfig)
+    microcompact: CompressionMicrocompactConfig = field(
+        default_factory=CompressionMicrocompactConfig
+    )
     collapse: CompressionCollapseConfig = field(default_factory=CompressionCollapseConfig)
     autocompact: CompressionAutocompactConfig = field(default_factory=CompressionAutocompactConfig)
     memory_flush: CompressionMemoryFlushConfig = field(default_factory=CompressionMemoryFlushConfig)
@@ -169,13 +171,21 @@ class DefaultCompressionPipeline:
 
     artifact_store: InMemoryArtifactStore = field(default_factory=InMemoryArtifactStore)
     verifier: DefaultCompressionVerifier = field(default_factory=DefaultCompressionVerifier)
-    memory_flusher: NoopMemoryFlusher = field(default_factory=NoopMemoryFlusher)
+    memory_flusher: Any = field(default_factory=ArtifactBackedMemoryFlusher)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.memory_flusher, ArtifactBackedMemoryFlusher)
+            and self.memory_flusher.artifact_store is None
+        ):
+            self.memory_flusher.artifact_store = self.artifact_store
 
     async def run(self, ctx: CompressionContext) -> CompressionResult:
         """Run the normal compression pipeline."""
         messages = [dict(message) for message in ctx.messages]
         artifacts = list(ctx.active_artifacts)
         operations: list[str] = []
+        stage_metrics: dict[str, dict[str, Any]] = {}
         result_metadata: dict[str, Any] = {
             "objective_out_of_band": bool(ctx.metadata.get("objective_out_of_band", False))
         }
@@ -187,20 +197,49 @@ class DefaultCompressionPipeline:
             preview_tail_chars=ctx.profile.persist.artifact_preview_tail_chars,
         )
 
-        messages, artifacts, persist_applied = await self._persist_large_results(ctx, messages, artifacts)
+        persist_before_tokens = self._estimate_tokens(messages)
+        artifact_ids_before = {artifact.id for artifact in artifacts}
+        messages, artifacts, persist_applied = await self._persist_large_results(
+            ctx, messages, artifacts
+        )
         if persist_applied:
             operations.append("persist")
+            self._record_stage_metric(
+                stage_metrics,
+                "persist",
+                persist_before_tokens,
+                self._estimate_tokens(messages),
+                affected_artifact_ids=[
+                    artifact.id for artifact in artifacts if artifact.id not in artifact_ids_before
+                ],
+            )
 
+        aggregate_before_tokens = self._estimate_tokens(messages)
         messages, aggregate_applied = self._aggregate_budget(ctx, messages)
         if aggregate_applied:
             operations.append("aggregate_budget")
+            self._record_stage_metric(
+                stage_metrics,
+                "aggregate_budget",
+                aggregate_before_tokens,
+                self._estimate_tokens(messages),
+            )
 
+        ttl_before_tokens = self._estimate_tokens(messages)
         messages, ttl_applied = self._ttl_prune(ctx, messages)
         if ttl_applied:
             operations.append("ttl_prune")
+            self._record_stage_metric(
+                stage_metrics,
+                "ttl_prune",
+                ttl_before_tokens,
+                self._estimate_tokens(messages),
+            )
 
         current_estimated_tokens = self._estimate_tokens(messages)
-        budget_state = self._build_budget_state(ctx, self._analyze_messages(messages), current_estimated_tokens)
+        budget_state = self._build_budget_state(
+            ctx, self._analyze_messages(messages), current_estimated_tokens
+        )
         result_metadata["budget_state"] = {
             "current_tokens": budget_state.current_tokens,
             "observe_tokens": budget_state.observe_tokens,
@@ -213,35 +252,76 @@ class DefaultCompressionPipeline:
             "overflow_risk": budget_state.overflow_risk,
         }
 
+        microcompact_before_tokens = current_estimated_tokens
         messages, microcompact_applied = self._microcompact(ctx, messages, current_estimated_tokens)
         if microcompact_applied:
             operations.append("microcompact")
             current_estimated_tokens = self._estimate_tokens(messages)
-
-        messages, collapse_applied = self._collapse_history(ctx, messages, current_estimated_tokens)
-        if collapse_applied:
-            operations.append("collapse")
-            result_metadata["objective_out_of_band"] = False
-            current_estimated_tokens = self._estimate_tokens(messages)
-
-        messages, autocompact_applied = self._autocompact(ctx, messages, current_estimated_tokens)
-        if autocompact_applied:
-            operations.append("autocompact")
-            result_metadata["objective_out_of_band"] = False
-            current_estimated_tokens = self._estimate_tokens(messages)
+            self._record_stage_metric(
+                stage_metrics,
+                "microcompact",
+                microcompact_before_tokens,
+                current_estimated_tokens,
+            )
 
         if (
             ctx.profile.memory_flush.enabled
             and current_estimated_tokens >= ctx.profile.memory_flush.soft_threshold_tokens
         ):
+            memory_flush_before_tokens = current_estimated_tokens
             flush_result = await self.memory_flusher.flush(
-                MemoryFlushRequest(session_key=ctx.session_key, messages=messages)
+                MemoryFlushRequest(
+                    session_key=ctx.session_key,
+                    messages=messages,
+                    active_artifacts=artifacts,
+                    metadata={
+                        "preserve_recent_messages": ctx.profile.retain_recent_messages,
+                        "min_flush_chars": ctx.profile.pruning.soft_trim_max_chars,
+                    },
+                )
             )
-            if flush_result.flushed or flush_result.notes:
+            if flush_result.flushed:
+                messages = [dict(message) for message in (flush_result.messages or messages)]
+                artifacts = self._merge_artifacts(artifacts, flush_result.new_artifacts)
                 operations.append("memory_flush")
+                current_estimated_tokens = self._estimate_tokens(messages)
+                self._record_stage_metric(
+                    stage_metrics,
+                    "memory_flush",
+                    memory_flush_before_tokens,
+                    current_estimated_tokens,
+                    affected_artifact_ids=list(flush_result.affected_artifact_ids),
+                )
+
+        collapse_before_tokens = current_estimated_tokens
+        messages, collapse_applied = self._collapse_history(ctx, messages, current_estimated_tokens)
+        if collapse_applied:
+            operations.append("collapse")
+            result_metadata["objective_out_of_band"] = False
+            current_estimated_tokens = self._estimate_tokens(messages)
+            self._record_stage_metric(
+                stage_metrics,
+                "collapse",
+                collapse_before_tokens,
+                current_estimated_tokens,
+            )
+
+        autocompact_before_tokens = current_estimated_tokens
+        messages, autocompact_applied = self._autocompact(ctx, messages, current_estimated_tokens)
+        if autocompact_applied:
+            operations.append("autocompact")
+            result_metadata["objective_out_of_band"] = False
+            current_estimated_tokens = self._estimate_tokens(messages)
+            self._record_stage_metric(
+                stage_metrics,
+                "autocompact",
+                autocompact_before_tokens,
+                current_estimated_tokens,
+            )
 
         verification: CompressionPostCheck | None = None
         if current_estimated_tokens > self._must_fit_tokens(ctx):
+            emergency_before_tokens = current_estimated_tokens
             emergency_result = await self.run_emergency(
                 CompressionContext(
                     session_key=ctx.session_key,
@@ -261,6 +341,15 @@ class DefaultCompressionPipeline:
             current_estimated_tokens = emergency_result.estimated_input_tokens
             result_metadata.update(emergency_result.metadata)
             operations.append("emergency_compact")
+            self._record_stage_metric(
+                stage_metrics,
+                "emergency",
+                emergency_before_tokens,
+                current_estimated_tokens,
+                affected_artifact_ids=[artifact.id for artifact in artifacts],
+            )
+
+        result_metadata["stage_metrics"] = stage_metrics
 
         if ctx.profile.quality.require_post_check:
             verification = self.verifier.verify(
@@ -274,12 +363,13 @@ class DefaultCompressionPipeline:
                 )
             )
             if not verification.ok and ctx.profile.quality.rollback_on_invariant_failure:
-                rollback_reason = verification.reasons[0] if verification.reasons else "verification_failed"
+                rollback_reason = (
+                    verification.reasons[0] if verification.reasons else "verification_failed"
+                )
                 original_estimated_tokens = self._estimate_tokens(original_messages)
-                if (
-                    current_estimated_tokens <= self._must_fit_tokens(ctx)
-                    and original_estimated_tokens > self._must_fit_tokens(ctx)
-                ):
+                if current_estimated_tokens <= self._must_fit_tokens(
+                    ctx
+                ) and original_estimated_tokens > self._must_fit_tokens(ctx):
                     return CompressionResult(
                         messages=messages,
                         active_artifacts=artifacts,
@@ -357,7 +447,9 @@ class DefaultCompressionPipeline:
         collapsed_summary = []
         working_messages = ctx.messages[1:] if first_message else ctx.messages
         tail = [
-            self._truncate_emergency_message(message, ctx.profile.autocompact.fallback_summary_max_chars)
+            self._truncate_emergency_message(
+                message, ctx.profile.autocompact.fallback_summary_max_chars
+            )
             for message in working_messages[-ctx.profile.retain_recent_messages :]
         ]
         artifact_line = (
@@ -420,10 +512,7 @@ class DefaultCompressionPipeline:
                 )
             )
             artifacts.append(ref)
-            message["content"] = (
-                f"[Persisted large tool result: {ref.id}]\n"
-                f"Preview:\n{ref.preview}"
-            )
+            message["content"] = f"[Persisted large tool result: {ref.id}]\nPreview:\n{ref.preview}"
             applied = True
         return messages, artifacts, applied
 
@@ -433,7 +522,9 @@ class DefaultCompressionPipeline:
         messages: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], bool]:
         tool_indexes = [
-            index for index, message in enumerate(messages) if message.get("role") in {"tool", "tool_result"}
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") in {"tool", "tool_result"}
         ]
         total_chars = sum(len(str(messages[index].get("content", ""))) for index in tool_indexes)
         if total_chars <= ctx.profile.persist.aggregate_result_chars:
@@ -446,9 +537,7 @@ class DefaultCompressionPipeline:
                 continue
             head = content[: ctx.profile.pruning.soft_trim_head_chars]
             tail = content[-ctx.profile.pruning.soft_trim_tail_chars :]
-            messages[index]["content"] = (
-                f"{head}\n...[trimmed by aggregate budget]...\n{tail}"
-            )
+            messages[index]["content"] = f"{head}\n...[trimmed by aggregate budget]...\n{tail}"
             applied = True
             total_chars = sum(len(str(messages[i].get("content", ""))) for i in tool_indexes)
             if total_chars <= ctx.profile.persist.aggregate_result_chars:
@@ -493,7 +582,9 @@ class DefaultCompressionPipeline:
     ) -> tuple[list[dict[str, Any]], bool]:
         if not ctx.profile.collapse.enabled:
             return messages, False
-        if estimated_input_tokens < int(ctx.model_context_window * ctx.profile.collapse.trigger_pct):
+        if estimated_input_tokens < int(
+            ctx.model_context_window * ctx.profile.collapse.trigger_pct
+        ):
             return messages, False
 
         first_message = messages[0] if messages else None
@@ -546,7 +637,11 @@ class DefaultCompressionPipeline:
         evidence_summaries: list[str] = []
 
         for item in analyzed:
-            if item.message_kind == "status" and item.state_label in {"done", "failed", "cancelled"} and item.task_id:
+            if (
+                item.message_kind == "status"
+                and item.state_label in {"done", "failed", "cancelled"}
+                and item.task_id
+            ):
                 summary = f"{item.task_id} {item.state_label}"
                 finalized_tasks.append(summary)
                 evidence_summaries.append(summary)
@@ -583,15 +678,27 @@ class DefaultCompressionPipeline:
             ),
             (
                 "Finalized tasks: "
-                + ("; ".join(collapse_state.finalized_tasks) if collapse_state.finalized_tasks else "(none)")
+                + (
+                    "; ".join(collapse_state.finalized_tasks)
+                    if collapse_state.finalized_tasks
+                    else "(none)"
+                )
             ),
             (
                 "Active failures: "
-                + ("; ".join(collapse_state.active_failures) if collapse_state.active_failures else "(none)")
+                + (
+                    "; ".join(collapse_state.active_failures)
+                    if collapse_state.active_failures
+                    else "(none)"
+                )
             ),
             (
                 "Artifacts: "
-                + (", ".join(collapse_state.artifact_refs) if collapse_state.artifact_refs else "(none)")
+                + (
+                    ", ".join(collapse_state.artifact_refs)
+                    if collapse_state.artifact_refs
+                    else "(none)"
+                )
             ),
             (
                 "Evidence summaries: "
@@ -661,7 +768,6 @@ class DefaultCompressionPipeline:
             final_messages.append(message)
         return final_messages, applied
 
-
     def _autocompact(
         self,
         ctx: CompressionContext,
@@ -706,11 +812,11 @@ class DefaultCompressionPipeline:
         summary_limit = ctx.profile.autocompact.fallback_summary_max_chars
         key_conclusions = self._extract_key_conclusions(archived)
 
-        def build_candidate(current_summary: str, current_recent: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        def build_candidate(
+            current_summary: str, current_recent: list[dict[str, Any]]
+        ) -> list[dict[str, Any]]:
             conclusion_line = (
-                "\nFinalized tasks: " + "; ".join(key_conclusions)
-                if key_conclusions
-                else ""
+                "\nFinalized tasks: " + "; ".join(key_conclusions) if key_conclusions else ""
             )
             return [
                 *leading_system,
@@ -740,7 +846,9 @@ class DefaultCompressionPipeline:
             if len(content) > 48:
                 rewritten["content"] = f"{content[:20]}...[autocompact]...{content[-10:]}"
             trimmed_recent.append(rewritten)
-            compacted_messages = build_candidate(summary[:summary_limit], trimmed_recent + recent[len(trimmed_recent) :])
+            compacted_messages = build_candidate(
+                summary[:summary_limit], trimmed_recent + recent[len(trimmed_recent) :]
+            )
             if self._estimate_tokens(compacted_messages) <= target_tokens:
                 return compacted_messages, True
 
@@ -749,7 +857,6 @@ class DefaultCompressionPipeline:
             compacted_messages = build_candidate(summary[:summary_limit], trimmed_recent)
 
         return compacted_messages, True
-
 
     def _analyze_messages(self, messages: list[dict[str, Any]]) -> list[AnalyzedMessage]:
         analyzed: list[AnalyzedMessage] = []
@@ -809,7 +916,9 @@ class DefaultCompressionPipeline:
             1 for item in analyzed_messages if item.message_kind == "summary" and item.droppable
         )
         summary_count = sum(1 for item in analyzed_messages if item.message_kind == "summary")
-        history_count = sum(1 for item in analyzed_messages if item.message_kind in {"summary", "status", "result"})
+        history_count = sum(
+            1 for item in analyzed_messages if item.message_kind in {"summary", "status", "result"}
+        )
         if current_tokens >= must_fit_tokens:
             pressure_level = "red"
         elif current_tokens >= target_tokens:
@@ -826,7 +935,9 @@ class DefaultCompressionPipeline:
             remaining_tokens=max(must_fit_tokens - current_tokens, 0),
             pressure_level=pressure_level,
             repeated_summary_ratio=(repeated_summaries / summary_count) if summary_count else 0.0,
-            history_share_ratio=(history_count / len(analyzed_messages)) if analyzed_messages else 0.0,
+            history_share_ratio=(history_count / len(analyzed_messages))
+            if analyzed_messages
+            else 0.0,
             overflow_risk=current_tokens >= must_fit_tokens,
         )
 
@@ -850,7 +961,11 @@ class DefaultCompressionPipeline:
             )
         ).strip()
         objective_out_of_band = bool(merged_metadata.get("objective_out_of_band", False))
-        if not objective_after and not objective_out_of_band and not self._contains_compaction_summary(messages):
+        if (
+            not objective_after
+            and not objective_out_of_band
+            and not self._contains_compaction_summary(messages)
+        ):
             objective_after = objective
         compressed_unresolved = self._extract_unresolved_items(messages)
         key_conclusions_after = self._extract_key_conclusions(messages)
@@ -872,8 +987,11 @@ class DefaultCompressionPipeline:
             content = str(message.get("content", "")).strip()
             if not content:
                 continue
+            role = str(message.get("role", "")).lower()
             normalized = content.lower()
-            if normalized.startswith("[collapsed history]") or normalized.startswith("[emergency context summary]"):
+            if normalized.startswith("[collapsed history]") or normalized.startswith(
+                "[emergency context summary]"
+            ):
                 for line in content.splitlines():
                     if not line.startswith("Unresolved: "):
                         continue
@@ -888,9 +1006,31 @@ class DefaultCompressionPipeline:
                 continue
             if normalized.startswith("[auto-compacted history]"):
                 continue
-            if any(token in content for token in ("unresolved", "未完成", "待处理")):
-                if content not in unresolved:
-                    unresolved.append(content)
+            if role == "user":
+                continue
+
+            structured_prefixes = (
+                "Unresolved: ",
+                "未完成事项：",
+                "未完成事项:",
+                "待处理：",
+                "待处理:",
+            )
+            matched_prefix = next(
+                (prefix for prefix in structured_prefixes if content.startswith(prefix)),
+                None,
+            )
+            if matched_prefix is None:
+                continue
+
+            payload = content.removeprefix(matched_prefix).strip()
+            if payload in {"", "(none)", "无"}:
+                return []
+            normalized_payload = payload.replace("；", ";").replace("、", ";").replace("，", ";")
+            for item in normalized_payload.split(";"):
+                value = item.strip()
+                if value and value not in unresolved:
+                    unresolved.append(value)
         return unresolved
 
     def _extract_key_conclusions(self, messages: list[dict[str, Any]]) -> list[str]:
@@ -900,7 +1040,9 @@ class DefaultCompressionPipeline:
             if not content:
                 continue
             normalized = content.lower()
-            if normalized.startswith("[collapsed history]") or normalized.startswith("[auto-compacted history]"):
+            if normalized.startswith("[collapsed history]") or normalized.startswith(
+                "[auto-compacted history]"
+            ):
                 for line in content.splitlines():
                     if line.startswith("Finalized tasks: "):
                         payload = line.removeprefix("Finalized tasks: ").strip()
@@ -925,7 +1067,11 @@ class DefaultCompressionPipeline:
                     conclusions.append(value)
                 continue
             if any(marker in content for marker in ("结论：", "Conclusion:", "conclusion:")):
-                payload = content.split("：", 1)[1].strip() if "：" in content else content.split(":", 1)[1].strip()
+                payload = (
+                    content.split("：", 1)[1].strip()
+                    if "：" in content
+                    else content.split(":", 1)[1].strip()
+                )
                 if payload and payload not in conclusions:
                     conclusions.append(payload)
         return conclusions
@@ -934,6 +1080,7 @@ class DefaultCompressionPipeline:
         content = str(message.get("content", "")).strip()
         if not content:
             return []
+        role = str(message.get("role", "")).lower()
         normalized = content.lower()
         if normalized.startswith("[collapsed history]"):
             for line in content.splitlines():
@@ -948,7 +1095,9 @@ class DefaultCompressionPipeline:
             return []
         if normalized.startswith("[emergency context summary]"):
             return []
-        return [content] if any(token in normalized for token in ("error", "失败")) else []
+        if role == "user":
+            return []
+        return [content] if normalized.startswith("error") or normalized.startswith("失败") else []
 
     def _contains_compaction_summary(self, messages: list[dict[str, Any]]) -> bool:
         for message in messages:
@@ -988,7 +1137,9 @@ class DefaultCompressionPipeline:
 
     def _classify_message_kind(self, role: str, content: str, state_label: str | None) -> str:
         normalized = content.lower()
-        if normalized.startswith("[collapsed history]") or normalized.startswith("[auto-compacted history]"):
+        if normalized.startswith("[collapsed history]") or normalized.startswith(
+            "[auto-compacted history]"
+        ):
             return "summary"
         if state_label is not None:
             return "status"
@@ -1036,6 +1187,36 @@ class DefaultCompressionPipeline:
     def _estimate_tokens(self, messages: list[dict[str, Any]]) -> int:
         total_chars = sum(len(str(message.get("content", ""))) for message in messages)
         return max(total_chars // 4, 0)
+
+    def _merge_artifacts(
+        self,
+        existing: list[ArtifactRef],
+        incoming: list[ArtifactRef],
+    ) -> list[ArtifactRef]:
+        merged = list(existing)
+        seen_ids = {artifact.id for artifact in merged}
+        for artifact in incoming:
+            if artifact.id in seen_ids:
+                continue
+            merged.append(artifact)
+            seen_ids.add(artifact.id)
+        return merged
+
+    def _record_stage_metric(
+        self,
+        stage_metrics: dict[str, dict[str, Any]],
+        stage: str,
+        tokens_before: int,
+        tokens_after: int,
+        *,
+        affected_artifact_ids: list[str] | None = None,
+    ) -> None:
+        stage_metrics[stage] = {
+            "tokens_before": tokens_before,
+            "tokens_after": tokens_after,
+            "freed_tokens": max(tokens_before - tokens_after, 0),
+            "affected_artifact_ids": list(affected_artifact_ids or []),
+        }
 
 
 __all__ = [

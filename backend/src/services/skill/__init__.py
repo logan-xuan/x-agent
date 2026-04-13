@@ -14,30 +14,29 @@ Skill System - 技能发现、注册与执行
 """
 
 # Phase 3: Core components - 技能发现与执行
-from .manifest_parser import ManifestParser, ManifestParseError, parse_manifest
+# Phase 8: Integration adapter
+from .adapter import SkillAdapter
+from .discovery import SkillDiscovery, get_discovery
+
+# Phase 4: Semantic search components
+from .embedder import EmbeddingResult, SkillEmbedder, get_embedder
+
+# Phase 5: Risk control
+from .executor import PermissionCheckResult, PreconditionCheckResult, SkillExecutor
+from .manifest_parser import ManifestParseError, ManifestParser, parse_manifest
+
+# Phase 7: Parameter completion
+from .param_completer import CompletionResult, ParamCompleter
+
+# Phase 6: Progressive execution
+from .progressive import ProgressiveExecutor, StageResult
 from .registry import (
     SkillRegistry,
     get_skill_registry,
     init_skill_registry,
     reset_skill_registry,
 )
-
-# Phase 4: Semantic search components
-from .embedder import SkillEmbedder, EmbeddingResult, get_embedder
 from .scorer import SkillScorer
-from .discovery import SkillDiscovery, get_discovery
-
-# Phase 5: Risk control
-from .executor import SkillExecutor, PermissionCheckResult, PreconditionCheckResult
-
-# Phase 6: Progressive execution
-from .progressive import ProgressiveExecutor, StageResult
-
-# Phase 7: Parameter completion
-from .param_completer import ParamCompleter, CompletionResult
-
-# Phase 8: Integration adapter
-from .adapter import SkillAdapter
 
 __all__ = [
     # Phase 3: Core

@@ -18,7 +18,6 @@ Examples:
 import sys
 from pathlib import Path
 
-
 # Default relative path (used when --path not specified and config unavailable)
 DEFAULT_SKILLS_PATH = "skills"
 
@@ -196,13 +195,13 @@ Note: This is a text placeholder. Actual assets can be any file type.
 
 def title_case_skill_name(skill_name):
     """Convert hyphenated skill name to Title Case for display."""
-    return ' '.join(word.capitalize() for word in skill_name.split('-'))
+    return " ".join(word.capitalize() for word in skill_name.split("-"))
 
 
 def get_default_skills_path():
     """
     Get the default skills directory path from x-agent.yaml configuration.
-    
+
     Returns:
         Path to the configured skills directory
     """
@@ -211,27 +210,28 @@ def get_default_skills_path():
         # Path hierarchy: scripts/ -> skill-creator/ -> skills/ -> src/ -> backend/
         backend_dir = Path(__file__).parent.parent.parent.parent.parent
         config_file = backend_dir / "x-agent.yaml"
-        
+
         if not config_file.exists():
             print(f"⚠️  Config file not found: {config_file}")
             print(f"   Using default: workspace/{DEFAULT_SKILLS_PATH}/")
             return Path(DEFAULT_SKILLS_PATH)
-        
+
         # Parse YAML config
         import yaml
+
         config = yaml.safe_load(config_file.read_text())
-        
-        workspace_path = config.get('workspace', {}).get('path', '../workspace')
-        skills_dir = config.get('workspace', {}).get('skills_dir', DEFAULT_SKILLS_PATH)
-        
+
+        workspace_path = config.get("workspace", {}).get("path", "../workspace")
+        skills_dir = config.get("workspace", {}).get("skills_dir", DEFAULT_SKILLS_PATH)
+
         # Resolve to absolute path relative to backend directory
         base_dir = backend_dir
         workspace_root = (base_dir / workspace_path).resolve()
         skills_path = workspace_root / skills_dir
-        
+
         print(f"✅ Using configured skills directory: {skills_path}")
         return skills_path
-        
+
     except Exception as e:
         print(f"⚠️  Failed to load config: {e}")
         print(f"   Using default: workspace/{DEFAULT_SKILLS_PATH}/")
@@ -273,12 +273,9 @@ def init_skill(skill_name, path=None):
 
     # Create SKILL.md from template
     skill_title = title_case_skill_name(skill_name)
-    skill_content = SKILL_TEMPLATE.format(
-        skill_name=skill_name,
-        skill_title=skill_title
-    )
+    skill_content = SKILL_TEMPLATE.format(skill_name=skill_name, skill_title=skill_title)
 
-    skill_md_path = skill_dir / 'SKILL.md'
+    skill_md_path = skill_dir / "SKILL.md"
     try:
         skill_md_path.write_text(skill_content)
         print("✅ Created SKILL.md")
@@ -289,24 +286,24 @@ def init_skill(skill_name, path=None):
     # Create resource directories with example files
     try:
         # Create scripts/ directory with example script
-        scripts_dir = skill_dir / 'scripts'
+        scripts_dir = skill_dir / "scripts"
         scripts_dir.mkdir(exist_ok=True)
-        example_script = scripts_dir / 'example.py'
+        example_script = scripts_dir / "example.py"
         example_script.write_text(EXAMPLE_SCRIPT.format(skill_name=skill_name))
         example_script.chmod(0o755)
         print("✅ Created scripts/example.py")
 
         # Create references/ directory with example reference doc
-        references_dir = skill_dir / 'references'
+        references_dir = skill_dir / "references"
         references_dir.mkdir(exist_ok=True)
-        example_reference = references_dir / 'api_reference.md'
+        example_reference = references_dir / "api_reference.md"
         example_reference.write_text(EXAMPLE_REFERENCE.format(skill_title=skill_title))
         print("✅ Created references/api_reference.md")
 
         # Create assets/ directory with example asset placeholder
-        assets_dir = skill_dir / 'assets'
+        assets_dir = skill_dir / "assets"
         assets_dir.mkdir(exist_ok=True)
-        example_asset = assets_dir / 'example_asset.txt'
+        example_asset = assets_dir / "example_asset.txt"
         example_asset.write_text(EXAMPLE_ASSET)
         print("✅ Created assets/example_asset.txt")
     except Exception as e:
@@ -342,12 +339,12 @@ def main():
         sys.exit(1)
 
     skill_name = sys.argv[1]
-    
+
     # Parse optional --path argument
     custom_path = None
-    if len(sys.argv) >= 4 and sys.argv[2] == '--path':
+    if len(sys.argv) >= 4 and sys.argv[2] == "--path":
         custom_path = sys.argv[3]
-    elif len(sys.argv) > 2 and sys.argv[2] != '--path':
+    elif len(sys.argv) > 2 and sys.argv[2] != "--path":
         print(f"❌ Error: Unknown argument '{sys.argv[2]}'")
         print("Use --path <path> to specify custom directory")
         print("Or omit --path to use configured workspace/skills/")
@@ -358,7 +355,7 @@ def main():
         print(f"   Location: {custom_path}")
     else:
         print(f"🚀 Initializing skill: {skill_name}")
-        print(f"   Location: [configured workspace/skills/]")
+        print("   Location: [configured workspace/skills/]")
     print()
 
     result = init_skill(skill_name, custom_path)

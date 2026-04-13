@@ -33,7 +33,12 @@ from .repositories import (
     StorageSummaryRepository,
     StorageTranscriptRepository,
 )
-from .session import ChildSessionManager, ChildSessionPolicy, DefaultSessionOrchestrator, InMemoryLaneScheduler
+from .session import (
+    ChildSessionManager,
+    ChildSessionPolicy,
+    DefaultSessionOrchestrator,
+    InMemoryLaneScheduler,
+)
 from .types import ToolPolicy, TurnBudgetProfile
 
 
@@ -143,8 +148,7 @@ def _build_runtime_services() -> RuntimeServices:
         for name, profile in runtime_config.turn_profiles.items()
     }
     tool_policies = {
-        name: _to_tool_policy(policy)
-        for name, policy in runtime_config.tools.by_name.items()
+        name: _to_tool_policy(policy) for name, policy in runtime_config.tools.by_name.items()
     }
     tool_policies.setdefault("__default__", _to_tool_policy(runtime_config.tools.defaults))
 

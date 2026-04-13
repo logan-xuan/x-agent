@@ -22,7 +22,13 @@ def __getattr__(name: str):
         "MemoryEntry",
         "MemoryContentType",
     }:
-        from .models import MemoryContentType, MemoryEntry, OwnerProfile, SpiritConfig, ToolDefinition
+        from .models import (
+            MemoryContentType,
+            MemoryEntry,
+            OwnerProfile,
+            SpiritConfig,
+            ToolDefinition,
+        )
 
         return {
             "SpiritConfig": SpiritConfig,

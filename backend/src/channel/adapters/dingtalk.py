@@ -45,8 +45,10 @@ except ImportError:
         def __init__(self) -> None:
             pass
 
+
 try:
     from ...utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     logger = logging.getLogger(__name__)

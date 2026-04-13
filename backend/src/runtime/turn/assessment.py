@@ -63,7 +63,9 @@ class DefaultAssessmentEngine:
             suggested_next_action = "stop on repeated failure breaker"
             risk_level = "high"
             notes.append("failure cluster breaker triggered")
-        elif self._diminishing_returns(state, unresolved_count, novelty_score, repeated_pattern_score):
+        elif self._diminishing_returns(
+            state, unresolved_count, novelty_score, repeated_pattern_score
+        ):
             decision = "finish"
             finish_reason = "diminishing_returns"
             suggested_next_action = "finish with best effort due to diminishing returns"
@@ -97,7 +99,9 @@ class DefaultAssessmentEngine:
     def _breaker_triggered(self, state: TurnState) -> bool:
         if not state.repeated_failures:
             return False
-        return max(cluster.count for cluster in state.repeated_failures) >= self.breaker_failure_count
+        return (
+            max(cluster.count for cluster in state.repeated_failures) >= self.breaker_failure_count
+        )
 
     def _diminishing_returns(
         self,
@@ -114,8 +118,12 @@ class DefaultAssessmentEngine:
             return False
 
         unresolved_stalled = unresolved_count >= previous.unresolved_count
-        novelty_stalled = novelty_score < self.novelty_floor and previous.novelty_score < self.novelty_floor
-        repeated_stalled = repeated_pattern_score >= 0.75 and previous.repeated_pattern_score >= 0.75
+        novelty_stalled = (
+            novelty_score < self.novelty_floor and previous.novelty_score < self.novelty_floor
+        )
+        repeated_stalled = (
+            repeated_pattern_score >= 0.75 and previous.repeated_pattern_score >= 0.75
+        )
         return unresolved_stalled and (novelty_stalled or repeated_stalled)
 
     def _novelty_score(self, state: TurnState) -> float:

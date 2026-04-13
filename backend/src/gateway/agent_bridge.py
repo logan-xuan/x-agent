@@ -24,20 +24,21 @@ import asyncio
 import re
 import time
 from collections.abc import AsyncGenerator
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
-from .agent_info import AgentInfo
-from .response import GatewayEvent, GatewayEventType
-from .errors import DispatchError
-
+from ..agent_core.adapters.llm_adapter import XAgentLLMAdapter
+from ..agent_core.adapters.system_prompt_adapter import create_system_prompt_adapter
+from ..agent_core.adapters.tool_adapter import XAgentToolAdapter
+from ..agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
 from ..agent_core.agent import Agent
 from ..agent_core.config import AgentCoreConfig
-from ..agent_core.adapters.llm_adapter import XAgentLLMAdapter
-from ..agent_core.adapters.tool_adapter import XAgentToolAdapter
-from ..agent_core.adapters.system_prompt_adapter import create_system_prompt_adapter
-# 新增 Adapter 导入
-from ..agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
+from ..agent_core.skill_dispatcher import (
+    SkillCommandResolver,
+    SkillInvocation,
+    SkillPromptRewriter,
+    build_skill_command_specs,
+)
 from ..agent_core.types import (
     AgentEndEvent,
     AgentStartEvent,
@@ -45,34 +46,40 @@ from ..agent_core.types import (
     LLMCallLog,
     LogCategory,
     LogLevel,
-    MessageUpdateEvent,
     MessageEndEvent,
-    ToolCallLog,
-    ToolCallContent,
-    ToolExecutionStartEvent,
-    ToolExecutionEndEvent,
-    ToolExecutionUpdateEvent,
+    MessageUpdateEvent,
     TextContent,
+    ToolCallContent,
+    ToolCallLog,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
     ToolResultMessage,
     UserMessage,
 )
-from ..agent_core.skill_dispatcher import (
-    SkillCommandResolver,
-    SkillPromptRewriter,
-    SkillInvocation,
-    build_skill_command_specs,
-)
-from ..runtime.turn import DefaultToolGovernor, DefaultTurnController
-from ..runtime.service import get_runtime_services
-from ..runtime.repositories import StateSnapshotRecord, SummaryRecord, TranscriptEntry
-from ..runtime.types import ToolCallSpec, ToolExecutionPlan, ToolExecutionResult, TurnRequest, TurnResult
 from ..conversation.dao.models import Agent as AgentORM
+from ..runtime.model_budget import derive_model_aware_turn_budget_profile
+from ..runtime.repositories import StateSnapshotRecord, SummaryRecord, TranscriptEntry
+from ..runtime.service import get_runtime_services
+from ..runtime.turn import DefaultToolGovernor, DefaultTurnController
+from ..runtime.types import (
+    ToolCallSpec,
+    ToolExecutionPlan,
+    ToolExecutionResult,
+    TurnBudgetProfile,
+    TurnRequest,
+    TurnResult,
+)
+from .agent_info import AgentInfo
+from .response import GatewayEvent, GatewayEventType
+from .tool_result_normalizer import RuntimeToolResultNormalizer
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -90,7 +97,7 @@ _RUNTIME_FAST_MAX_TOKENS = 64
 # ============================================================================
 
 _skill_adapter_cache = None
-_skill_command_resolver_cache: Optional[SkillCommandResolver] = None
+_skill_command_resolver_cache: SkillCommandResolver | None = None
 _skill_prompt_rewriter = SkillPromptRewriter()
 
 
@@ -98,16 +105,18 @@ _skill_prompt_rewriter = SkillPromptRewriter()
 # 依赖获取函数
 # ============================================================================
 
+
 def _get_llm_router():
     """获取 LLMRouter 实例。"""
     from ..main import get_llm_router
+
     return get_llm_router()
 
 
 def _get_tool_manager():
     """获取 ToolManager 实例（带内置工具）。"""
-    from ..tools.manager import get_tool_manager
     from ..tools.builtin import get_builtin_tools
+    from ..tools.manager import get_tool_manager
 
     manager = get_tool_manager()
 
@@ -121,6 +130,7 @@ def _get_tool_manager():
 def _get_session_manager():
     """获取 SessionManager 实例。"""
     from ..conversation.session import SessionManager
+
     return SessionManager()
 
 
@@ -133,6 +143,7 @@ def _get_skill_adapter():
 
     try:
         from ..agent_core.adapters.skill_adapter import create_skill_adapter
+
         _skill_adapter_cache = create_skill_adapter()
         if _skill_adapter_cache:
             logger.info("Skill adapter initialized successfully")
@@ -142,7 +153,7 @@ def _get_skill_adapter():
         return None
 
 
-def _get_skill_command_resolver() -> Optional[SkillCommandResolver]:
+def _get_skill_command_resolver() -> SkillCommandResolver | None:
     """获取技能命令解析器实例（带缓存）。"""
     global _skill_command_resolver_cache
 
@@ -177,6 +188,7 @@ def _get_skill_command_resolver() -> Optional[SkillCommandResolver]:
 def _get_agent_logger():
     """获取共享的 AgentLogger 实例。"""
     from ..agent_core.api.dev_routes import get_logger as get_agent_logger_fn
+
     return get_agent_logger_fn()
 
 
@@ -184,7 +196,8 @@ def _get_agent_logger():
 # 技能匹配
 # ============================================================================
 
-def _match_and_load_skill_prompt(user_input: str) -> tuple[str, Optional[SkillInvocation]]:
+
+def _match_and_load_skill_prompt(user_input: str) -> tuple[str, SkillInvocation | None]:
     """根据用户输入匹配技能并生成技能指令。
 
     三种模式：
@@ -262,6 +275,7 @@ def _match_and_load_skill_prompt(user_input: str) -> tuple[str, Optional[SkillIn
 # AgentBridge
 # ============================================================================
 
+
 class AgentBridge:
     """Agent Core 桥接器。
 
@@ -283,6 +297,7 @@ class AgentBridge:
 
         self._runtime_context_builder = DefaultContextBuilder()
         self._runtime_compression_pipeline = DefaultCompressionPipeline()
+        self._runtime_tool_result_normalizer = RuntimeToolResultNormalizer()
         self.runtime_turn_controller = self._create_runtime_turn_controller()
 
     def create_config(
@@ -310,7 +325,9 @@ class AgentBridge:
         agent_logger = _get_agent_logger()
         model_name = getattr(getattr(llm_router, "_primary", None), "model_id", "")
         provider_name = getattr(getattr(llm_router, "_primary", None), "name", "")
-        turn_profile = self._runtime_services.turn_profiles[self._runtime_services.default_turn_profile]
+        turn_profile = self._runtime_services.turn_profiles[
+            self._runtime_services.default_turn_profile
+        ]
         tool_policies = {
             name: policy
             for name, policy in self._runtime_services.tool_policies.items()
@@ -339,9 +356,13 @@ class AgentBridge:
         )
 
         # 创建工具中间件管道（可选，默认启用计时和日志中间件）
-        tool_middleware_adapter = None if disable_tools else self._create_tool_middleware_adapter(
-            turn_profile=turn_profile,
-            tool_policies=tool_policies,
+        tool_middleware_adapter = (
+            None
+            if disable_tools
+            else self._create_tool_middleware_adapter(
+                turn_profile=turn_profile,
+                tool_policies=tool_policies,
+            )
         )
 
         return AgentCoreConfig(
@@ -351,7 +372,9 @@ class AgentBridge:
             context=context_adapter,
             system_prompt=system_prompt,
             system_prompt_port=system_prompt_adapter,
-            tool_middleware_pipeline=tool_middleware_adapter.pipeline if tool_middleware_adapter else None,
+            tool_middleware_pipeline=tool_middleware_adapter.pipeline
+            if tool_middleware_adapter
+            else None,
             max_turns=turn_profile.max_turns,
             model=model_name,
             provider=provider_name,
@@ -389,9 +412,11 @@ class AgentBridge:
         """
         try:
             from ..memory.manager import get_memory_manager
+
             memory_manager = get_memory_manager()
             agent_messages = await memory_manager.get_session_history_as_agent_messages(
-                session_id, limit=200,
+                session_id,
+                limit=200,
             )
 
             if not agent_messages:
@@ -427,6 +452,7 @@ class AgentBridge:
         images: list[tuple[str, str]] | None = None,
         abort_event: asyncio.Event | None = None,
         persist_user_message: bool = True,
+        user_metadata: dict[str, Any] | None = None,
         disable_skills: bool = False,
         allow_auto_resume: bool = False,
     ) -> AsyncGenerator[GatewayEvent, None]:
@@ -469,7 +495,11 @@ class AgentBridge:
         try:
             # 1. 持久化用户消息（仅用户主动发起时）
             if persist_user_message:
-                user_msg_id = await self._persist_user_message(session_id, content)
+                user_msg_id = await self._persist_user_message(
+                    session_id,
+                    content,
+                    metadata=user_metadata,
+                )
 
             # 2. 技能匹配和 prompt 注入
             if not disable_skills:
@@ -492,7 +522,9 @@ class AgentBridge:
                 # 持久化 assistant 消息
                 if isinstance(event, AgentEndEvent):
                     await self._persist_assistant_messages(
-                        session_id, event, user_msg_id,
+                        session_id,
+                        event,
+                        user_msg_id,
                     )
 
                 if gateway_event is not None:
@@ -533,7 +565,9 @@ class AgentBridge:
             # 即使出错也尝试保存部分响应
             if assistant_content:
                 await self._persist_partial_response(
-                    session_id, assistant_content, str(exc),
+                    session_id,
+                    assistant_content,
+                    str(exc),
                 )
 
             yield GatewayEvent.error(
@@ -610,7 +644,9 @@ class AgentBridge:
         state.metadata["last_assistant_message"] = assistant_message
         state.active_messages.append(assistant_message)
         state.metadata["model"] = assistant_message.model or state.metadata.get("model", "")
-        state.metadata["provider"] = assistant_message.provider or state.metadata.get("provider", "")
+        state.metadata["provider"] = assistant_message.provider or state.metadata.get(
+            "provider", ""
+        )
 
         usage = assistant_message.usage or {}
         state.record_token_usage(
@@ -630,7 +666,9 @@ class AgentBridge:
             return ToolExecutionPlan()
 
         if not tool_calls:
-            state.metadata["final_output_text"] = text_output or self._runtime_best_effort_output(state)
+            state.metadata["final_output_text"] = text_output or self._runtime_best_effort_output(
+                state
+            )
             state.metadata["final_candidate_ready"] = True
             return ToolExecutionPlan()
 
@@ -742,7 +780,7 @@ class AgentBridge:
             return None
 
         alias_pattern = "|".join(
-            sorted((re.escape(alias) for alias in alias_to_agent_id.keys()), key=len, reverse=True)
+            sorted((re.escape(alias) for alias in alias_to_agent_id), key=len, reverse=True)
         )
         pattern = re.compile(
             rf"^\s*(?:请|麻烦|请你|帮我)?\s*(?:委托|让|叫)?\s*(?P<agent>{alias_pattern})\s*(?P<task>.+)$"
@@ -755,7 +793,7 @@ class AgentBridge:
         delegated_task = match.group("task").lstrip(" ，,:：")
         for prefix in ("帮我", "帮忙", "给我", "为我", "去", "来", "帮我去", "帮忙去"):
             if delegated_task.startswith(prefix) and len(delegated_task) > len(prefix):
-                delegated_task = delegated_task[len(prefix):].lstrip(" ，,:：")
+                delegated_task = delegated_task[len(prefix) :].lstrip(" ，,:：")
                 break
         delegated_task = delegated_task.strip()
         if not target_agent_id or not delegated_task:
@@ -869,24 +907,33 @@ class AgentBridge:
 
             output_text = ""
             details: dict[str, Any] = {}
+            raw_output_text = ""
             if event.result is not None:
                 details = dict(event.result.details)
-                output_text = "".join(
+                raw_output_text = "".join(
                     content.text
                     for content in event.result.content
                     if isinstance(content, TextContent)
                 )
+                normalized_result = self._runtime_tool_result_normalizer.normalize(
+                    tool_name=event.tool_name,
+                    output_text=raw_output_text,
+                    details=details,
+                )
+                output_text = normalized_result.display_text
+                details = normalized_result.details
             artifact_ref = await self._runtime_maybe_archive_tool_output(
                 state,
                 tool_name=event.tool_name,
-                output_text=output_text,
+                output_text=raw_output_text,
                 details=details,
             )
             if artifact_ref is not None:
                 details["artifact_ref"] = artifact_ref.id
-                output_text = (
-                    f"[Stored large result: {artifact_ref.id}]\n"
-                    f"Preview:\n{artifact_ref.preview}"
+                output_text = self._runtime_tool_result_normalizer.attach_artifact_ref(
+                    tool_name=event.tool_name,
+                    display_text=output_text,
+                    artifact_ref=artifact_ref,
                 )
 
             result_message = ToolResultMessage.from_text(
@@ -948,10 +995,12 @@ class AgentBridge:
                 state.metadata["force_finalize"] = True
 
             if event.tool_name == "delegate_task" and details.get("delegate_terminal"):
-                state.metadata["runtime_synthesis_instruction"] = self._runtime_delegate_synthesis_instruction(
-                    tool_name=event.tool_name,
-                    details=details,
-                    result_text=result_text,
+                state.metadata["runtime_synthesis_instruction"] = (
+                    self._runtime_delegate_synthesis_instruction(
+                        tool_name=event.tool_name,
+                        details=details,
+                        result_text=result_text,
+                    )
                 )
                 disabled = state.metadata.setdefault("disabled_tool_names", set())
                 disabled.update(tool.name for tool in self._runtime_available_tools(state))
@@ -1052,7 +1101,24 @@ class AgentBridge:
                         else {}
                     ),
                     last_finish_reason=result.finish_reason,
-                    metadata={"kind": result.kind},
+                    metadata={
+                        "kind": result.kind,
+                        **{
+                            key: value
+                            for key, value in result.metadata.items()
+                            if key
+                            in {
+                                "compression_operations",
+                                "budget_state",
+                                "verifier_result",
+                                "rollback",
+                                "rollback_applied",
+                                "rollback_reason",
+                                "runtime_context_summary",
+                                "runtime_model_budget",
+                            }
+                        },
+                    },
                     created_at=time.time(),
                 )
             )
@@ -1069,7 +1135,7 @@ class AgentBridge:
                         artifact_refs=[artifact.id for artifact in result.artifact_refs],
                         created_at=time.time(),
                     )
-            )
+                )
         except Exception as exc:
             logger.warning(
                 "Failed to persist runtime replay state",
@@ -1082,7 +1148,6 @@ class AgentBridge:
 
     async def _runtime_controller_compact(self, state, reason: str):
         """Mark runtime compaction decisions while letting runtime compression produce the final payload."""
-        from ..agent_core.context_transform import convert_messages_to_llm
         from ..runtime.context import CompressionContext
         from ..runtime.types import CompactResult
 
@@ -1090,26 +1155,19 @@ class AgentBridge:
         state.metadata["compaction_count"] = state.metadata.get("compaction_count", 0) + 1
         state.metadata["request_compact"] = False
 
-        profile_name = str(
-            state.request.metadata.get("_runtime_compression_profile_name")
-            or self._runtime_services.default_compression_profile
-        )
-        profile = self._runtime_services.compression_profiles.get(profile_name)
-        if profile is None:
-            profile = self._runtime_services.compression_profiles.get(
-                self._runtime_services.default_compression_profile
-            )
+        profile = self._runtime_resolve_compression_profile(state.request)
 
-        raw_messages = (
-            [dict(message) for message in state.active_messages]
-            if state.active_messages and all(isinstance(message, dict) for message in state.active_messages)
-            else convert_messages_to_llm(state.active_messages)
-        )
+        raw_messages = self._runtime_messages_to_llm_payload(state.active_messages)
         estimated_input_tokens = max(
             sum(len(str(message.get("content", ""))) for message in raw_messages) // 4,
             1,
         )
-        model_context_window = state.budget.profile.max_total_tokens or estimated_input_tokens
+        model_context_window = self._runtime_resolve_model_context_window(
+            state.request,
+            state_budget_profile=state.budget.profile,
+            compression_profile=profile,
+            fallback_window=estimated_input_tokens,
+        )
 
         if profile is None:
             return CompactResult(
@@ -1139,14 +1197,28 @@ class AgentBridge:
         )
         if isinstance(result, CompactResult):
             return result
+        compression_metadata = self._runtime_compression_metadata_payload(result)
+        passthrough_metadata = {
+            key: value
+            for key, value in dict(result.metadata).items()
+            if key
+            not in {
+                "budget_state",
+                "verification",
+                "verifier_result",
+                "rollback",
+                "rollback_applied",
+                "rollback_reason",
+            }
+        }
         return CompactResult(
             active_messages=list(result.messages),
             active_artifact_refs=list(result.active_artifacts),
             task_frame=state.task_frame,
             metadata={
                 "compaction_source": "pipeline",
-                "compression_operations": list(result.operations),
-                **dict(result.metadata),
+                **passthrough_metadata,
+                **compression_metadata,
             },
         )
 
@@ -1157,7 +1229,9 @@ class AgentBridge:
 
         request = state.request
         agent_info = self._resolve_runtime_agent_info(request)
-        runtime_config = self._build_runtime_agent_config(request, agent_info) or self.create_config(
+        runtime_config = self._build_runtime_agent_config(
+            request, agent_info
+        ) or self.create_config(
             agent_info,
             use_legacy_context=False,
         )
@@ -1178,14 +1252,20 @@ class AgentBridge:
                 recent_entries_limit=48,
             )
         state.metadata["runtime_resume_state"] = resume_state
-        state.metadata["runtime_summary_chain_messages"] = self._runtime_summary_chain_messages(resume_state)
-        state.metadata["runtime_recent_failures"] = self._runtime_recent_failures_from_resume(resume_state)
+        state.metadata["runtime_summary_chain_messages"] = self._runtime_summary_chain_messages(
+            resume_state
+        )
+        state.metadata["runtime_recent_failures"] = self._runtime_recent_failures_from_resume(
+            resume_state
+        )
 
         history_messages = self._runtime_messages_from_resume(resume_state)
         if history_messages:
             state.active_messages.extend(history_messages)
         elif not bool(request.metadata.get("runtime_skip_history_load")):
-            fallback_messages = await self._runtime_load_legacy_history_messages(request.session.session_id)
+            fallback_messages = await self._runtime_load_legacy_history_messages(
+                request.session.session_id
+            )
             state.active_messages.extend(fallback_messages)
             if fallback_messages:
                 await self._runtime_seed_transcript_from_agent_messages(
@@ -1206,6 +1286,7 @@ class AgentBridge:
             state.metadata["runtime_user_msg_id"] = await self._persist_user_message(
                 request.session.session_id,
                 request.user_input,
+                metadata=self._message_persistence_metadata(request.metadata, role="user"),
             )
 
         current_user_message = UserMessage.from_text(request.user_input)
@@ -1222,7 +1303,9 @@ class AgentBridge:
                     created_at=time.time(),
                 )
             )
-        state.metadata["runtime_system_prompt"] = self._runtime_system_prompt(request, runtime_config)
+        state.metadata["runtime_system_prompt"] = self._runtime_system_prompt(
+            request, runtime_config
+        )
         self._runtime_log_entry(
             state,
             event="runtime_turn_start",
@@ -1332,7 +1415,7 @@ class AgentBridge:
             return []
 
         messages: list[dict[str, str]] = []
-        for summary in resume_state.summary_chain:
+        for summary in self._runtime_relevant_summaries(resume_state):
             lines = [f"[{summary.summary_type} summary]"]
             if summary.objective:
                 lines.append(f"Objective: {summary.objective}")
@@ -1353,9 +1436,30 @@ class AgentBridge:
             return []
 
         failures: list[str] = []
-        for summary in resume_state.summary_chain:
+        for summary in self._runtime_relevant_summaries(resume_state):
             failures.extend(summary.recent_failures)
         return failures[-6:]
+
+    def _runtime_relevant_summaries(self, resume_state) -> list[Any]:
+        """Select only the latest effective compression snapshot plus child results."""
+        if resume_state is None:
+            return []
+
+        compression_types = {"microcompact", "collapse", "autocompact", "memory_flush"}
+        latest_compression = None
+        child_results: list[Any] = []
+
+        for summary in resume_state.summary_chain:
+            if summary.summary_type in compression_types:
+                if latest_compression is None or summary.created_at >= latest_compression.created_at:
+                    latest_compression = summary
+            elif summary.summary_type == "child_result":
+                child_results.append(summary)
+
+        selected = [*child_results]
+        if latest_compression is not None:
+            selected.append(latest_compression)
+        return sorted(selected, key=lambda summary: getattr(summary, "created_at", 0.0))
 
     async def _runtime_artifact_refs_from_resume(self, resume_state) -> list[Any]:
         """Resolve active artifact refs from the latest runtime snapshot when available."""
@@ -1369,11 +1473,17 @@ class AgentBridge:
                 continue
             seen.add(artifact_id)
             try:
-                stored = await self.runtime_session_orchestrator.artifact_repository.get(artifact_id)
+                stored = await self.runtime_session_orchestrator.artifact_repository.get(
+                    artifact_id
+                )
             except Exception as exc:
                 logger.warning(
                     "Failed to resolve runtime artifact reference",
-                    extra={"session_id": resume_state.session.session_id, "artifact_id": artifact_id, "error": str(exc)},
+                    extra={
+                        "session_id": resume_state.session.session_id,
+                        "artifact_id": artifact_id,
+                        "error": str(exc),
+                    },
                 )
                 continue
             if stored is None:
@@ -1407,7 +1517,9 @@ class AgentBridge:
     ) -> TranscriptEntry | None:
         """Convert an agent-core message into a runtime transcript entry."""
         if isinstance(message, UserMessage):
-            text = "".join(content.text for content in message.content if isinstance(content, TextContent))
+            text = "".join(
+                content.text for content in message.content if isinstance(content, TextContent)
+            )
             return TranscriptEntry(
                 entry_id=f"runtime-import-user:{uuid4().hex}",
                 session_id=session_id,
@@ -1446,7 +1558,9 @@ class AgentBridge:
             )
 
         if isinstance(message, ToolResultMessage):
-            text = "".join(content.text for content in message.content if isinstance(content, TextContent))
+            text = "".join(
+                content.text for content in message.content if isinstance(content, TextContent)
+            )
             return TranscriptEntry(
                 entry_id=f"runtime-import-tool:{uuid4().hex}",
                 session_id=session_id,
@@ -1490,16 +1604,21 @@ class AgentBridge:
             if isinstance(state.request.metadata.get("runtime_abort_event"), asyncio.Event)
             else None
         )
+        llm_call_id = f"runtime-{uuid4().hex[:8]}"
         system_prompt, llm_messages = await self._runtime_prepare_model_input(
             state,
             system_prompt=state.metadata["runtime_system_prompt"],
             available_tools=available_tools,
+            llm_call_id=llm_call_id,
         )
         synthesis_instruction = state.metadata.get("runtime_synthesis_instruction")
         if isinstance(synthesis_instruction, str) and synthesis_instruction.strip():
-            system_prompt = f"{system_prompt}\n\n[Runtime Synthesis Directive]\n{synthesis_instruction}".strip()
+            system_prompt = (
+                f"{system_prompt}\n\n[Runtime Synthesis Directive]\n{synthesis_instruction}".strip()
+            )
         llm_call_id = self._runtime_log_llm_call_start(
             state,
+            call_id=llm_call_id,
             system_prompt=system_prompt,
             messages=llm_messages,
             tools=available_tools,
@@ -1529,12 +1648,16 @@ class AgentBridge:
                 error_message="runtime model invocation produced no assistant message",
             )
 
-        if assistant_message.stop_reason in {"error", "aborted"} and not assistant_message.get_text().strip():
+        if (
+            assistant_message.stop_reason in {"error", "aborted"}
+            and not assistant_message.get_text().strip()
+        ):
             assistant_message.content = [
                 TextContent(
                     text=self._runtime_best_effort_output(
                         state,
-                        error_message=assistant_message.error_message or assistant_message.stop_reason,
+                        error_message=assistant_message.error_message
+                        or assistant_message.stop_reason,
                     )
                 )
             ]
@@ -1553,21 +1676,13 @@ class AgentBridge:
         *,
         system_prompt: str,
         available_tools: list[Any],
+        llm_call_id: str | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Build runtime model input directly from transcript, summaries, artifacts, and compression."""
-        from ..agent_core.context_transform import convert_messages_to_llm
         from ..runtime.context import CompressionContext, ContextBuildRequest
 
-        raw_messages = convert_messages_to_llm(state.active_messages)
-        profile_name = str(
-            state.request.metadata.get("_runtime_compression_profile_name")
-            or self._runtime_services.default_compression_profile
-        )
-        profile = self._runtime_services.compression_profiles.get(profile_name)
-        if profile is None:
-            profile = self._runtime_services.compression_profiles.get(
-                self._runtime_services.default_compression_profile
-            )
+        raw_messages = self._runtime_messages_to_llm_payload(state.active_messages)
+        profile = self._runtime_resolve_compression_profile(state.request)
 
         build_result = await self._runtime_context_builder.build(
             ContextBuildRequest(
@@ -1587,9 +1702,14 @@ class AgentBridge:
         if profile is None:
             return build_result.system_prompt or system_prompt, list(build_result.active_messages)
 
-        model_context_window = state.budget.profile.max_total_tokens or max(
-            build_result.estimated_input_tokens,
-            1,
+        model_context_window = self._runtime_resolve_model_context_window(
+            state.request,
+            state_budget_profile=state.budget.profile,
+            compression_profile=profile,
+            fallback_window=max(
+                build_result.estimated_input_tokens,
+                1,
+            ),
         )
         compression_ctx = CompressionContext(
             session_key=state.request.session.session_key,
@@ -1624,9 +1744,15 @@ class AgentBridge:
                 budget=compression_ctx.budget,
                 metadata=dict(compression_ctx.metadata),
             )
-            compression_result = await self._runtime_compression_pipeline.run_emergency(emergency_ctx)
+            compression_result = await self._runtime_compression_pipeline.run_emergency(
+                emergency_ctx
+            )
 
         state.active_artifact_refs = list(compression_result.active_artifacts)
+        state.metadata.update(self._runtime_compression_metadata_payload(compression_result))
+        runtime_model_budget = self._runtime_model_budget_payload(state)
+        if runtime_model_budget is not None:
+            state.metadata["runtime_model_budget"] = dict(runtime_model_budget)
         await self._runtime_record_compression_events(
             state,
             tokens_before=build_result.estimated_input_tokens,
@@ -1644,9 +1770,218 @@ class AgentBridge:
                 "estimated_tokens": compression_result.estimated_input_tokens,
                 "operations": list(compression_result.operations),
                 "artifact_count": len(compression_result.active_artifacts),
+                **(
+                    {"runtime_model_budget": dict(runtime_model_budget)}
+                    if runtime_model_budget is not None
+                    else {}
+                ),
             },
         )
+        self._runtime_log_prompt_snapshot(
+            state,
+            call_id=llm_call_id or f"runtime-{uuid4().hex[:8]}",
+            system_prompt=build_result.system_prompt or system_prompt,
+            messages=list(compression_result.messages),
+            available_tools=available_tools,
+        )
         return build_result.system_prompt or system_prompt, list(compression_result.messages)
+
+    def _runtime_log_prompt_snapshot(
+        self,
+        state,
+        *,
+        call_id: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        available_tools: list[Any],
+    ) -> None:
+        try:
+            from ..utils.logger import get_llm_prompt_logger
+
+            prompt_logger = get_llm_prompt_logger()
+            prompt_logger.log_interaction(
+                session_id=state.request.session.session_id,
+                trace_id=self._runtime_trace_id(state.request) or None,
+                provider=str(state.metadata.get("provider") or state.metadata["runtime_config"].provider or ""),
+                model=str(state.metadata.get("model") or state.metadata["runtime_config"].model or ""),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    *[dict(message) for message in messages],
+                ],
+                response="",
+                latency_ms=0,
+                success=True,
+                tools=[tool.to_llm_tool() for tool in available_tools] if available_tools else None,
+                call_id=call_id,
+                source="runtime_prepared",
+                request_metadata={
+                    "compression_operations": list(state.metadata.get("compression_operations", [])),
+                    "budget_state": dict(state.metadata.get("budget_state", {}) or {}),
+                    "runtime_model_budget": dict(
+                        self._runtime_model_budget_payload(state) or {}
+                    ),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to log runtime prompt snapshot",
+                extra={
+                    "session_id": state.request.session.session_id,
+                    "call_id": call_id,
+                    "error": str(exc),
+                },
+            )
+
+    def _runtime_messages_to_llm_payload(self, messages: list[Any]) -> list[dict[str, Any]]:
+        """Normalize mixed runtime message lists into raw LLM payload dicts."""
+        from ..agent_core.context_transform import convert_message_to_llm
+
+        raw_messages: list[dict[str, Any]] = []
+        for message in messages:
+            if isinstance(message, dict):
+                raw_messages.append(dict(message))
+                continue
+            raw_messages.append(convert_message_to_llm(message))
+        return raw_messages
+
+    def _runtime_resolve_compression_profile(self, request: TurnRequest):
+        profile_name = str(
+            request.metadata.get("_runtime_compression_profile_name")
+            or self._runtime_services.default_compression_profile
+        )
+        try:
+            return self._runtime_services.compression_profiles.get(profile_name)
+        except KeyError:
+            return self._runtime_services.compression_profiles.get(
+                self._runtime_services.default_compression_profile
+            )
+
+    def _runtime_apply_model_aware_budget(self, request: TurnRequest) -> None:
+        base_profile = self._runtime_resolve_base_budget_profile(request)
+        compression_profile = self._runtime_resolve_compression_profile(request)
+        model_config = self._runtime_resolve_model_config(request)
+        derived_profile, hints = derive_model_aware_turn_budget_profile(
+            base_profile=base_profile,
+            compression_profile=compression_profile,
+            model_config=model_config,
+        )
+        request.metadata["_runtime_budget_profile"] = derived_profile
+        if hints is not None:
+            request.metadata["_runtime_model_budget_hints"] = hints.to_metadata()
+
+    def _runtime_resolve_base_budget_profile(self, request: TurnRequest) -> TurnBudgetProfile:
+        current = request.metadata.get("_runtime_budget_profile")
+        if isinstance(current, TurnBudgetProfile):
+            return current
+        named_profile = self._runtime_services.turn_profiles.get(request.session.budget_profile)
+        if named_profile is not None:
+            return named_profile
+        return self._runtime_services.turn_profiles[self._runtime_services.default_turn_profile]
+
+    def _runtime_resolve_model_context_window(
+        self,
+        request: TurnRequest,
+        *,
+        state_budget_profile: TurnBudgetProfile | None,
+        compression_profile,
+        fallback_window: int,
+    ) -> int:
+        compression_context_window_override = request.metadata.get("runtime_compression_context_window")
+        if (
+            isinstance(compression_context_window_override, int)
+            and compression_context_window_override > 0
+        ):
+            return compression_context_window_override
+
+        budget_profile = state_budget_profile or self._runtime_resolve_base_budget_profile(request)
+        model_config = self._runtime_resolve_model_config(request)
+        derived_profile, hints = derive_model_aware_turn_budget_profile(
+            base_profile=budget_profile,
+            compression_profile=compression_profile,
+            model_config=model_config,
+        )
+        if hints is not None:
+            request.metadata["_runtime_model_budget_hints"] = hints.to_metadata()
+        return derived_profile.max_total_tokens or fallback_window
+
+    def _runtime_resolve_model_config(self, request: TurnRequest):
+        from ..config.manager import get_config
+
+        config = get_config()
+        if not config.models:
+            return None
+
+        provider_name = str(
+            request.metadata.get("provider")
+            or request.metadata.get("_runtime_provider_name")
+            or ""
+        ).strip()
+        model_id = str(
+            request.metadata.get("model")
+            or request.metadata.get("_runtime_model_id")
+            or ""
+        ).strip()
+
+        if provider_name:
+            for model in config.models:
+                if model.name != provider_name:
+                    continue
+                if not model_id or model.model_id == model_id:
+                    return model
+
+        if model_id:
+            exact = [model for model in config.models if model.model_id == model_id]
+            if exact:
+                primary = next((model for model in exact if model.is_primary), None)
+                return primary or exact[0]
+
+        primary = next((model for model in config.models if model.is_primary), None)
+        return primary or config.models[0]
+
+    def _serialize_compression_verifier_result(self, value: object) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return dict(value)
+        if hasattr(value, "ok") and hasattr(value, "reasons") and hasattr(value, "preserved_fields"):
+            return {
+                "ok": bool(getattr(value, "ok", False)),
+                "reasons": list(getattr(value, "reasons", []) or []),
+                "preserved_fields": dict(getattr(value, "preserved_fields", {}) or {}),
+            }
+        return None
+
+    def _runtime_compression_metadata_payload(self, result) -> dict[str, Any]:
+        raw_metadata = dict(getattr(result, "metadata", {}) or {})
+        operations = list(getattr(result, "operations", []) or [])
+        payload: dict[str, Any] = {
+            "operations": operations,
+            "compression_operations": operations,
+            "rollback_applied": bool(getattr(result, "rollback_applied", False)),
+            "rollback_reason": getattr(result, "rollback_reason", None),
+        }
+        if isinstance(raw_metadata.get("budget_state"), dict):
+            payload["budget_state"] = dict(raw_metadata["budget_state"])
+        if isinstance(raw_metadata.get("rollback"), dict):
+            payload["rollback"] = dict(raw_metadata["rollback"])
+
+        verifier_payload = self._serialize_compression_verifier_result(
+            getattr(result, "verifier_result", None)
+            or raw_metadata.get("verifier_result")
+            or raw_metadata.get("verification")
+        )
+        if verifier_payload is not None:
+            payload["verifier_result"] = verifier_payload
+        return payload
+
+    def _runtime_model_budget_payload(self, state) -> dict[str, Any] | None:
+        runtime_model_budget = state.metadata.get("runtime_model_budget")
+        if isinstance(runtime_model_budget, dict):
+            return dict(runtime_model_budget)
+        request_budget_hints = state.request.metadata.get("_runtime_model_budget_hints")
+        if isinstance(request_budget_hints, dict):
+            return dict(request_budget_hints)
+        return None
 
     async def _runtime_record_compression_events(
         self,
@@ -1661,8 +1996,13 @@ class AgentBridge:
         if not getattr(result, "operations", None):
             return
 
-        tokens_after = int(getattr(result, "estimated_input_tokens", tokens_before) or 0)
-        freed_tokens = max(tokens_before - tokens_after, 0)
+        total_tokens_after = int(getattr(result, "estimated_input_tokens", tokens_before) or 0)
+        total_freed_tokens = max(tokens_before - total_tokens_after, 0)
+        compression_metadata = self._runtime_compression_metadata_payload(result)
+        runtime_model_budget = self._runtime_model_budget_payload(state)
+        if runtime_model_budget is not None:
+            compression_metadata["runtime_model_budget"] = runtime_model_budget
+        stage_metrics = dict(getattr(result, "metadata", {}) or {}).get("stage_metrics", {})
         affected_artifacts = [
             artifact.id
             for artifact in getattr(result, "active_artifacts", [])
@@ -1681,6 +2021,25 @@ class AgentBridge:
                 "emergency",
             }:
                 continue
+            metric = stage_metrics.get(normalized_stage) or stage_metrics.get(stage)
+            stage_tokens_before = int(
+                metric.get("tokens_before", tokens_before) if isinstance(metric, dict) else tokens_before
+            )
+            stage_tokens_after = int(
+                metric.get("tokens_after", total_tokens_after)
+                if isinstance(metric, dict)
+                else total_tokens_after
+            )
+            stage_freed_tokens = int(
+                metric.get("freed_tokens", total_freed_tokens)
+                if isinstance(metric, dict)
+                else total_freed_tokens
+            )
+            stage_affected_artifacts = (
+                list(metric.get("affected_artifact_ids", affected_artifacts))
+                if isinstance(metric, dict)
+                else affected_artifacts
+            )
             try:
                 await self.runtime_session_orchestrator.append_compression_event(
                     CompressionEventRecord(
@@ -1688,16 +2047,12 @@ class AgentBridge:
                         session_id=state.request.session.session_id,
                         turn_index=state.turn_index,
                         stage=normalized_stage,
-                        tokens_before=tokens_before,
-                        tokens_after=tokens_after,
-                        freed_tokens=freed_tokens,
-                        affected_artifact_ids=affected_artifacts,
+                        tokens_before=stage_tokens_before,
+                        tokens_after=stage_tokens_after,
+                        freed_tokens=stage_freed_tokens,
+                        affected_artifact_ids=stage_affected_artifacts,
                         fallback_used=normalized_stage == "emergency",
-                        metadata={
-                            "operations": list(result.operations),
-                            "rollback_applied": bool(getattr(result, "rollback_applied", False)),
-                            "rollback_reason": getattr(result, "rollback_reason", None),
-                        },
+                        metadata=compression_metadata,
                         created_at=time.time(),
                     )
                 )
@@ -1708,10 +2063,10 @@ class AgentBridge:
                     category=LogCategory.CONTEXT,
                     data={
                         "turn_index": state.turn_index,
-                        "tokens_before": tokens_before,
-                        "tokens_after": tokens_after,
-                        "freed_tokens": freed_tokens,
-                        "affected_artifact_ids": affected_artifacts,
+                        "tokens_before": stage_tokens_before,
+                        "tokens_after": stage_tokens_after,
+                        "freed_tokens": stage_freed_tokens,
+                        "affected_artifact_ids": stage_affected_artifacts,
                     },
                 )
             except Exception as exc:
@@ -1724,7 +2079,9 @@ class AgentBridge:
                     },
                 )
 
-    async def _runtime_record_assistant_observation(self, state, assistant_message: AssistantMessage) -> None:
+    async def _runtime_record_assistant_observation(
+        self, state, assistant_message: AssistantMessage
+    ) -> None:
         """Persist runtime transcript entries for assistant text and tool-call planning."""
         text_output = assistant_message.get_text().strip()
         tool_calls = assistant_message.get_tool_calls()
@@ -1759,7 +2116,10 @@ class AgentBridge:
                 )
             )
 
-        if assistant_message.stop_reason in {"error", "aborted"} and assistant_message.error_message:
+        if (
+            assistant_message.stop_reason in {"error", "aborted"}
+            and assistant_message.error_message
+        ):
             recent_failures = state.metadata.setdefault("runtime_recent_failures", [])
             recent_failures.append(assistant_message.error_message)
             del recent_failures[:-6]
@@ -1805,7 +2165,9 @@ class AgentBridge:
         state.active_artifact_refs.append(artifact)
         return artifact
 
-    async def _runtime_record_tool_side_effects(self, state, result_message: ToolResultMessage) -> None:
+    async def _runtime_record_tool_side_effects(
+        self, state, result_message: ToolResultMessage
+    ) -> None:
         """Record lightweight stateful side effects after one tool result."""
         details = result_message.details
         try:
@@ -1814,8 +2176,14 @@ class AgentBridge:
             archiver = get_tool_result_archiver()
             updater = get_session_state_updater()
             archived = {}
-            result_text = result_message.get_text() if hasattr(result_message, "get_text") else "".join(
-                content.text for content in result_message.content if isinstance(content, TextContent)
+            result_text = (
+                result_message.get_text()
+                if hasattr(result_message, "get_text")
+                else "".join(
+                    content.text
+                    for content in result_message.content
+                    if isinstance(content, TextContent)
+                )
             )
 
             if archiver is not None:
@@ -1934,6 +2302,7 @@ class AgentBridge:
         self,
         state,
         *,
+        call_id: str | None = None,
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools: list[Any],
@@ -1942,7 +2311,7 @@ class AgentBridge:
         from ..agent_core.context_transform import estimate_tokens
 
         trace_id = self._runtime_trace_id(state.request)
-        call_id = f"runtime-{uuid4().hex[:8]}"
+        call_id = call_id or f"runtime-{uuid4().hex[:8]}"
         state.metadata["runtime_last_llm_call_id"] = call_id
         if not trace_id:
             return call_id
@@ -1951,8 +2320,14 @@ class AgentBridge:
             LLMCallLog(
                 call_id=call_id,
                 trace_id=trace_id,
-                model=str(state.metadata.get("model") or state.metadata["runtime_config"].model or ""),
-                provider=str(state.metadata.get("provider") or state.metadata["runtime_config"].provider or ""),
+                model=str(
+                    state.metadata.get("model") or state.metadata["runtime_config"].model or ""
+                ),
+                provider=str(
+                    state.metadata.get("provider")
+                    or state.metadata["runtime_config"].provider
+                    or ""
+                ),
                 system_prompt=system_prompt,
                 messages=list(messages),
                 message_count=len(messages),
@@ -2050,13 +2425,15 @@ class AgentBridge:
             }
         )
 
-    async def _persist_runtime_assistant_message(self, request: TurnRequest, result: TurnResult) -> None:
+    async def _persist_runtime_assistant_message(
+        self, request: TurnRequest, result: TurnResult
+    ) -> str | None:
         """Persist the final assistant answer into the legacy session store for UI history."""
         if not result.output_text:
-            return
+            return None
         try:
             session_manager = _get_session_manager()
-            await session_manager.add_message(
+            assistant_message = await session_manager.add_message(
                 session_id=request.session.session_id,
                 role="assistant",
                 content=result.output_text,
@@ -2066,13 +2443,16 @@ class AgentBridge:
                     "stop_reason": result.finish_reason,
                     "usage": result.metadata.get("budget", {}),
                     "user_msg_id": request.metadata.get("runtime_user_msg_id"),
+                    **self._message_persistence_metadata(result.metadata, role="assistant"),
                 },
             )
+            return assistant_message.id
         except Exception as exc:
             logger.warning(
                 "Failed to persist runtime assistant message",
                 extra={"session_id": request.session.session_id, "error": str(exc)},
             )
+            return None
 
     async def run_runtime_turn(
         self,
@@ -2082,6 +2462,7 @@ class AgentBridge:
     ) -> TurnResult:
         """Execute a prepared runtime turn through the bounded runtime controller."""
         runtime_controller = controller or self.runtime_turn_controller
+        self._runtime_apply_model_aware_budget(request)
         try:
             result = await runtime_controller.run(request)
         except Exception as exc:
@@ -2097,7 +2478,9 @@ class AgentBridge:
             raise
         if not result.metadata.get("runtime_persisted"):
             await self._persist_runtime_turn_result(request, result)
-            await self._persist_runtime_assistant_message(request, result)
+            result.metadata["runtime_assistant_msg_id"] = await self._persist_runtime_assistant_message(
+                request, result
+            )
             result.metadata["runtime_persisted"] = True
         self._runtime_log_request(
             request,
@@ -2142,7 +2525,9 @@ class AgentBridge:
         def elapsed_ms() -> int:
             return int((time.monotonic() - started_at) * 1000)
 
-        def mark_milestone(name: str, *, phase: str | None = None, progress: str | None = None) -> None:
+        def mark_milestone(
+            name: str, *, phase: str | None = None, progress: str | None = None
+        ) -> None:
             diagnostics["milestones_ms"][name] = elapsed_ms()
             if phase is not None:
                 diagnostics["phase"] = phase
@@ -2164,11 +2549,14 @@ class AgentBridge:
                 session_id=request.session.session_id,
                 agent_info=agent_info,
                 persist_user_message=persist_user_message,
+                user_metadata=self._message_persistence_metadata(request.metadata, role="user"),
                 disable_skills=disable_skills,
             ):
                 event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
                 diagnostics["events_seen"] += 1
-                diagnostics["event_counts"][event_type] = diagnostics["event_counts"].get(event_type, 0) + 1
+                diagnostics["event_counts"][event_type] = (
+                    diagnostics["event_counts"].get(event_type, 0) + 1
+                )
                 diagnostics["last_event_type"] = event_type
 
                 if diagnostics["events_seen"] == 1:
@@ -2234,7 +2622,9 @@ class AgentBridge:
                 )
             else:
                 await self.load_session_history(agent, request.session.session_id)
-                mark_milestone("history_loaded", phase="stream_events", progress="session_history_loaded")
+                mark_milestone(
+                    "history_loaded", phase="stream_events", progress="session_history_loaded"
+                )
 
             injected_announcements = self._inject_runtime_announcements(agent, request)
             if injected_announcements:
@@ -2248,7 +2638,7 @@ class AgentBridge:
                 await asyncio.wait_for(consume_events(), timeout=float(timeout_ms) / 1000.0)
             else:
                 await consume_events()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             mark_milestone("timed_out", phase="timeout", progress="timed_out")
             used_synthetic_fallback = self._should_mark_synthetic_fallback(
                 final_content,
@@ -2268,7 +2658,9 @@ class AgentBridge:
                 },
             )
             return TurnResult(
-                kind="final" if timeout_fallback_mode == "final" and used_synthetic_fallback else "abort",
+                kind="final"
+                if timeout_fallback_mode == "final" and used_synthetic_fallback
+                else "abort",
                 finish_reason="max_wall_time",
                 output_text=self._resolve_runtime_output_text(
                     final_content,
@@ -2467,7 +2859,9 @@ class AgentBridge:
         if not hasattr(agent, "__dict__") and not hasattr(agent, "_system_prompt"):
             return False
 
-        base_prompt = getattr(agent, "_system_prompt", "") or getattr(agent, "_original_system_prompt", "")
+        base_prompt = getattr(agent, "_system_prompt", "") or getattr(
+            agent, "_original_system_prompt", ""
+        )
         try:
             agent._system_prompt = f"{base_prompt}\n\n{announcement_block}".strip()
         except (AttributeError, TypeError):
@@ -2522,14 +2916,14 @@ class AgentBridge:
                 if last_event == "agent_start":
                     return (
                         f"[runtime fast mode timeout{timeout_suffix}] "
-                        f"request=\"{request_preview}\". "
+                        f'request="{request_preview}". '
                         "provider emitted no content chunk before timeout. "
                         "Try /api/v1/dev/llm-stream-probe or increase runtime_timeout_ms. "
                         f"phase={phase}, last_event={last_event}, events_seen={events_seen}"
                     )
                 return (
                     f"[runtime fast mode timeout{timeout_suffix}] "
-                    f"request=\"{request_preview}\". bridge ok, waiting for provider content. "
+                    f'request="{request_preview}". bridge ok, waiting for provider content. '
                     f"phase={phase}, last_event={last_event}, events_seen={events_seen}"
                 )
             return (
@@ -2601,15 +2995,21 @@ class AgentBridge:
         # 优先级 1: 从 MultiAgentContextLoader 获取（已初始化、路径已解析）
         try:
             from ..config.manager import get_config
+
             config = get_config()
 
-            has_multi_agent = hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents
+            has_multi_agent = (
+                hasattr(config, "multi_agent") and config.multi_agent and config.multi_agent.agents
+            )
             if has_multi_agent:
                 from ..conversation.multi_agent_context_loader import get_multi_agent_context_loader
+
                 multi_agent_context_loader = get_multi_agent_context_loader()
 
                 if multi_agent_context_loader is not None:
-                    agent_context = multi_agent_context_loader.get_agent_context(agent_info.agent_id)
+                    agent_context = multi_agent_context_loader.get_agent_context(
+                        agent_info.agent_id
+                    )
 
                     if agent_context is not None:
                         workspace_path = str(agent_context.workspace_path)
@@ -2626,7 +3026,9 @@ class AgentBridge:
                         "[workspace-debug] Agent not found in MultiAgentContextLoader",
                         extra={
                             "agent_id": agent_info.agent_id,
-                            "available_agent_ids": str(list(multi_agent_context_loader.agent_contexts.keys())),
+                            "available_agent_ids": str(
+                                list(multi_agent_context_loader.agent_contexts.keys())
+                            ),
                         },
                     )
 
@@ -2639,6 +3041,7 @@ class AgentBridge:
         # 优先级 2: 使用 AgentInfo 自身携带的 workspace 字段（从配置加载）
         if agent_info.workspace:
             from pathlib import Path
+
             workspace_path = str(Path(agent_info.workspace).expanduser())
             logger.info(
                 "[workspace-debug] Fallback to AgentInfo.workspace",
@@ -2713,7 +3116,7 @@ class AgentBridge:
 
             # 检查是否有配置高危工具列表
             high_risk_tools = None
-            if hasattr(config, 'tools') and hasattr(config.tools, 'high_risk_tools'):
+            if hasattr(config, "tools") and hasattr(config.tools, "high_risk_tools"):
                 high_risk_tools = config.tools.high_risk_tools
 
             return create_tool_middleware_adapter(
@@ -2722,8 +3125,7 @@ class AgentBridge:
                 high_risk_tools=high_risk_tools,
                 max_tool_calls_total=turn_profile.max_tool_calls if turn_profile else 12,
                 max_tool_calls_by_name={
-                    name: policy.max_uses_per_turn
-                    for name, policy in (tool_policies or {}).items()
+                    name: policy.max_uses_per_turn for name, policy in (tool_policies or {}).items()
                 },
                 default_repeat_signature_limit=(
                     self._runtime_services.tool_policies.get("__default__").repeat_signature_limit
@@ -2742,7 +3144,32 @@ class AgentBridge:
             )
             return None
 
-    async def _persist_user_message(self, session_id: str, content: str) -> str | None:
+    def _message_persistence_metadata(
+        self,
+        metadata: dict[str, Any] | None,
+        *,
+        role: str,
+    ) -> dict[str, Any]:
+        """Extract stable metadata that should survive in session history."""
+        if not metadata:
+            return {}
+
+        persisted: dict[str, Any] = {}
+        if role == "user":
+            if isinstance(metadata.get("audio"), dict):
+                persisted["audio"] = dict(metadata["audio"])
+            if isinstance(metadata.get("transcript"), dict):
+                persisted["transcript"] = dict(metadata["transcript"])
+        if role == "assistant" and isinstance(metadata.get("audio_reply"), dict):
+            persisted["audio_reply"] = dict(metadata["audio_reply"])
+        return persisted
+
+    async def _persist_user_message(
+        self,
+        session_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> str | None:
         """持久化用户消息（在发送到 LLM 之前）。
 
         Args:
@@ -2758,6 +3185,7 @@ class AgentBridge:
                 session_id=session_id,
                 role="user",
                 content=content,
+                metadata=metadata,
             )
             logger.info(
                 "User message persisted before LLM call",
@@ -2788,12 +3216,14 @@ class AgentBridge:
         skill_prompt, _invocation = _match_and_load_skill_prompt(content)
 
         from ..conversation.system_prompt_builder import SKILLS_INJECTION_MARKER
+
         base_prompt = agent._original_system_prompt
 
         if skill_prompt:
             if SKILLS_INJECTION_MARKER in base_prompt:
                 agent._system_prompt = base_prompt.replace(
-                    SKILLS_INJECTION_MARKER, skill_prompt.strip(),
+                    SKILLS_INJECTION_MARKER,
+                    skill_prompt.strip(),
                 )
             else:
                 agent._system_prompt = base_prompt + skill_prompt
@@ -2884,9 +3314,7 @@ class AgentBridge:
         if isinstance(event, ToolExecutionEndEvent):
             result_content = ""
             if event.result:
-                text_parts = [
-                    c.text for c in event.result.content if isinstance(c, TextContent)
-                ]
+                text_parts = [c.text for c in event.result.content if isinstance(c, TextContent)]
                 result_content = "".join(text_parts)
             return GatewayEvent.tool_result(
                 tool_call_id=event.tool_call_id,

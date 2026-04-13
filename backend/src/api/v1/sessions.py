@@ -19,6 +19,7 @@ def _get_session_manager() -> SessionManager:
 
 class CreateSessionRequest(BaseModel):
     """Request body for creating a session."""
+
     title: str | None = None
     agent_id: str | None = None
     close_existing: bool = False
@@ -41,7 +42,7 @@ async def list_sessions(
     session_manager = _get_session_manager()
     sessions = await session_manager.list_sessions(limit=limit + offset)
 
-    paginated = sessions[offset:offset + limit]
+    paginated = sessions[offset : offset + limit]
 
     return {
         "success": True,
@@ -73,6 +74,7 @@ async def get_active_session_by_agent(agent_id: str) -> dict:
         "data": agent_session.to_dict() if agent_session else None,
     }
 
+
 @router.post("")
 async def create_session(request: CreateSessionRequest) -> dict:
     """Create a new chat session.
@@ -86,6 +88,7 @@ async def create_session(request: CreateSessionRequest) -> dict:
     session_manager = _get_session_manager()
     # 确保 session 始终绑定到 agent，使用默认值防止 null
     from ...conversation.dao.bootstrap import DEFAULT_AGENT_ID
+
     agent_id = request.agent_id or DEFAULT_AGENT_ID
     session = await session_manager.create_session(
         title=request.title,
@@ -115,7 +118,7 @@ async def get_session(session_id: str) -> dict:
         Dictionary with session and messages
     """
     session_manager = _get_session_manager()
-    
+
     # 先尝试获取 session，如果不存在则自动创建（兼容旧数据）
     session = await session_manager.ensure_session(session_id)
     messages = await session_manager.get_messages(session_id)

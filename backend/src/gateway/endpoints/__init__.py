@@ -8,7 +8,7 @@
 - REST/SSE: rest.py（HTTP POST + SSE 流式响应，无状态）
 """
 
-from .websocket import router as websocket_router
 from .rest import router as rest_router
+from .websocket import router as websocket_router
 
 __all__ = ["websocket_router", "rest_router"]

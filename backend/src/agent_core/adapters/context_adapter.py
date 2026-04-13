@@ -102,7 +102,9 @@ class XAgentContextAdapter:
                         agent_id="main-agent",
                         mode=mode,
                         current_messages=sanitized_messages,
-                        max_prompt_tokens=getattr(self._manager.config, "max_context_tokens", 32000),
+                        max_prompt_tokens=getattr(
+                            self._manager.config, "max_context_tokens", 32000
+                        ),
                     )
                 )
                 stateful_summary = getattr(bundle, "session_state_text", "")
@@ -116,12 +118,15 @@ class XAgentContextAdapter:
             runtime_summary = ""
             runtime_was_compressed = False
             if self._runtime_context_builder is not None:
-                runtime_system_prompt, runtime_messages, runtime_summary, runtime_was_compressed = (
-                    await self._prepare_runtime_context(
-                        session_id=session_id,
-                        messages=runtime_messages,
-                        system_prompt=system_prompt,
-                    )
+                (
+                    runtime_system_prompt,
+                    runtime_messages,
+                    runtime_summary,
+                    runtime_was_compressed,
+                ) = await self._prepare_runtime_context(
+                    session_id=session_id,
+                    messages=runtime_messages,
+                    system_prompt=system_prompt,
                 )
 
             if mode == "stateful":
@@ -130,7 +135,7 @@ class XAgentContextAdapter:
                 summary_parts = [part for part in [stateful_summary, runtime_summary] if part]
                 return PreparedContext(
                     messages=final_messages,
-                    was_compressed=True or runtime_was_compressed,
+                    was_compressed=True,
                     original_tokens=original_tokens,
                     final_tokens=final_tokens,
                     summary="\n".join(summary_parts),
@@ -144,11 +149,15 @@ class XAgentContextAdapter:
                 tools=tools,
             )
 
-            was_compressed = runtime_was_compressed or (result.summary is not None and result.summary != "")
+            was_compressed = runtime_was_compressed or (
+                result.summary is not None and result.summary != ""
+            )
 
             # 清洗输出消息，确保压缩后的消息也合法
             final_messages = _sanitize_messages(result.messages)
-            summary_parts = [part for part in [stateful_summary, runtime_summary, result.summary or ""] if part]
+            summary_parts = [
+                part for part in [stateful_summary, runtime_summary, result.summary or ""] if part
+            ]
 
             if was_compressed:
                 logger.info(
@@ -158,7 +167,7 @@ class XAgentContextAdapter:
                         "original_message_count": len(messages),
                         "compressed_message_count": len(final_messages),
                         "total_tokens": result.total_tokens,
-                    }
+                    },
                 )
 
             return PreparedContext(
@@ -177,7 +186,7 @@ class XAgentContextAdapter:
                     "session_id": session_id,
                     "error": str(e),
                     "error_type": type(e).__name__,
-                }
+                },
             )
             return PreparedContext(
                 messages=messages,
@@ -206,8 +215,11 @@ class XAgentContextAdapter:
         messages: list[dict],
         system_prompt: str,
     ) -> tuple[str, list[dict], str, bool]:
-        from ...runtime.context import CompressionContext, ContextBuildRequest, DefaultCompressionPipeline, DefaultContextBuilder
-        from ...runtime.types import BudgetSnapshot, SessionDescriptor, TaskFrame, TurnBudgetProfile
+        from ...runtime.context import (
+            CompressionContext,
+            ContextBuildRequest,
+        )
+        from ...runtime.types import BudgetSnapshot, SessionDescriptor, TurnBudgetProfile
 
         if self._runtime_context_builder is None or self._runtime_compression_pipeline is None:
             return system_prompt, messages, "", False
@@ -244,15 +256,24 @@ class XAgentContextAdapter:
                 budget=BudgetSnapshot.from_profile(
                     TurnBudgetProfile(
                         max_total_tokens=getattr(self._manager.config, "max_context_tokens", 32000),
-                        compact_trigger_tokens=getattr(self._manager.config, "threshold_tokens", 4000),
-                        collapse_trigger_tokens=getattr(self._manager.config, "threshold_tokens", 4000),
+                        compact_trigger_tokens=getattr(
+                            self._manager.config, "threshold_tokens", 4000
+                        ),
+                        collapse_trigger_tokens=getattr(
+                            self._manager.config, "threshold_tokens", 4000
+                        ),
                     )
                 ),
                 metadata={"now_ms": int(time.time() * 1000)},
             )
         )
         operations = ", ".join(compression_result.operations)
-        return runtime_system_prompt, compression_result.messages, operations, bool(compression_result.operations)
+        return (
+            runtime_system_prompt,
+            compression_result.messages,
+            operations,
+            bool(compression_result.operations),
+        )
 
 
 def _sanitize_messages(messages: list[dict]) -> list[dict]:
@@ -329,9 +350,9 @@ def create_context_adapter(
     Returns:
         XAgentContextAdapter 实例
     """
-    from ...services.compression import ContextCompressionManager
     from ...runtime.context import DefaultCompressionPipeline, DefaultContextBuilder
     from ...runtime.service import get_runtime_services
+    from ...services.compression import ContextCompressionManager
 
     async def summary_fn(prompt: str) -> str:
         """通过 LLMRouter 生成摘要的回调.

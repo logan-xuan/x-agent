@@ -102,7 +102,9 @@ class DefaultCompressionVerifier:
     def _role_ordering_ok(self, messages: list[Any]) -> bool:
         seen_assistant = False
         for message in messages:
-            role = message.get("role") if isinstance(message, dict) else getattr(message, "role", None)
+            role = (
+                message.get("role") if isinstance(message, dict) else getattr(message, "role", None)
+            )
             if role == "assistant":
                 seen_assistant = True
             if role in {"tool", "tool_result"} and not seen_assistant:
@@ -126,7 +128,11 @@ class DefaultCompressionVerifier:
             )
         ).strip()
 
-        if after and request.task_frame.objective.strip() and after != request.task_frame.objective.strip():
+        if (
+            after
+            and request.task_frame.objective.strip()
+            and after != request.task_frame.objective.strip()
+        ):
             return False
 
         if before and after:
@@ -166,14 +172,22 @@ class DefaultCompressionVerifier:
     def _objective_match_count(self, request: CompressionVerifyRequest, objective: str) -> int:
         matches = 0
         for message in request.compressed_messages:
-            content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+            content = (
+                message.get("content", "")
+                if isinstance(message, dict)
+                else getattr(message, "content", "")
+            )
             if objective in str(content):
                 matches += 1
         return matches
 
     def _requires_inline_objective(self, messages: list[Any]) -> bool:
         for message in messages:
-            content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+            content = (
+                message.get("content", "")
+                if isinstance(message, dict)
+                else getattr(message, "content", "")
+            )
             normalized = str(content).lower()
             if normalized.startswith("[collapsed history]"):
                 return True
@@ -186,7 +200,11 @@ class DefaultCompressionVerifier:
     def _terminal_state_conflicts_ok(self, messages: list[Any]) -> bool:
         task_states: dict[str, set[str]] = {}
         for message in messages:
-            content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+            content = (
+                message.get("content", "")
+                if isinstance(message, dict)
+                else getattr(message, "content", "")
+            )
             normalized = str(content).lower()
             task_id = self._extract_task_id(normalized)
             state = self._extract_state_label(normalized)
@@ -202,8 +220,16 @@ class DefaultCompressionVerifier:
         return True
 
     def _conclusions_preserved(self, request: CompressionVerifyRequest) -> bool:
-        before = [str(item).strip() for item in request.metadata.get("key_conclusions_before", []) if str(item).strip()]
-        after = {str(item).strip() for item in request.metadata.get("key_conclusions_after", []) if str(item).strip()}
+        before = [
+            str(item).strip()
+            for item in request.metadata.get("key_conclusions_before", [])
+            if str(item).strip()
+        ]
+        after = {
+            str(item).strip()
+            for item in request.metadata.get("key_conclusions_after", [])
+            if str(item).strip()
+        }
         if not before:
             return True
         return all(item in after for item in before)

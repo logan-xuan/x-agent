@@ -14,11 +14,11 @@ GatewayEvent 是协议无关的响应事件，各端点负责将其转换为自�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class GatewayEventType(str, Enum):
+class GatewayEventType(StrEnum):
     """Gateway 事件类型。
 
     覆盖 Agent 处理全生命周期的事件：

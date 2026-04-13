@@ -35,9 +35,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from ..conversation.identity import ChannelType
 from ..gateway.envelope import Envelope
 from ..gateway.response import GatewayEvent
-from ..conversation.identity import ChannelType
 
 
 class ChannelAdapter(ABC):

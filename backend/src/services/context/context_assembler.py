@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from .artifact_store import ArtifactStore
 from .episodic_memory_store import EpisodicMemoryStore
 from .evidence_ledger_store import EvidenceLedgerStore
@@ -64,13 +62,21 @@ class ContextAssembler:
 
         system_messages = []
         if session_state_text:
-            system_messages.append({"role": "system", "content": f"[Session State]\n{session_state_text}"})
+            system_messages.append(
+                {"role": "system", "content": f"[Session State]\n{session_state_text}"}
+            )
         if evidence_text:
-            system_messages.append({"role": "system", "content": f"[Evidence Ledger]\n{evidence_text}"})
+            system_messages.append(
+                {"role": "system", "content": f"[Evidence Ledger]\n{evidence_text}"}
+            )
         if episodic_text:
-            system_messages.append({"role": "system", "content": f"[Episodic Memory]\n{episodic_text}"})
+            system_messages.append(
+                {"role": "system", "content": f"[Episodic Memory]\n{episodic_text}"}
+            )
         if artifact_text:
-            system_messages.append({"role": "system", "content": f"[Artifact References]\n{artifact_text}"})
+            system_messages.append(
+                {"role": "system", "content": f"[Artifact References]\n{artifact_text}"}
+            )
 
         working_set = request.current_messages[-request.max_working_set_messages :]
         messages = [*system_messages, *working_set]
@@ -80,7 +86,9 @@ class ContextAssembler:
             "evidence": _estimate_tokens(evidence_text),
             "episodic": _estimate_tokens(episodic_text),
             "artifacts": _estimate_tokens(artifact_text),
-            "working_set": sum(_estimate_tokens(str(msg.get("content", ""))) for msg in working_set),
+            "working_set": sum(
+                _estimate_tokens(str(msg.get("content", ""))) for msg in working_set
+            ),
         }
         token_breakdown["total_messages"] = sum(token_breakdown.values())
 
@@ -102,7 +110,9 @@ class ContextAssembler:
                 _estimate_tokens(str(msg.get("content", ""))) for msg in working_set
             )
             token_breakdown["total_messages"] = min(
-                sum(token_breakdown.values()) - token_breakdown["total_messages"] + token_breakdown["working_set"],
+                sum(token_breakdown.values())
+                - token_breakdown["total_messages"]
+                + token_breakdown["working_set"],
                 request.max_prompt_tokens,
             )
 

@@ -93,7 +93,9 @@ class FeishuMessageClient:
             )
             return None
 
-    async def send_text_message(self, receive_id: str, receive_id_type: str, content: str) -> str | None:
+    async def send_text_message(
+        self, receive_id: str, receive_id_type: str, content: str
+    ) -> str | None:
         """Send a plain text fallback message."""
         client = self._get_client()
         if client is None:
@@ -164,11 +166,7 @@ class FeishuMessageClient:
                 client.im.v1.message.patch,
                 request=PatchMessageRequest.builder()
                 .message_id(message_id)
-                .request_body(
-                    PatchMessageRequestBody.builder()
-                    .content(msg_content)
-                    .build()
-                )
+                .request_body(PatchMessageRequestBody.builder().content(msg_content).build())
                 .build(),
             )
 

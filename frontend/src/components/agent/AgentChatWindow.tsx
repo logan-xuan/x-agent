@@ -6,6 +6,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AgentMessage } from '../../hooks/useAgent';
+import type { AgentVoiceSendOptions } from '../../hooks/useAgent';
 import { ConnectionStatus } from '../../hooks/useWebSocket';
 import { AgentMessageList } from './AgentMessageList';
 import { Badge } from '../ui/Badge';
@@ -13,7 +14,10 @@ import { Button } from '../ui/Button';
 import { DevModeWindow } from '../dev/DevModeWindow';
 import { SkillMenu } from '../skills/SkillMenu';
 import { AgentSwitcher } from './AgentSwitcher';
+import { VoiceRecorder } from './VoiceRecorder';
 import { Skill, listSkills, AgentInfo } from '@/services/api';
+
+type InputMode = 'text' | 'voice';
 
 interface AgentChatWindowProps {
     sessionId: string | null;
@@ -25,6 +29,7 @@ interface AgentChatWindowProps {
     connectionStatus: ConnectionStatus;
     currentAgentId: string | null;
     onSendMessage: (content: string) => void;
+    onSendVoiceMessage: (file: File, options?: AgentVoiceSendOptions) => Promise<void>;
     onAbort: () => void;
     onClearMessages: () => void;
     onOpenSettings?: () => void;
@@ -42,6 +47,7 @@ export function AgentChatWindow({
     connectionStatus,
     currentAgentId,
     onSendMessage,
+    onSendVoiceMessage,
     onAbort,
     onClearMessages: _onClearMessages,
     onOpenSettings,
@@ -50,6 +56,7 @@ export function AgentChatWindow({
 }: AgentChatWindowProps) {
     const [inputValue, setInputValue] = useState('');
     const [isDevModeOpen, setIsDevModeOpen] = useState(false);
+    const [inputMode, setInputMode] = useState<InputMode>('text');
 
     // Skills state
     const [skills, setSkills] = useState<Skill[]>([]);
@@ -58,6 +65,7 @@ export function AgentChatWindow({
     const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | undefined>();
     const [isComposing, setIsComposing] = useState(false); // Track IME composition state
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Load skills on mount
     useEffect(() => {
@@ -309,75 +317,166 @@ export function AgentChatWindow({
             {/* 输入区域 */}
             <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
                 <div className="max-w-3xl mx-auto">
-                    <div className="flex gap-2">
-                        <div className="flex-1 relative">
-                            <textarea
-                                ref={textareaRef}
-                                value={inputValue}
-                                onChange={(e) => {
-                                    setInputValue(e.target.value);
-                                    checkForSkillTrigger();
-                                }}
-                                onKeyDown={handleKeyDown}
-                                onCompositionStart={() => setIsComposing(true)}
-                                onCompositionEnd={() => setIsComposing(false)}
-                                placeholder={
-                                    isConnecting
-                                        ? '正在初始化...'
-                                        : connectionStatus !== 'connected'
-                                            ? '等待连接...'
-                                            : isLoading
-                                                ? 'Agent 正在处理...'
-                                                : isLoadingSkills
-                                                    ? '加载技能...'
-                                                    : '输入消息... (输入 / 显示技能菜单, Enter 发送, Shift+Enter 换行)'
-                                }
-                                disabled={isConnecting || connectionStatus !== 'connected' || isLoading}
-                                className="w-full resize-none rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-2 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-                                rows={2}
-                            />
+                    <div className="mb-3 flex items-center justify-between">
+                        <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-1 dark:border-gray-700 dark:bg-gray-800">
+                            <button
+                                type="button"
+                                aria-pressed={inputMode === 'text'}
+                                onClick={() => setInputMode('text')}
+                                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${inputMode === 'text'
+                                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+                                    }`}
+                            >
+                                文本模式
+                            </button>
+                            <button
+                                type="button"
+                                aria-pressed={inputMode === 'voice'}
+                                onClick={() => setInputMode('voice')}
+                                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${inputMode === 'voice'
+                                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+                                    }`}
+                            >
+                                语音模式
+                            </button>
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {inputMode === 'text'
+                                ? '文本输入支持技能快捷命令'
+                                : '录音后可预览并发送，上传音频会直接转写'}
+                        </p>
+                    </div>
 
-                            {/* Skill menu */}
-                            {showSkillMenu && skills.length > 0 && (
-                                <SkillMenu
-                                    skills={skills}
-                                    onSelect={handleSkillSelect}
-                                    onClose={() => setShowSkillMenu(false)}
-                                    anchorPosition={menuPosition}
-                                    searchQuery={(() => {
-                                        // Extract text after last /
-                                        const lastSlashIndex = inputValue.lastIndexOf('/');
-                                        if (lastSlashIndex !== -1) {
-                                            return inputValue.substring(lastSlashIndex + 1).trim();
-                                        }
-                                        return '';
-                                    })()}
+                    {inputMode === 'text' ? (
+                        <div className="flex gap-2">
+                            <div className="flex-1 relative">
+                                <textarea
+                                    ref={textareaRef}
+                                    value={inputValue}
+                                    onChange={(e) => {
+                                        setInputValue(e.target.value);
+                                        checkForSkillTrigger();
+                                    }}
+                                    onKeyDown={handleKeyDown}
+                                    onCompositionStart={() => setIsComposing(true)}
+                                    onCompositionEnd={() => setIsComposing(false)}
+                                    placeholder={
+                                        isConnecting
+                                            ? '正在初始化...'
+                                            : connectionStatus !== 'connected'
+                                                ? '等待连接...'
+                                                : isLoading
+                                                    ? 'Agent 正在处理...'
+                                                    : isLoadingSkills
+                                                        ? '加载技能...'
+                                                        : '输入消息... (输入 / 显示技能菜单, Enter 发送, Shift+Enter 换行)'
+                                    }
+                                    disabled={isConnecting || connectionStatus !== 'connected' || isLoading}
+                                    className="w-full resize-none rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-2 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
+                                    rows={2}
                                 />
+
+                                {/* Skill menu */}
+                                {showSkillMenu && skills.length > 0 && (
+                                    <SkillMenu
+                                        skills={skills}
+                                        onSelect={handleSkillSelect}
+                                        onClose={() => setShowSkillMenu(false)}
+                                        anchorPosition={menuPosition}
+                                        searchQuery={(() => {
+                                            const lastSlashIndex = inputValue.lastIndexOf('/');
+                                            if (lastSlashIndex !== -1) {
+                                                return inputValue.substring(lastSlashIndex + 1).trim();
+                                            }
+                                            return '';
+                                        })()}
+                                    />
+                                )}
+                            </div>
+                            {isLoading ? (
+                                <Button
+                                    onClick={onAbort}
+                                    variant="destructive"
+                                    className="px-6"
+                                    title="中止"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </Button>
+                            ) : (
+                                <Button
+                                    onClick={handleSend}
+                                    disabled={isConnecting || connectionStatus !== 'connected' || !inputValue.trim()}
+                                    className="px-6"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                    </svg>
+                                </Button>
                             )}
                         </div>
-                        {isLoading ? (
-                            <Button
-                                onClick={onAbort}
-                                variant="destructive"
-                                className="px-6"
-                                title="中止"
-                            >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </Button>
-                        ) : (
-                            <Button
-                                onClick={handleSend}
-                                disabled={isConnecting || connectionStatus !== 'connected' || !inputValue.trim()}
-                                className="px-6"
-                            >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                                </svg>
-                            </Button>
-                        )}
-                    </div>
+                    ) : (
+                        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <p className="text-sm font-medium text-gray-900 dark:text-white">发送语音消息</p>
+                                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                        点击麦克风开始录音，停止后可先预览再发送；也可以上传已有音频文件。当前 Agent 会按默认 ASR / TTS 配置处理。
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <VoiceRecorder
+                                        disabled={Boolean(isConnecting || connectionStatus !== 'connected' || isLoading)}
+                                        onSendVoiceMessage={onSendVoiceMessage}
+                                    />
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept="audio/*"
+                                        className="hidden"
+                                        onChange={async (event) => {
+                                            const file = event.target.files?.[0];
+                                            if (!file) {
+                                                return;
+                                            }
+                                            try {
+                                                await onSendVoiceMessage(file);
+                                            } finally {
+                                                event.target.value = '';
+                                            }
+                                        }}
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={isConnecting || connectionStatus !== 'connected' || isLoading}
+                                        className="px-3"
+                                        title="上传音频文件"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16" />
+                                        </svg>
+                                    </Button>
+                                    {isLoading && (
+                                        <Button
+                                            onClick={onAbort}
+                                            variant="destructive"
+                                            className="px-3"
+                                            title="中止"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 

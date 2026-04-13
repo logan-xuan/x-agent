@@ -15,14 +15,15 @@ This module provides the built-in tools that are always available:
 - delegate_task: Delegate tasks to another Agent (through full agent loop)
 """
 
-from .file_ops import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool, SearchFilesTool
 from .aliyun_web_search import AliyunWebSearchTool
-from .get_current_time import GetCurrentTimeTool
+from .delegate_task_tool import DelegateTaskTool
 from .fetch_web_content import FetchWebContentTool
+from .file_ops import EditFileTool, ListDirTool, ReadFileTool, SearchFilesTool, WriteFileTool
+from .generate_image import GenerateImageTool
+from .get_current_time import GetCurrentTimeTool
 from .memory_search import MemorySearchTool
 from .notify_tool import NotifyTool
-from .delegate_task_tool import DelegateTaskTool
-from .terminal import RunInTerminalTool, GetTerminalOutputTool, KillProcessTool
+from .terminal import GetTerminalOutputTool, KillProcessTool, RunInTerminalTool
 
 __all__ = [
     "ReadFileTool",
@@ -33,6 +34,7 @@ __all__ = [
     "AliyunWebSearchTool",
     "GetCurrentTimeTool",
     "FetchWebContentTool",
+    "GenerateImageTool",
     "MemorySearchTool",
     "NotifyTool",
     "DelegateTaskTool",
@@ -42,15 +44,16 @@ __all__ = [
     "get_builtin_tools",
 ]
 
+
 def get_builtin_tools() -> list:
     """Get all built-in tools.
-    
+
     Returns:
         List of built-in tool instances
     """
     # Create terminal tool first (needed by other tools)
     terminal_tool = RunInTerminalTool()
-    
+
     return [
         ReadFileTool(),
         WriteFileTool(),
@@ -60,6 +63,7 @@ def get_builtin_tools() -> list:
         AliyunWebSearchTool(),
         GetCurrentTimeTool(),
         FetchWebContentTool(),
+        GenerateImageTool(),
         MemorySearchTool(),
         NotifyTool(),
         DelegateTaskTool(),

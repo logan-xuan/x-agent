@@ -1,10 +1,21 @@
 """SQLAlchemy models for X-Agent."""
 
-from .message import Message
-from .session import Session
-from .stat import LLMRequestStat
+from .audio_asset import AudioAsset
 from .compression import CompressionEvent
+from .generated_asset import GeneratedImageAsset
+from .message import Message
 from .runtime import RuntimeRecord
+from .session import Session
 from .skill import SkillMetadata
+from .stat import LLMRequestStat
 
-__all__ = ["Message", "Session", "LLMRequestStat", "CompressionEvent", "RuntimeRecord", "SkillMetadata"]
+__all__ = [
+    "Message",
+    "Session",
+    "LLMRequestStat",
+    "CompressionEvent",
+    "AudioAsset",
+    "GeneratedImageAsset",
+    "RuntimeRecord",
+    "SkillMetadata",
+]

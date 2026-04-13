@@ -15,20 +15,19 @@ import re
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from .models import MemoryContentType, MemoryEntry
 from ..utils.logger import get_logger
+from .models import MemoryContentType, MemoryEntry
 
 if TYPE_CHECKING:
-    from .md_sync import MarkdownSync
-    from .hybrid_search import HybridSearch, SearchResult
-    from .vector_store import VectorStore
-    from .embedder import ONNXEmbedder, MockEmbedder
-    from .importance_detector import ImportanceDetector
     from ..conversation.session import SessionManager
-    from ..services.llm.router import LLMRouter
     from ..models.message import Message
+    from ..services.llm.router import LLMRouter
+    from .hybrid_search import HybridSearch, SearchResult
+    from .importance_detector import ImportanceDetector
+    from .md_sync import MarkdownSync
+    from .vector_store import VectorStore
 
 logger = get_logger(__name__)
 
@@ -101,8 +100,8 @@ class MemoryManager:
     def __init__(
         self,
         workspace_path: str,
-        llm_router: "LLMRouter",
-        session_manager: "SessionManager",
+        llm_router: LLMRouter,
+        session_manager: SessionManager,
     ) -> None:
         """初始化 MemoryManager.
 
@@ -131,17 +130,19 @@ class MemoryManager:
     # 内部组件懒加载
     # ================================================================
 
-    def _get_md_sync(self) -> "MarkdownSync":
+    def _get_md_sync(self) -> MarkdownSync:
         """获取 MarkdownSync 实例（懒加载）."""
         if self._md_sync is None:
             from .md_sync import get_md_sync
+
             self._md_sync = get_md_sync(str(self._workspace_path))
         return self._md_sync
 
-    def _get_vector_store(self) -> "VectorStore":
+    def _get_vector_store(self) -> VectorStore:
         """获取 VectorStore 实例（懒加载）."""
         if self._vector_store is None:
             from .vector_store import get_vector_store
+
             self._vector_store = get_vector_store()
         return self._vector_store
 
@@ -149,23 +150,26 @@ class MemoryManager:
         """获取 Embedder 实例（懒加载）."""
         if self._embedder is None:
             from .embedder import get_embedder
+
             self._embedder = get_embedder()
         return self._embedder
 
-    def _get_hybrid_search(self) -> "HybridSearch":
+    def _get_hybrid_search(self) -> HybridSearch:
         """获取 HybridSearch 实例（懒加载）."""
         if self._hybrid_search is None:
             from .hybrid_search import get_hybrid_search
+
             self._hybrid_search = get_hybrid_search(
                 vector_store=self._get_vector_store(),
                 embedder=self._get_embedder(),
             )
         return self._hybrid_search
 
-    def _get_importance_detector(self) -> "ImportanceDetector":
+    def _get_importance_detector(self) -> ImportanceDetector:
         """获取 ImportanceDetector 实例（懒加载）."""
         if self._importance_detector is None:
             from .importance_detector import ImportanceDetector
+
             self._importance_detector = ImportanceDetector()
         return self._importance_detector
 
@@ -191,7 +195,8 @@ class MemoryManager:
         """
         message_limit = rounds * 2
         messages = await self._session_manager.get_latest_messages(
-            session_id, limit=message_limit,
+            session_id,
+            limit=message_limit,
         )
 
         if not messages:
@@ -203,10 +208,7 @@ class MemoryManager:
 
         # 只从 user/assistant 的实际对话中总结，跳过 system 消息
         # 避免从 system prompt 中的压缩 summary 里重复提取旧信息
-        actual_messages = [
-            msg for msg in messages
-            if msg.role in ("user", "assistant")
-        ]
+        actual_messages = [msg for msg in messages if msg.role in ("user", "assistant")]
 
         if not actual_messages:
             return None
@@ -294,10 +296,7 @@ class MemoryManager:
 
         # 只从 user/assistant 的实际对话中提取，跳过 system 消息和压缩 summary
         # 避免从 summary 中循环提取已有的旧偏好信息
-        actual_messages = [
-            msg for msg in messages
-            if msg.get("role") in ("user", "assistant")
-        ]
+        actual_messages = [msg for msg in messages if msg.get("role") in ("user", "assistant")]
 
         if not actual_messages:
             return []
@@ -464,7 +463,7 @@ class MemoryManager:
         offset: int = 0,
         content_type: MemoryContentType | None = None,
         min_score: float | None = None,
-    ) -> list["SearchResult"]:
+    ) -> list[SearchResult]:
         """混合搜索记忆（文本 + 向量）.
 
         Args:
@@ -480,6 +479,7 @@ class MemoryManager:
         # min_score 未指定时从配置读取默认值
         if min_score is None:
             from ..config.manager import get_config
+
             min_score = get_config().search.min_score
 
         md_sync = self._get_md_sync()
@@ -607,7 +607,7 @@ class MemoryManager:
         self,
         session_id: str,
         limit: int = 100,
-    ) -> list["Message"]:
+    ) -> list[Message]:
         """获取会话历史消息.
 
         Args:
@@ -635,7 +635,7 @@ class MemoryManager:
         Returns:
             AgentMessage 列表（UserMessage / AssistantMessage）
         """
-        from ..agent_core.types import UserMessage, AssistantMessage, TextContent
+        from ..agent_core.types import AssistantMessage, TextContent, UserMessage
 
         db_messages = await self._session_manager.get_messages(session_id, limit=limit)
 
@@ -694,7 +694,8 @@ class MemoryManager:
         try:
             existing_text = memory_md_path.read_text(encoding="utf-8")
             entries = re.findall(
-                r"- \*\*\[.*?\]\*\* \[.*?\] (.+)", existing_text,
+                r"- \*\*\[.*?\]\*\* \[.*?\] (.+)",
+                existing_text,
             )
             if not entries:
                 return "（暂无）"
@@ -726,10 +727,14 @@ class MemoryManager:
             existing_text = memory_md_path.read_text(encoding="utf-8")
             # 提取已有条目内容：匹配 "- **[...]** [...] 实际内容"
             existing_entries = re.findall(
-                r"- \*\*\[.*?\]\*\* \[.*?\] (.+)", existing_text,
+                r"- \*\*\[.*?\]\*\* \[.*?\] (.+)",
+                existing_text,
             )
             for existing_content in existing_entries:
-                if self._text_similarity(content, existing_content) >= self._DEDUP_SIMILARITY_THRESHOLD:
+                if (
+                    self._text_similarity(content, existing_content)
+                    >= self._DEDUP_SIMILARITY_THRESHOLD
+                ):
                     return True
         except Exception:
             pass
@@ -751,7 +756,10 @@ class MemoryManager:
             )
             for existing_content in existing_entries:
                 existing_stripped = existing_content.strip()
-                if self._text_similarity(content, existing_stripped) >= self._DEDUP_SIMILARITY_THRESHOLD:
+                if (
+                    self._text_similarity(content, existing_stripped)
+                    >= self._DEDUP_SIMILARITY_THRESHOLD
+                ):
                     return True
         except Exception:
             pass
@@ -924,16 +932,14 @@ def get_memory_manager() -> MemoryManager:
         RuntimeError: 如果未初始化
     """
     if _memory_manager is None:
-        raise RuntimeError(
-            "MemoryManager not initialized. Call init_memory_manager() first."
-        )
+        raise RuntimeError("MemoryManager not initialized. Call init_memory_manager() first.")
     return _memory_manager
 
 
 def init_memory_manager(
     workspace_path: str,
-    llm_router: "LLMRouter",
-    session_manager: "SessionManager",
+    llm_router: LLMRouter,
+    session_manager: SessionManager,
 ) -> MemoryManager:
     """初始化全局 MemoryManager 实例.
 

@@ -14,6 +14,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
 from typing import Any
 
@@ -48,8 +49,10 @@ def get_logger() -> AgentLogger:
 # Response Models
 # ============================================================
 
+
 class LogEntryResponse(BaseModel):
     """日志条目响应模型."""
+
     id: str
     trace_id: str | None
     level: str
@@ -64,6 +67,7 @@ class LogEntryResponse(BaseModel):
 
 class LLMCallResponse(BaseModel):
     """LLM 调用响应模型."""
+
     call_id: str
     trace_id: str | None
     model: str
@@ -86,6 +90,7 @@ class LLMCallResponse(BaseModel):
 
 class ToolCallResponse(BaseModel):
     """工具调用响应模型."""
+
     call_id: str
     trace_id: str | None
     llm_call_id: str | None
@@ -103,6 +108,7 @@ class ToolCallResponse(BaseModel):
 
 class TraceOverview(BaseModel):
     """Trace 概览."""
+
     trace_id: str
     first_event: str
     last_event: str
@@ -115,6 +121,7 @@ class TraceOverview(BaseModel):
 
 class TraceDetailResponse(BaseModel):
     """Trace 详情响应."""
+
     trace_id: str
     logs: list[LogEntryResponse]
     llm_calls: list[LLMCallResponse]
@@ -123,6 +130,7 @@ class TraceDetailResponse(BaseModel):
 
 class PaginatedResponse(BaseModel):
     """分页响应."""
+
     items: list[Any]
     total: int
     limit: int
@@ -132,6 +140,7 @@ class PaginatedResponse(BaseModel):
 # ============================================================
 # Helper Functions
 # ============================================================
+
 
 def _format_datetime(dt: datetime | None) -> str | None:
     """格式化日期时间为 ISO 字符串."""
@@ -143,8 +152,8 @@ def _log_entry_to_response(entry) -> LogEntryResponse:
     return LogEntryResponse(
         id=entry.id or "",
         trace_id=entry.trace_id,
-        level=entry.level.value if hasattr(entry.level, 'value') else str(entry.level),
-        category=entry.category.value if hasattr(entry.category, 'value') else str(entry.category),
+        level=entry.level.value if hasattr(entry.level, "value") else str(entry.level),
+        category=entry.category.value if hasattr(entry.category, "value") else str(entry.category),
         event=entry.event,
         message=entry.message,
         data=entry.data or {},
@@ -173,9 +182,9 @@ def _llm_call_to_response(log, include_content: bool = False) -> LLMCallResponse
     )
 
     if include_content:
-        response.system_prompt = log.system_prompt if hasattr(log, 'system_prompt') else None
+        response.system_prompt = log.system_prompt if hasattr(log, "system_prompt") else None
         response.messages = log.messages
-        response.tools = log.tools if hasattr(log, 'tools') else None
+        response.tools = log.tools if hasattr(log, "tools") else None
         response.response_content = log.response_content
 
     return response
@@ -204,16 +213,19 @@ def _tool_call_to_response(log) -> ToolCallResponse:
 # Endpoints
 # ============================================================
 
+
 @router.get("/logs", response_model=PaginatedResponse)
 async def get_logs(
     trace_id: str | None = Query(None, description="按 trace_id 过滤"),
-    category: str | None = Query(None, description="按分类过滤 (agent_loop, llm_call, tool_exec, etc.)"),
+    category: str | None = Query(
+        None, description="按分类过滤 (agent_loop, llm_call, tool_exec, etc.)"
+    ),
     level: str | None = Query(None, description="按级别过滤 (debug, info, warn, error)"),
     limit: int = Query(100, ge=1, le=500, description="返回数量上限"),
     offset: int = Query(0, ge=0, description="分页偏移量"),
 ) -> PaginatedResponse:
     """查询通用日志.
-    
+
     支持按 trace_id、category、level 过滤，支持分页。
     """
     logger = get_logger()
@@ -221,17 +233,13 @@ async def get_logs(
     # 转换字符串参数为枚举
     category_enum = None
     if category:
-        try:
+        with contextlib.suppress(ValueError):
             category_enum = LogCategory(category)
-        except ValueError:
-            pass
 
     level_enum = None
     if level:
-        try:
+        with contextlib.suppress(ValueError):
             level_enum = LogLevel(level)
-        except ValueError:
-            pass
 
     logs = logger.get_logs(
         trace_id=trace_id,
@@ -267,17 +275,13 @@ async def get_llm_calls(
     """查询 LLM 调用列表."""
     logger = get_logger()
 
-    if trace_id:
-        calls = logger.get_llm_calls_by_trace(trace_id)
-    else:
-        # 获取所有 LLM 调用
-        calls = list(logger._llm_calls)
+    calls = logger.get_llm_calls_by_trace(trace_id) if trace_id else list(logger._llm_calls)
 
     # 按时间倒序
     calls.sort(key=lambda c: c.start_time or datetime.min, reverse=True)
 
     total = len(calls)
-    calls = calls[offset:offset + limit]
+    calls = calls[offset : offset + limit]
 
     return PaginatedResponse(
         items=[_llm_call_to_response(c) for c in calls],
@@ -320,7 +324,7 @@ async def get_tool_calls(
     calls.sort(key=lambda c: c.start_time or datetime.min, reverse=True)
 
     total = len(calls)
-    calls = calls[offset:offset + limit]
+    calls = calls[offset : offset + limit]
 
     return PaginatedResponse(
         items=[_tool_call_to_response(c) for c in calls],
@@ -370,7 +374,7 @@ async def get_traces(
             continue
 
         # 计算时间范围
-        timestamps = [l.timestamp for l in logs if l.timestamp]
+        timestamps = [entry.timestamp for entry in logs if entry.timestamp]
         first_time = min(timestamps) if timestamps else None
         last_time = max(timestamps) if timestamps else None
 
@@ -380,18 +384,20 @@ async def get_traces(
             total_duration = (last_time - first_time).total_seconds() * 1000
 
         # 检查是否有错误
-        has_error = any(l.level == LogLevel.ERROR for l in logs)
+        has_error = any(entry.level == LogLevel.ERROR for entry in logs)
 
-        results.append(TraceOverview(
-            trace_id=trace_id,
-            first_event=_format_datetime(first_time) or "",
-            last_event=_format_datetime(last_time) or "",
-            log_count=len(logs),
-            llm_call_count=len(llm_calls),
-            tool_call_count=len(tool_calls),
-            total_duration_ms=total_duration,
-            has_error=has_error,
-        ))
+        results.append(
+            TraceOverview(
+                trace_id=trace_id,
+                first_event=_format_datetime(first_time) or "",
+                last_event=_format_datetime(last_time) or "",
+                log_count=len(logs),
+                llm_call_count=len(llm_calls),
+                tool_call_count=len(tool_calls),
+                total_duration_ms=total_duration,
+                has_error=has_error,
+            )
+        )
 
     # 按最后事件时间倒序
     results.sort(key=lambda r: r.last_event, reverse=True)
@@ -413,7 +419,7 @@ async def get_trace_detail(trace_id: str) -> TraceDetailResponse:
 
     return TraceDetailResponse(
         trace_id=trace_id,
-        logs=[_log_entry_to_response(l) for l in logs],
+        logs=[_log_entry_to_response(entry) for entry in logs],
         llm_calls=[_llm_call_to_response(c, include_content=True) for c in llm_calls],
         tool_calls=[_tool_call_to_response(c) for c in tool_calls],
     )

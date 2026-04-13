@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Integer, String, func
@@ -14,24 +14,25 @@ if TYPE_CHECKING:
     from .message import Message
 
 
-class SessionStatus(str, Enum):
+class SessionStatus(StrEnum):
     """会话生命周期状态。
 
     - ACTIVE: 活跃中，用户可继续对话。
     - CLOSED: 已关闭，用户主动结束或被新 session 替代。
     """
+
     ACTIVE = "active"
     CLOSED = "closed"
 
 
 class Session(Base):
     """Chat session model.
-    
+
     Represents a conversation between user and AI agent.
     """
-    
+
     __tablename__ = "sessions"
-    
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     agent_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
@@ -41,15 +42,15 @@ class Session(Base):
         DateTime, default=func.now(), onupdate=func.now(), index=True
     )
     message_count: Mapped[int] = mapped_column(Integer, default=0)
-    
+
     # Relationships
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="session", cascade="all, delete-orphan"
     )
-    
+
     def __repr__(self) -> str:
         return f"<Session(id={self.id}, title={self.title}, status={self.status}, messages={self.message_count})>"
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {

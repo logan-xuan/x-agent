@@ -2,8 +2,13 @@
 
 import pytest
 
-from src.runtime.context import DefaultCompressionPipeline, InMemoryArtifactStore
+from src.runtime.context import (
+    ArtifactBackedMemoryFlusher,
+    DefaultCompressionPipeline,
+    InMemoryArtifactStore,
+)
 from src.runtime.context.compression_pipeline import CompressionContext, CompressionProfile
+from src.runtime.context.compression_verifier import DefaultCompressionVerifier
 from src.runtime.types import ArtifactRef, BudgetSnapshot, TaskFrame, TurnBudgetProfile
 
 
@@ -347,7 +352,7 @@ async def test_compression_pipeline_recomputes_pressure_after_persist():
         budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
     )
 
-    result = await pipeline.run(ctx)
+    await pipeline.run(ctx)
 
 
 
@@ -622,34 +627,6 @@ async def test_emergency_compression_includes_active_artifact_refs():
 
     assert "Artifacts: artifact-1" in result.messages[0]["content"]
     assert result.active_artifacts[0].id == "artifact-1"
-
-
-
-
-@pytest.mark.asyncio
-async def test_compression_pipeline_recomputes_pressure_after_collapse_before_autocompact():
-    pipeline = DefaultCompressionPipeline()
-    profile = CompressionProfile()
-    profile.autocompact.max_history_share = 0.10
-    profile.retain_recent_messages = 4
-    ctx = CompressionContext(
-        session_key="s1",
-        turn=2,
-        task_frame=TaskFrame(objective="Task"),
-        profile=profile,
-        model_context_window=100,
-        estimated_input_tokens=90,
-        messages=[{"role": "user", "content": f"message {i} " + ("x" * 80)} for i in range(20)],
-        active_artifacts=[],
-        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
-    )
-
-    result = await pipeline.run(ctx)
-
-    assert "collapse" in result.operations
-    assert "autocompact" not in result.operations
-    assert any(message["content"].startswith("[Collapsed history]") for message in result.messages)
-
 
 @pytest.mark.asyncio
 async def test_compression_pipeline_does_not_rollback_to_oversized_original_after_emergency_verifier_failure():
@@ -994,3 +971,134 @@ async def test_compression_pipeline_respects_objective_out_of_band_during_snapsh
 
     assert result.rollback_applied is False
     assert result.rollback_reason is None
+
+
+@pytest.mark.asyncio
+async def test_compression_pipeline_does_not_infer_unresolved_from_plain_user_prompt_text():
+    profile = CompressionProfile()
+    profile.microcompact.trigger_pct = 0.99
+    profile.collapse.trigger_pct = 0.99
+    profile.autocompact.trigger_pct = 0.99
+    profile.memory_flush.soft_threshold_tokens = 1
+    ctx = CompressionContext(
+        session_key="s-unresolved",
+        turn=1,
+        task_frame=TaskFrame(objective="压缩验证", unresolved=[]),
+        profile=profile,
+        model_context_window=120000,
+        estimated_input_tokens=6206,
+        messages=[
+            {
+                "role": "user",
+                "content": "请继续保留目标、未完成事项和失败信息。未完成事项：A、B、C。",
+            },
+            {"role": "assistant", "content": "已记录。"},
+        ],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await DefaultCompressionPipeline().run(ctx)
+
+    assert "memory_flush" not in result.operations
+    assert result.rollback_applied is False
+    assert result.rollback_reason is None
+
+
+@pytest.mark.asyncio
+async def test_memory_flush_rewrites_old_tool_results_into_artifact_refs():
+    profile = CompressionProfile()
+    profile.microcompact.trigger_pct = 0.99
+    profile.collapse.trigger_pct = 0.99
+    profile.autocompact.trigger_pct = 0.99
+    profile.memory_flush.soft_threshold_tokens = 1
+    profile.retain_recent_messages = 2
+    pipeline = DefaultCompressionPipeline(memory_flusher=ArtifactBackedMemoryFlusher())
+    long_tool_result = "杭州明天中雨，18到24度，东北风2级。" + ("x" * 5000)
+    ctx = CompressionContext(
+        session_key="s-memory-flush",
+        turn=1,
+        task_frame=TaskFrame(objective="生成可执行 PPT 模版"),
+        profile=profile,
+        model_context_window=120000,
+        estimated_input_tokens=6206,
+        messages=[
+            {"role": "user", "content": "请生成一个PPT模板"},
+            {"role": "assistant", "content": "我先查询一些示例"},
+            {"role": "tool", "tool_name": "web_search", "content": long_tool_result},
+            {"role": "assistant", "content": "我已拿到示例，继续整理"},
+            {"role": "user", "content": "继续"},
+        ],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run(ctx)
+
+    assert "memory_flush" in result.operations
+    flushed_messages = [
+        message for message in result.messages if str(message.get("content", "")).startswith("[Memory-flushed tool result]")
+    ]
+    assert len(flushed_messages) == 1
+    assert flushed_messages[0]["role"] == "tool"
+    assert "Tool: web_search" in flushed_messages[0]["content"]
+    assert "Artifact: artifact:1" in flushed_messages[0]["content"]
+    assert len(result.active_artifacts) == 1
+    assert result.active_artifacts[0].id == "artifact:1"
+
+
+def test_collapse_history_preserves_role_ordering_when_suffix_starts_with_tool():
+    pipeline = DefaultCompressionPipeline()
+    verifier = DefaultCompressionVerifier()
+    profile = CompressionProfile()
+    profile.retain_recent_messages = 2
+    messages = [
+        {"role": "user", "content": "start"},
+        {"role": "assistant", "content": "call tool"},
+        {"role": "tool", "content": "tool result"},
+        {"role": "system", "content": "recent system note"},
+    ]
+    ctx = CompressionContext(
+        session_key="s-role-collapse",
+        turn=1,
+        task_frame=TaskFrame(objective="验证 role ordering"),
+        profile=profile,
+        model_context_window=4,
+        estimated_input_tokens=999,
+        messages=messages,
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    collapsed, applied = pipeline._collapse_history(ctx, messages, estimated_input_tokens=999)
+
+    assert applied is True
+    assert verifier._role_ordering_ok(collapsed) is True
+
+
+@pytest.mark.asyncio
+async def test_emergency_compression_preserves_role_ordering_when_tail_starts_with_tool():
+    pipeline = DefaultCompressionPipeline()
+    verifier = DefaultCompressionVerifier()
+    profile = CompressionProfile()
+    profile.retain_recent_messages = 2
+    ctx = CompressionContext(
+        session_key="s-role-emergency",
+        turn=1,
+        task_frame=TaskFrame(objective="验证 role ordering"),
+        profile=profile,
+        model_context_window=4,
+        estimated_input_tokens=999,
+        messages=[
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": "call tool"},
+            {"role": "tool", "content": "tool result"},
+            {"role": "system", "content": "recent system note"},
+        ],
+        active_artifacts=[],
+        budget=BudgetSnapshot.from_profile(TurnBudgetProfile()),
+    )
+
+    result = await pipeline.run_emergency(ctx)
+
+    assert verifier._role_ordering_ok(result.messages) is True

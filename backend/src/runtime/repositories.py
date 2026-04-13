@@ -9,9 +9,9 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .types import ArtifactRef, SessionDescriptor, TaskFrame
 from ..models.runtime import RuntimeRecord
 from ..services.storage import StorageService
+from .types import ArtifactRef, SessionDescriptor, TaskFrame
 
 
 @dataclass
@@ -121,78 +121,62 @@ class ResumeSessionState:
 class SessionRepository(Protocol):
     """Storage interface for runtime session descriptors."""
 
-    async def get(self, session_key: str) -> SessionDescriptor | None:
-        ...
+    async def get(self, session_key: str) -> SessionDescriptor | None: ...
 
-    async def put(self, session: SessionDescriptor) -> None:
-        ...
+    async def put(self, session: SessionDescriptor) -> None: ...
 
-    async def patch(self, session_key: str, values: dict[str, object]) -> SessionDescriptor:
-        ...
+    async def patch(self, session_key: str, values: dict[str, object]) -> SessionDescriptor: ...
 
-    async def list(self) -> list[SessionDescriptor]:
-        ...
+    async def list(self) -> list[SessionDescriptor]: ...
 
 
 @runtime_checkable
 class TranscriptRepository(Protocol):
     """Storage interface for raw runtime transcript entries."""
 
-    async def append(self, entry: TranscriptEntry) -> None:
-        ...
+    async def append(self, entry: TranscriptEntry) -> None: ...
 
-    async def list_by_session(self, session_id: str) -> list[TranscriptEntry]:
-        ...
+    async def list_by_session(self, session_id: str) -> list[TranscriptEntry]: ...
 
-    async def recent_by_session(self, session_id: str, limit: int) -> list[TranscriptEntry]:
-        ...
+    async def recent_by_session(self, session_id: str, limit: int) -> list[TranscriptEntry]: ...
 
 
 @runtime_checkable
 class SummaryRepository(Protocol):
     """Storage interface for structured runtime summaries."""
 
-    async def put(self, summary: SummaryRecord) -> None:
-        ...
+    async def put(self, summary: SummaryRecord) -> None: ...
 
-    async def list_by_session(self, session_id: str) -> list[SummaryRecord]:
-        ...
+    async def list_by_session(self, session_id: str) -> list[SummaryRecord]: ...
 
-    async def latest_for_session(self, session_id: str) -> SummaryRecord | None:
-        ...
+    async def latest_for_session(self, session_id: str) -> SummaryRecord | None: ...
 
 
 @runtime_checkable
 class ArtifactRepository(Protocol):
     """Storage interface for persisted runtime artifacts."""
 
-    async def put(self, artifact: ArtifactRef, content: str) -> None:
-        ...
+    async def put(self, artifact: ArtifactRef, content: str) -> None: ...
 
-    async def get(self, artifact_id: str) -> tuple[ArtifactRef, str] | None:
-        ...
+    async def get(self, artifact_id: str) -> tuple[ArtifactRef, str] | None: ...
 
 
 @runtime_checkable
 class StateSnapshotRepository(Protocol):
     """Storage interface for resumable runtime state snapshots."""
 
-    async def put(self, snapshot: StateSnapshotRecord) -> None:
-        ...
+    async def put(self, snapshot: StateSnapshotRecord) -> None: ...
 
-    async def latest_for_session(self, session_id: str) -> StateSnapshotRecord | None:
-        ...
+    async def latest_for_session(self, session_id: str) -> StateSnapshotRecord | None: ...
 
 
 @runtime_checkable
 class CompressionEventRepository(Protocol):
     """Storage interface for runtime compression telemetry records."""
 
-    async def append(self, event: CompressionEventRecord) -> None:
-        ...
+    async def append(self, event: CompressionEventRecord) -> None: ...
 
-    async def list_by_session(self, session_id: str) -> list[CompressionEventRecord]:
-        ...
+    async def list_by_session(self, session_id: str) -> list[CompressionEventRecord]: ...
 
 
 def _task_frame_from_payload(payload: dict[str, Any]) -> TaskFrame:
@@ -336,7 +320,9 @@ class StorageSessionRepository(_StorageRuntimeRepository):
         await self._ensure_storage()
         async with self.storage.session() as db:
             records = await self._list_records(db=db, record_type="session")
-        return [_session_descriptor_from_payload(json.loads(record.payload_json)) for record in records]
+        return [
+            _session_descriptor_from_payload(json.loads(record.payload_json)) for record in records
+        ]
 
 
 @dataclass
@@ -354,8 +340,12 @@ class StorageTranscriptRepository(_StorageRuntimeRepository):
     async def list_by_session(self, session_id: str) -> list[TranscriptEntry]:
         await self._ensure_storage()
         async with self.storage.session() as db:
-            records = await self._list_records(db=db, record_type="transcript", session_id=session_id)
-        return [_transcript_entry_from_payload(json.loads(record.payload_json)) for record in records]
+            records = await self._list_records(
+                db=db, record_type="transcript", session_id=session_id
+            )
+        return [
+            _transcript_entry_from_payload(json.loads(record.payload_json)) for record in records
+        ]
 
     async def recent_by_session(self, session_id: str, limit: int) -> list[TranscriptEntry]:
         if limit <= 0:
@@ -369,7 +359,9 @@ class StorageTranscriptRepository(_StorageRuntimeRepository):
                 desc=True,
                 limit=limit,
             )
-        entries = [_transcript_entry_from_payload(json.loads(record.payload_json)) for record in records]
+        entries = [
+            _transcript_entry_from_payload(json.loads(record.payload_json)) for record in records
+        ]
         entries.reverse()
         return entries
 
@@ -475,7 +467,9 @@ class StorageCompressionEventRepository(_StorageRuntimeRepository):
                 record_type="compression_event",
                 session_id=session_id,
             )
-        return [_compression_event_from_payload(json.loads(record.payload_json)) for record in records]
+        return [
+            _compression_event_from_payload(json.loads(record.payload_json)) for record in records
+        ]
 
 
 @dataclass

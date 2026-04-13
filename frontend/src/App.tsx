@@ -62,6 +62,7 @@ function App() {
     streamingThinking: agentStreamingThinking,
     connectionStatus: agentConnectionStatus,
     sendMessage: agentSendMessage,
+    sendVoiceMessage: agentSendVoiceMessage,
     abort: agentAbort,
     clearMessages: agentClearMessages,
     createSession: agentCreateSession,
@@ -209,6 +210,7 @@ function App() {
       connectionStatus={agentConnectionStatus}
       currentAgentId={currentAgentId}
       onSendMessage={agentSendMessage}
+      onSendVoiceMessage={agentSendVoiceMessage}
       onAbort={agentAbort}
       onClearMessages={agentClearMessages}
       onOpenSettings={() => setView('settings')}

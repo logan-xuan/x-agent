@@ -9,8 +9,6 @@ Only requires: onnxruntime, numpy
 """
 
 import hashlib
-import json
-import os
 import random
 import urllib.request
 from datetime import datetime
@@ -26,16 +24,16 @@ logger = get_memory_logger(__name__)
 
 class MockEmbedder:
     """Mock embedder for testing and development.
-    
+
     Generates deterministic embeddings based on text content hash.
     Not suitable for production - use ONNX embedder.
     """
-    
+
     EMBEDDING_DIM = 384
-    
+
     def __init__(self, dimension: int = 384) -> None:
         """Initialize mock embedder.
-        
+
         Args:
             dimension: Embedding dimension (default: 384)
         """
@@ -43,19 +41,19 @@ class MockEmbedder:
         self._is_mock = True
         logger.info(
             "MockEmbedder initialized",
-            extra={"dimension": dimension, "note": "Not suitable for production"}
+            extra={"dimension": dimension, "note": "Not suitable for production"},
         )
-    
+
     def embed(self, text: str) -> list[float]:
         """Generate embedding for text."""
         text_hash = hashlib.md5(text.encode()).hexdigest()
         random.seed(text_hash)
-        
+
         embedding = [random.gauss(0, 1) for _ in range(self.dimension)]
         magnitude = sum(x * x for x in embedding) ** 0.5
-        
+
         return [x / magnitude for x in embedding]
-    
+
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         return [self.embed(text) for text in texts]
@@ -63,17 +61,19 @@ class MockEmbedder:
 
 class ONNXEmbedder:
     """ONNX-based embedder using all-MiniLM-L6-v2.
-    
+
     Downloads and uses a pre-converted ONNX model.
     No PyTorch required - only onnxruntime and numpy.
     """
-    
+
     EMBEDDING_DIM = 384
-    DEFAULT_MODEL_URL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
-    
+    DEFAULT_MODEL_URL = (
+        "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+    )
+
     def __init__(self, model_path: str | None = None) -> None:
         """Initialize ONNX embedder.
-        
+
         Args:
             model_path: Path to ONNX model file. If None, downloads default model.
         """
@@ -81,39 +81,36 @@ class ONNXEmbedder:
         self._session: Any = None
         self._initialized = False
         self._load_failed = False
-        
-        logger.info(
-            "ONNXEmbedder created",
-            extra={"model_path": model_path or "default"}
-        )
-    
+
+        logger.info("ONNXEmbedder created", extra={"model_path": model_path or "default"})
+
     def _load_model(self) -> Any:
         """Load the ONNX model."""
         if self._session is not None:
             return self._session
-        
+
         if self._load_failed:
             return None
-        
+
         try:
             import onnxruntime as ort
-            
-            providers = ['CPUExecutionProvider']
-            
+
+            providers = ["CPUExecutionProvider"]
+
             if self.model_path and Path(self.model_path).exists():
                 logger.info("Loading ONNX model from path", extra={"path": self.model_path})
                 self._session = ort.InferenceSession(self.model_path, providers=providers)
             else:
                 self._session = self._download_and_load_default_model(ort, providers)
-            
+
             if self._session:
                 self._initialized = True
                 logger.info("ONNX model loaded successfully")
             else:
                 self._load_failed = True
-            
+
             return self._session
-            
+
         except ImportError:
             logger.warning("onnxruntime not installed, cannot use ONNX embedder")
             self._load_failed = True
@@ -122,30 +119,31 @@ class ONNXEmbedder:
             logger.error("Failed to load ONNX model", extra={"error": str(e)})
             self._load_failed = True
             return None
-    
+
     def _download_and_load_default_model(self, ort: Any, providers: list[str]) -> Any:
         """Download and load the default ONNX model with caching."""
         cache_dir = Path.home() / ".cache" / "x-agent" / "models"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         model_file = cache_dir / "all-MiniLM-L6-v2.onnx"
         config_file = cache_dir / "model_config.json"  # For caching metadata
-        
+
         # Check if model exists and is valid (with cache validation)
         if model_file.exists():
             # Try to load config to verify model is valid
             if config_file.exists():
                 try:
                     import json
-                    with open(config_file, 'r') as f:
+
+                    with open(config_file) as f:
                         config = json.load(f)
                     # Verify model file size matches (basic integrity check)
-                    if config.get('model_size') == model_file.stat().st_size:
+                    if config.get("model_size") == model_file.stat().st_size:
                         logger.debug("Using cached ONNX model", extra={"path": str(model_file)})
                         return ort.InferenceSession(str(model_file), providers=providers)
                 except Exception as e:
                     logger.debug("Cache validation failed, re-downloading", extra={"error": str(e)})
-            
+
             # If we get here, cache is invalid but model file exists
             logger.info("Found existing model file, attempting to load without validation")
             try:
@@ -153,12 +151,15 @@ class ONNXEmbedder:
                 # Cache is valid if we can load the model
                 return session
             except Exception as e:
-                logger.warning("Failed to load cached model, will re-download", extra={"error": str(e)})
-        
+                logger.warning(
+                    "Failed to load cached model, will re-download", extra={"error": str(e)}
+                )
+
         # Download model only if not cached or cache invalid
         logger.info("Downloading ONNX model...", extra={"url": self.DEFAULT_MODEL_URL})
         try:
             import socket
+
             original_timeout = socket.getdefaulttimeout()
             socket.setdefaulttimeout(15)
             try:
@@ -166,28 +167,34 @@ class ONNXEmbedder:
             finally:
                 socket.setdefaulttimeout(original_timeout)
             model_size = model_file.stat().st_size
-            logger.info("ONNX model downloaded", extra={"path": str(model_file), "size": model_size})
-            
+            logger.info(
+                "ONNX model downloaded", extra={"path": str(model_file), "size": model_size}
+            )
+
             # Save config for future cache validation
             import json
-            with open(config_file, 'w') as f:
-                json.dump({
-                    'model_url': self.DEFAULT_MODEL_URL,
-                    'model_size': model_size,
-                    'downloaded_at': datetime.utcnow().isoformat()
-                }, f)
-            
+
+            with open(config_file, "w") as f:
+                json.dump(
+                    {
+                        "model_url": self.DEFAULT_MODEL_URL,
+                        "model_size": model_size,
+                        "downloaded_at": datetime.utcnow().isoformat(),
+                    },
+                    f,
+                )
+
             return ort.InferenceSession(str(model_file), providers=providers)
         except Exception as e:
             logger.error("Failed to download model", extra={"error": str(e)})
             return None
-    
+
     _tokenizer_instance: Any = None
     _tokenizer_load_failed: bool = False
 
     def _tokenize(self, text: str) -> dict[str, np.ndarray]:
         """Tokenize text for ONNX model.
-        
+
         Uses all-MiniLM-L6-v2 tokenizer in local-only mode.
         Falls back to character-level tokenization if tokenizer is unavailable.
         """
@@ -235,76 +242,73 @@ class ONNXEmbedder:
         except Exception as exc:
             logger.error(f"Tokenization failed: {exc}, using fallback")
             return self._fallback_tokenize(text)
-    
+
     def _fallback_tokenize(self, text: str) -> dict[str, np.ndarray]:
         """Fallback character-based tokenization."""
         # Use character-level encoding as fallback
         chars = list(text.lower())[:256]
-        
+
         # Simple char-to-id mapping (not ideal but better than hash)
         char_ids = [ord(c) % 30000 for c in chars]
-        
+
         # Pad to reasonable length
         while len(char_ids) < 16:
             char_ids.append(0)
-        
+
         input_ids = np.array([char_ids], dtype=np.int64)
         attention_mask = np.ones_like(input_ids, dtype=np.int64)
         token_type_ids = np.zeros_like(input_ids, dtype=np.int64)
-        
+
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "token_type_ids": token_type_ids,
         }
-    
+
     def embed(self, text: str) -> list[float]:
         """Generate embedding for text.
-        
+
         Args:
             text: Text to embed
-            
+
         Returns:
             Embedding vector (384 dimensions)
         """
         session = self._load_model()
-        
+
         if session is None:
             logger.warning("ONNX session not available, using mock fallback")
             mock = MockEmbedder(self.EMBEDDING_DIM)
             return mock.embed(text)
-        
+
         try:
             inputs = self._tokenize(text)
             outputs = session.run(None, inputs)
-            
+
             output = outputs[0]
             if len(output.shape) == 3:
                 embedding = output[0, 0, :]
             elif len(output.shape) == 2:
-                if output.shape[0] == 1:
-                    embedding = output[0]
-                else:
-                    embedding = output[0, :]
+                embedding = output[0] if output.shape[0] == 1 else output[0, :]
             else:
-                embedding = output.flatten()[:self.EMBEDDING_DIM]
-            
+                embedding = output.flatten()[: self.EMBEDDING_DIM]
+
             if len(embedding) > self.EMBEDDING_DIM:
-                embedding = embedding[:self.EMBEDDING_DIM]
+                embedding = embedding[: self.EMBEDDING_DIM]
             elif len(embedding) < self.EMBEDDING_DIM:
                 embedding = np.pad(embedding, (0, self.EMBEDDING_DIM - len(embedding)))
-            
+
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm
-            
+
             return embedding.tolist()
-            
+
         except Exception as e:
             logger.error("Failed to generate embedding", extra={"error": str(e)})
             mock = MockEmbedder(self.EMBEDDING_DIM)
             return mock.embed(text)
-    
+
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         return [self.embed(text) for text in texts]
@@ -312,13 +316,13 @@ class ONNXEmbedder:
 
 class Embedder:
     """Main embedder interface.
-    
+
     Uses ONNX Runtime by default, with Mock fallback.
     PyTorch-free implementation.
     """
-    
+
     EMBEDDING_DIM = 384
-    
+
     def __init__(
         self,
         backend: str = "auto",
@@ -326,7 +330,7 @@ class Embedder:
         dimension: int = 384,
     ) -> None:
         """Initialize embedder.
-        
+
         Args:
             backend: Backend type ('onnx', 'mock')
             model_path: Path to ONNX model (optional)
@@ -336,7 +340,7 @@ class Embedder:
         self.model_path = model_path
         self.dimension = dimension
         self._impl: Any = None
-        
+
         if backend == "mock":
             self._impl = MockEmbedder(dimension)
         elif backend == "onnx" or backend == "auto":
@@ -344,12 +348,9 @@ class Embedder:
         else:
             logger.warning(f"Unknown backend '{backend}', using ONNX")
             self._impl = self._init_onnx(model_path, dimension)
-        
-        logger.info(
-            "Embedder initialized",
-            extra={"backend": backend, "dimension": dimension}
-        )
-    
+
+        logger.info("Embedder initialized", extra={"backend": backend, "dimension": dimension})
+
     def _init_onnx(self, model_path: str | None, dimension: int) -> Any:
         """Initialize ONNX embedder."""
         try:
@@ -363,15 +364,14 @@ class Embedder:
                 raise ValueError(f"Unexpected embedding dimension: {len(test_embedding)}")
         except Exception as e:
             logger.warning(
-                f"ONNX embedder failed: {e}, falling back to mock",
-                extra={"error": str(e)}
+                f"ONNX embedder failed: {e}, falling back to mock", extra={"error": str(e)}
             )
             return MockEmbedder(dimension)
-    
+
     def embed(self, text: str) -> list[float]:
         """Generate embedding for text."""
         return self._impl.embed(text)
-    
+
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         return self._impl.embed_batch(texts)
@@ -387,7 +387,7 @@ def get_embedder(
     dimension: int = 384,
 ) -> Embedder:
     """Get or create global embedder instance.
-    
+
     Args:
         backend: Backend type ('auto', 'onnx', 'mock')
             - auto: Try ONNX first, fallback to mock
@@ -395,7 +395,7 @@ def get_embedder(
             - mock: Use mock embedder
         model_path: Path to ONNX model file
         dimension: Embedding dimension
-        
+
     Returns:
         Embedder instance
     """
@@ -411,12 +411,12 @@ def init_embedder(
     dimension: int = 384,
 ) -> Embedder:
     """Initialize global embedder instance.
-    
+
     Args:
         backend: Backend type ('auto', 'onnx', 'mock')
         model_path: Path to ONNX model
         dimension: Embedding dimension
-        
+
     Returns:
         Embedder instance
     """

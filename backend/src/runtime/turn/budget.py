@@ -25,7 +25,10 @@ class DefaultBudgetManager:
         if stop_decision is not None:
             return stop_decision
 
-        if profile.compact_trigger_tokens > 0 and snapshot.total_tokens >= profile.compact_trigger_tokens:
+        if (
+            profile.compact_trigger_tokens > 0
+            and snapshot.total_tokens >= profile.compact_trigger_tokens
+        ):
             return BudgetDecision.compact(
                 "compact_trigger_tokens reached",
                 current=snapshot.total_tokens,
@@ -76,10 +79,7 @@ class DefaultBudgetManager:
                 profile=snapshot.profile_name,
             )
 
-        if (
-            profile.max_cost_usd is not None
-            and snapshot.total_cost_usd >= profile.max_cost_usd
-        ):
+        if profile.max_cost_usd is not None and snapshot.total_cost_usd >= profile.max_cost_usd:
             return self._stop(
                 reason="max_cost_usd exceeded",
                 finish_reason="max_cost",

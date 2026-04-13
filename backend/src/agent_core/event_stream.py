@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import deque
 from typing import TYPE_CHECKING, Generic, TypeVar
 
@@ -17,15 +18,15 @@ T = TypeVar("T")
 
 class EventStream(Generic[T]):
     """异步事件流.
-    
+
     支持发布/订阅模式的事件流实现。
-    
+
     Example:
         stream = EventStream[AgentEvent]()
-        
+
         # 生产者
         await stream.push(event)
-        
+
         # 消费者
         async for event in stream:
             print(event)
@@ -33,7 +34,7 @@ class EventStream(Generic[T]):
 
     def __init__(self, max_buffer: int = 1000) -> None:
         """初始化事件流.
-        
+
         Args:
             max_buffer: 最大缓冲区大小
         """
@@ -44,7 +45,7 @@ class EventStream(Generic[T]):
 
     async def push(self, event: T) -> None:
         """推送事件.
-        
+
         Args:
             event: 事件对象
         """
@@ -56,14 +57,12 @@ class EventStream(Generic[T]):
 
         # 广播给订阅者
         for subscriber in self._subscribers:
-            try:
+            with contextlib.suppress(asyncio.QueueFull):
                 subscriber.put_nowait(event)
-            except asyncio.QueueFull:
-                pass
 
     def push_nowait(self, event: T) -> None:
         """非阻塞推送事件.
-        
+
         Args:
             event: 事件对象
         """
@@ -71,16 +70,12 @@ class EventStream(Generic[T]):
             return
 
         self._buffer.append(event)
-        try:
+        with contextlib.suppress(asyncio.QueueFull):
             self._queue.put_nowait(event)
-        except asyncio.QueueFull:
-            pass
 
         for subscriber in self._subscribers:
-            try:
+            with contextlib.suppress(asyncio.QueueFull):
                 subscriber.put_nowait(event)
-            except asyncio.QueueFull:
-                pass
 
     async def close(self) -> None:
         """关闭事件流."""
@@ -88,14 +83,12 @@ class EventStream(Generic[T]):
         await self._queue.put(None)
 
         for subscriber in self._subscribers:
-            try:
+            with contextlib.suppress(asyncio.QueueFull):
                 subscriber.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
 
     def subscribe(self) -> asyncio.Queue[T | None]:
         """订阅事件流.
-        
+
         Returns:
             asyncio.Queue: 订阅者队列
         """
@@ -105,7 +98,7 @@ class EventStream(Generic[T]):
 
     def unsubscribe(self, queue: asyncio.Queue[T | None]) -> None:
         """取消订阅.
-        
+
         Args:
             queue: 订阅者队列
         """
@@ -114,7 +107,7 @@ class EventStream(Generic[T]):
 
     def get_buffer(self) -> list[T]:
         """获取缓冲区中的所有事件.
-        
+
         Returns:
             list: 事件列表
         """
@@ -143,15 +136,15 @@ class EventStream(Generic[T]):
 
 class EventCollector(Generic[T]):
     """事件收集器.
-    
+
     用于收集事件流中的所有事件。
-    
+
     Example:
         collector = EventCollector[AgentEvent]()
-        
+
         async for event in agent_loop(...):
             collector.add(event)
-        
+
         all_events = collector.get_all()
     """
 
@@ -161,7 +154,7 @@ class EventCollector(Generic[T]):
 
     def add(self, event: T) -> None:
         """添加事件.
-        
+
         Args:
             event: 事件对象
         """
@@ -169,7 +162,7 @@ class EventCollector(Generic[T]):
 
     def get_all(self) -> list[T]:
         """获取所有事件.
-        
+
         Returns:
             list: 事件列表
         """
@@ -177,10 +170,10 @@ class EventCollector(Generic[T]):
 
     def get_by_type(self, event_type: type) -> list[T]:
         """按类型获取事件.
-        
+
         Args:
             event_type: 事件类型
-        
+
         Returns:
             list: 匹配的事件列表
         """

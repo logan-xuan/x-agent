@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING
 
@@ -28,23 +29,23 @@ if TYPE_CHECKING:
 
 class Agent:
     """Agent 类.
-    
+
     提供 Agent 的高级封装，包括:
     - 状态管理
     - 消息队列 (steering, follow-up)
     - 事件订阅
     - 便捷方法
-    
+
     Example:
         agent = Agent(config)
-        
+
         # 发送消息
         async for event in agent.prompt("Hello"):
             print(event.type)
-        
+
         # 中断
         agent.abort()
-        
+
         # 发送 steering 消息
         agent.steer("Please focus on...")
     """
@@ -55,7 +56,7 @@ class Agent:
         system_prompt: str = "",
     ) -> None:
         """初始化 Agent.
-        
+
         Args:
             config: Agent Core 配置
             system_prompt: 系统提示词 (可选，会覆盖 config 中的)
@@ -110,11 +111,11 @@ class Agent:
         images: list[tuple[str, str]] | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """发送用户消息.
-        
+
         Args:
             content: 消息内容
             images: 图片列表 (base64_data, mime_type)
-        
+
         Yields:
             AgentEvent
         """
@@ -145,10 +146,8 @@ class Agent:
 
                 # 通知订阅者
                 for callback in self._event_callbacks:
-                    try:
+                    with contextlib.suppress(Exception):
                         callback(event)
-                    except Exception:
-                        pass
 
                 yield event
 
@@ -163,9 +162,9 @@ class Agent:
 
     def steer(self, content: str) -> None:
         """发送 steering 消息.
-        
+
         Steering 消息会在当前工具调用后注入，用于中断和重定向。
-        
+
         Args:
             content: 消息内容
         """
@@ -173,9 +172,9 @@ class Agent:
 
     def follow_up(self, content: str) -> None:
         """发送 follow-up 消息.
-        
+
         Follow-up 消息会在当前 turn 结束后注入，用于追问。
-        
+
         Args:
             content: 消息内容
         """
@@ -187,7 +186,7 @@ class Agent:
 
     def add_message(self, message: AgentMessage) -> None:
         """添加消息到历史.
-        
+
         Args:
             message: 消息对象
         """
@@ -195,7 +194,7 @@ class Agent:
 
     def subscribe(self, callback: Callable[[AgentEvent], None]) -> None:
         """订阅事件.
-        
+
         Args:
             callback: 事件回调函数
         """
@@ -203,7 +202,7 @@ class Agent:
 
     def unsubscribe(self, callback: Callable[[AgentEvent], None]) -> None:
         """取消订阅.
-        
+
         Args:
             callback: 事件回调函数
         """
@@ -224,13 +223,12 @@ class Agent:
                 if msg not in self._state.messages:
                     self._state.messages.append(msg)
 
-        elif isinstance(event, MessageEndEvent):
-            if event.message:
-                self._state.stream_message = None
+        elif isinstance(event, MessageEndEvent) and event.message:
+            self._state.stream_message = None
 
     async def get_steering_messages(self) -> list[AgentMessage]:
         """获取 steering 消息队列.
-        
+
         Returns:
             list[AgentMessage]: steering 消息列表
         """
@@ -240,7 +238,7 @@ class Agent:
 
     async def get_follow_up_messages(self) -> list[AgentMessage]:
         """获取 follow-up 消息队列.
-        
+
         Returns:
             list[AgentMessage]: follow-up 消息列表
         """
@@ -256,18 +254,18 @@ async def run_agent_once(
     messages: list[AgentMessage] | None = None,
 ) -> tuple[list[AgentMessage], list[AgentEvent]]:
     """运行一次 Agent 对话.
-    
+
     便捷函数，用于简单的单轮对话。
-    
+
     Args:
         config: Agent Core 配置
         prompt: 用户消息
         system_prompt: 系统提示词
         messages: 历史消息
-    
+
     Returns:
         tuple[list[AgentMessage], list[AgentEvent]]: (新消息列表, 所有事件)
-    
+
     Example:
         messages, events = await run_agent_once(
             config=config,

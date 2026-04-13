@@ -1,13 +1,12 @@
 """Unit tests for the runtime turn controller skeleton."""
 
 from src.runtime.turn.assessment import DefaultAssessmentEngine
-from src.runtime.types import BudgetDecision
 from src.runtime.turn.controller import DefaultTurnController
 from src.runtime.turn.state import TurnState
 from src.runtime.turn.tool_governor import DefaultToolGovernor
 from src.runtime.types import (
+    BudgetDecision,
     CompactResult,
-    ToolPolicy,
     GovernedToolPlan,
     LoopAssessment,
     RouteMeta,
@@ -17,7 +16,7 @@ from src.runtime.types import (
     ToolCallSpec,
     ToolExecutionPlan,
     ToolExecutionResult,
-    TurnBudgetProfile,
+    ToolPolicy,
     TurnRequest,
 )
 
@@ -159,6 +158,34 @@ def test_turn_controller_budget_stop_uses_best_effort_summary_not_raw_last_tool_
     assert "fetch_web_content" in result.output_text
 
 
+def test_turn_controller_injects_generate_image_markdown_into_final_output():
+    controller = DefaultTurnController()
+    state = TurnState.from_request(_request())
+    state.metadata["final_output_text"] = "图片已经生成好了，点击链接查看。"
+    state.tool_results.append(
+        ToolExecutionResult(
+            tool_name="generate_image",
+            success=True,
+            output="tool output",
+            metadata={
+                "assets": [
+                    {
+                        "public_url": "http://localhost:8888/api/v1/assets/generated-images/main-agent/2026-04-11/img_demo.png"
+                    }
+                ]
+            },
+        )
+    )
+
+    output = controller._resolve_output_text(state)
+
+    assert output is not None
+    assert output.startswith(
+        "![生成图片](http://localhost:8888/api/v1/assets/generated-images/main-agent/2026-04-11/img_demo.png)"
+    )
+    assert "图片已经生成好了" in output
+
+
 
 
 def test_turn_controller_requests_synthesis_when_all_planned_search_calls_are_rejected():
@@ -250,3 +277,47 @@ def test_turn_controller_compact_path_consumes_explicit_compact_result():
     assert result.metadata["turn_index"] == 1
     assert result.metadata["compaction_source"] == "pipeline"
     assert result.artifact_refs == []
+
+
+def test_turn_controller_metadata_includes_runtime_compression_keys():
+    controller = DefaultTurnController()
+    state = TurnState.from_request(_request())
+    state.metadata.update(
+        {
+            "budget_state": {"pressure_level": "orange"},
+            "verifier_result": {"ok": True, "reasons": []},
+            "rollback_applied": False,
+            "rollback_reason": None,
+            "compression_operations": ["collapse"],
+            "runtime_context_summary": "collapse",
+        }
+    )
+
+    metadata = controller._metadata(state)
+
+    assert metadata["budget_state"]["pressure_level"] == "orange"
+    assert metadata["verifier_result"]["ok"] is True
+    assert metadata["rollback_applied"] is False
+    assert metadata["rollback_reason"] is None
+    assert metadata["compression_operations"] == ["collapse"]
+    assert metadata["runtime_context_summary"] == "collapse"
+
+
+def test_turn_controller_metadata_exposes_runtime_model_budget_from_request_metadata():
+    controller = DefaultTurnController()
+    state = TurnState.from_request(
+        _request(
+            {
+                "_runtime_model_budget_hints": {
+                    "max_context_tokens": 200000,
+                    "discounted_context_window": 114800,
+                    "reserved_output_tokens": 24000,
+                }
+            }
+        )
+    )
+
+    metadata = controller._metadata(state)
+
+    assert metadata["runtime_model_budget"]["max_context_tokens"] == 200000
+    assert metadata["runtime_model_budget"]["discounted_context_window"] == 114800

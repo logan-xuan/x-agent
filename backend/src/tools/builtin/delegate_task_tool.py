@@ -154,16 +154,19 @@ class DelegateTaskTool(BaseTool):
         """
         try:
             canonical_agent_id = self._canonicalize_agent_id(agent_id)
-            from src.gateway.agent_invoker import AgentInvoker, InvokeSource
             from src.agent_core.api.dev_routes import get_logger as get_agent_logger
-            from src.agent_core.types import LogCategory, LogLevel
-            from src.conversation.context import AgentContext, get_current_context, set_current_context
-            from src.conversation.identity import AgentType, ChannelType, get_identity_manager
+            from src.agent_core.types import LogLevel
+            from src.conversation.context import (
+                get_current_context,
+                set_current_context,
+            )
+            from src.conversation.identity import ChannelType
             from src.gateway.agent_bridge import AgentBridge
+            from src.gateway.agent_invoker import AgentInvoker, InvokeSource
             from src.gateway.connection_registry import get_connection_registry
+            from src.runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
             from src.runtime.service import get_runtime_services
             from src.runtime.turn.finish_reason import is_budget_stop_reason
-            from src.runtime.adapters import GatewayAdapter as RuntimeGatewayAdapter
 
             logger.info(
                 "DelegateTaskTool executing",
@@ -222,7 +225,9 @@ class DelegateTaskTool(BaseTool):
 
                 parent_context = current_context
                 target_channel_type = (
-                    parent_context.channel_type if parent_context is not None else ChannelType.WEB_CHAT
+                    parent_context.channel_type
+                    if parent_context is not None
+                    else ChannelType.WEB_CHAT
                 )
                 delegate_profile = runtime_services.turn_profiles.get(delegate_budget_profile)
                 delegate_timeout_ms = int(
@@ -242,7 +247,9 @@ class DelegateTaskTool(BaseTool):
                         "_runtime_compression_profile_name": runtime_services.default_compression_profile,
                         "runtime_timeout_ms": delegate_timeout_ms,
                         "delegate_from_session_id": parent.session_id,
-                        "delegate_from_trace_id": current_context.trace_id if current_context is not None else "",
+                        "delegate_from_trace_id": current_context.trace_id
+                        if current_context is not None
+                        else "",
                     },
                 )
                 child_abort_event = asyncio.Event()
@@ -263,7 +270,7 @@ class DelegateTaskTool(BaseTool):
 
             async def _run_runtime_child_flow(prepared: dict[str, object]) -> dict[str, object]:
                 bridge = AgentBridge()
-                parent = prepared["parent"]
+                prepared["parent"]
                 parent_context = prepared["parent_context"]
                 child_request = prepared["child_request"]
                 child_context = prepared["child_context"]
@@ -302,7 +309,9 @@ class DelegateTaskTool(BaseTool):
                 self._log_delegate_child_event(
                     parent_logger=parent_agent_logger,
                     parent_context=parent_context,
-                    event="delegate_child_finish" if child_status == "success" else "delegate_child_error",
+                    event="delegate_child_finish"
+                    if child_status == "success"
+                    else "delegate_child_error",
                     message=(
                         f"Delegated child session completed: {agent_id}"
                         if child_status == "success"
@@ -328,10 +337,16 @@ class DelegateTaskTool(BaseTool):
                     "budget": dict(runtime_result.metadata.get("budget", {})),
                     "artifact_refs": [artifact.id for artifact in runtime_result.artifact_refs],
                     "is_budget_stop": bool(is_budget_stop_reason(finish_reason)),
-                    "unresolved": list((runtime_result.updated_task_frame or child_request.task_frame).unresolved),
+                    "unresolved": list(
+                        (runtime_result.updated_task_frame or child_request.task_frame).unresolved
+                    ),
                     "duration_ms": int(
-                        runtime_result.metadata.get("runtime_diagnostics", {}).get("milestones_ms", {}).get("completed", 0)
-                        or runtime_result.metadata.get("runtime_diagnostics", {}).get("milestones_ms", {}).get("timed_out", 0)
+                        runtime_result.metadata.get("runtime_diagnostics", {})
+                        .get("milestones_ms", {})
+                        .get("completed", 0)
+                        or runtime_result.metadata.get("runtime_diagnostics", {})
+                        .get("milestones_ms", {})
+                        .get("timed_out", 0)
                         or 0
                     ),
                 }
@@ -345,7 +360,9 @@ class DelegateTaskTool(BaseTool):
                 resume_context = self._build_parent_resume_context(
                     parent_context=parent_context,
                     session_id=parent.session_id,
-                    agent_id=parent_context.agent_id if parent_context is not None else "main-agent",
+                    agent_id=parent_context.agent_id
+                    if parent_context is not None
+                    else "main-agent",
                 )
                 set_current_context(resume_context)
                 try:
@@ -354,7 +371,9 @@ class DelegateTaskTool(BaseTool):
                         parent.session_key,
                         user_input="请根据刚完成的委托子任务结果继续当前主任务，并向用户汇报最终结果。",
                         metadata={
-                            "agent_id": parent_context.agent_id if parent_context is not None else "main-agent",
+                            "agent_id": parent_context.agent_id
+                            if parent_context is not None
+                            else "main-agent",
                             "persist_user_message": False,
                             "source": "agent",
                             "runtime_resume_from_child": True,
@@ -396,8 +415,12 @@ class DelegateTaskTool(BaseTool):
                             "usage": child_result["budget"],
                             "duration_ms": child_result["duration_ms"],
                             "stats_line": f"duration={child_result['duration_ms']}ms",
-                            "target_route": prepared["parent"].route.__dict__ if prepared["parent"].route is not None else None,
-                            "child_route": prepared["child_request"].route.__dict__ if prepared["child_request"].route is not None else None,
+                            "target_route": prepared["parent"].route.__dict__
+                            if prepared["parent"].route is not None
+                            else None,
+                            "child_route": prepared["child_request"].route.__dict__
+                            if prepared["child_request"].route is not None
+                            else None,
                         }
                     )
                     await _resume_parent_after_child(
@@ -752,10 +775,14 @@ class DelegateTaskTool(BaseTool):
 
         max_timeout = requested_timeout
         try:
-            parent_profile = runtime_services.turn_profiles.get(runtime_services.default_turn_profile)
+            parent_profile = runtime_services.turn_profiles.get(
+                runtime_services.default_turn_profile
+            )
             if parent_profile is not None:
                 elapsed_ms = float(getattr(current_context, "elapsed_ms", 0.0) or 0.0)
-                remaining_sec = max((float(parent_profile.max_wall_time_ms) - elapsed_ms) / 1000.0, 0.0)
+                remaining_sec = max(
+                    (float(parent_profile.max_wall_time_ms) - elapsed_ms) / 1000.0, 0.0
+                )
                 max_timeout = min(max_timeout, max(remaining_sec - 15.0, 5.0))
         except Exception:
             pass
@@ -792,7 +819,9 @@ class DelegateTaskTool(BaseTool):
             return "error"
         return "error"
 
-    def _child_summary_text(self, output_text: str, *, finish_reason: str, child_status: str) -> str:
+    def _child_summary_text(
+        self, output_text: str, *, finish_reason: str, child_status: str
+    ) -> str:
         """Create a stable child-result summary for parent announcement queues."""
         if output_text.strip():
             return output_text

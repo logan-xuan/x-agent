@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import pytest
 
 from src.agent_core.adapters.llm_adapter import XAgentLLMAdapter
-from src.services.llm.circuit_breaker import circuit_breaker_manager
-from src.services.llm.router import LLMRouter
+from src.services.llm.circuit_breaker import CircuitState, circuit_breaker_manager
 from src.services.llm.provider import LLMResponse, StreamingLLMResponse
+from src.services.llm.router import LLMRouter
 
 
 @dataclass
@@ -52,11 +53,23 @@ class FakeStreamingProvider(FakeProvider):
             for index, chunk in enumerate(self.chunks or ["hello", " world"]):
                 yield StreamingLLMResponse(
                     content=chunk,
-                    is_finished=index == len((self.chunks or ["hello", " world"])) - 1,
+                    is_finished=index == len(self.chunks or ["hello", " world"]) - 1,
                     model=self.model_id,
                 )
 
         return _stream()
+
+
+@dataclass
+class RaisingProvider(FakeProvider):
+    error: Exception = RuntimeError("boom")
+
+    async def chat(self, messages, stream=False, **kwargs):
+        self.chat_calls += 1
+        _ = messages
+        _ = stream
+        _ = kwargs
+        raise self.error
 
 
 @pytest.mark.asyncio
@@ -210,3 +223,201 @@ async def test_llm_router_streaming_returns_best_effort_done_when_provider_break
 
     assert [chunk.content for chunk in chunks] == ["partial", ""]
     assert chunks[-1].is_finished is True
+
+
+@pytest.mark.asyncio
+async def test_llm_router_logs_structured_reason_when_falling_back_to_backup(monkeypatch):
+    router = LLMRouter(model_configs=[])
+    primary = RaisingProvider(
+        name="primary",
+        error=RuntimeError(
+            "Error code: 403 - {'error': {'code': 'AllocationQuota.FreeTierOnly'}}"
+        ),
+    )
+    backup = FakeProvider(name="backup-bailian", chat_content="backup-ok")
+    router._primary = primary
+    router._backups = [backup]
+    router._providers = {primary.name: primary, backup.name: backup}
+
+    warning_calls: list[tuple[str, dict]] = []
+    info_calls: list[tuple[str, dict]] = []
+
+    class FakeLogger:
+        def warning(self, message, *, extra=None):
+            warning_calls.append((message, extra or {}))
+
+        def info(self, message, *, extra=None):
+            info_calls.append((message, extra or {}))
+
+    monkeypatch.setattr("src.services.llm.router.logger", FakeLogger())
+
+    result = await router.chat([{"role": "user", "content": "hello"}], stream=False)
+
+    assert result.content == "backup-ok"
+    assert any(
+        message == "Provider failed, falling back to next provider"
+        and extra["provider_name"] == "primary"
+        and extra["next_provider_name"] == "backup-bailian"
+        and extra["fallback_reason"] == "allocation_quota_free_tier_only"
+        and extra["fallback_trigger"] == "provider_exception"
+        and extra["original_primary_provider_name"] == "primary"
+        for message, extra in warning_calls
+    )
+    assert any(
+        message == "Provider routing plan created"
+        and extra["original_primary_provider_name"] == "primary"
+        and extra["provider_attempt_order"] == ["primary", "backup-bailian"]
+        and extra["preferred_provider_name"] is None
+        for message, extra in info_calls
+    )
+    assert any(
+        message == "Successfully used provider"
+        and extra["provider_name"] == "backup-bailian"
+        and extra["original_primary_provider_name"] == "primary"
+        and extra["fallback_used"] is True
+        and extra["fallback_from_provider_name"] == "primary"
+        and extra["provider_attempt_index"] == 2
+        for message, extra in info_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_llm_router_emits_dedicated_llm_fallback_event(monkeypatch):
+    router = LLMRouter(model_configs=[])
+    primary = RaisingProvider(
+        name="primary",
+        error=RuntimeError(
+            "Error code: 403 - {'error': {'code': 'AllocationQuota.FreeTierOnly'}}"
+        ),
+    )
+    backup = FakeProvider(name="backup-bailian", chat_content="backup-ok")
+    router._primary = primary
+    router._backups = [backup]
+    router._providers = {primary.name: primary, backup.name: backup}
+
+    emitted_events: list[dict] = []
+
+    class FakeFallbackEventLogger:
+        def log_event(self, **payload):
+            emitted_events.append(payload)
+
+    monkeypatch.setattr(
+        "src.services.llm.router.get_llm_fallback_event_logger",
+        lambda: FakeFallbackEventLogger(),
+        raising=False,
+    )
+
+    result = await router.chat([{"role": "user", "content": "hello"}], stream=False)
+
+    assert result.content == "backup-ok"
+    assert emitted_events == [
+        {
+            "session_id": None,
+            "original_primary_provider_name": "primary",
+            "failed_provider_name": "primary",
+            "next_provider_name": "backup-bailian",
+            "provider_attempt_order": ["primary", "backup-bailian"],
+            "provider_attempt_index": 1,
+            "fallback_trigger": "provider_exception",
+            "fallback_reason": "allocation_quota_free_tier_only",
+            "error_code": "AllocationQuota.FreeTierOnly",
+            "status_code": None,
+            "request_id": None,
+            "error_type": "RuntimeError",
+            "error": "Error code: 403 - {'error': {'code': 'AllocationQuota.FreeTierOnly'}}",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_llm_router_emits_fallback_event_when_circuit_breaker_skips_provider(monkeypatch):
+    router = LLMRouter(model_configs=[])
+    primary = FakeProvider(name="primary", chat_content="primary-should-not-run")
+    backup = FakeProvider(name="backup-bailian", chat_content="backup-ok")
+    router._primary = primary
+    router._backups = [backup]
+    router._providers = {primary.name: primary, backup.name: backup}
+
+    breaker = circuit_breaker_manager.get_breaker(primary.name)
+    breaker.reset()
+    breaker._state = CircuitState.OPEN
+    breaker._stats.state_changed_at = datetime.utcnow()
+
+    emitted_events: list[dict] = []
+
+    class FakeFallbackEventLogger:
+        def log_event(self, **payload):
+            emitted_events.append(payload)
+
+    monkeypatch.setattr(
+        "src.services.llm.router.get_llm_fallback_event_logger",
+        lambda: FakeFallbackEventLogger(),
+        raising=False,
+    )
+
+    result = await router.chat([{"role": "user", "content": "hello"}], stream=False)
+
+    assert result.content == "backup-ok"
+    assert emitted_events == [
+        {
+            "session_id": None,
+            "original_primary_provider_name": "primary",
+            "failed_provider_name": "primary",
+            "next_provider_name": "backup-bailian",
+            "provider_attempt_order": ["primary", "backup-bailian"],
+            "provider_attempt_index": 1,
+            "fallback_trigger": "circuit_breaker_open",
+            "fallback_reason": "circuit_breaker_open",
+            "error_code": None,
+            "status_code": None,
+            "request_id": None,
+            "error_type": "CircuitBreakerOpen",
+            "error": "Circuit breaker open",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_llm_router_emits_fallback_event_when_recent_health_probe_failed(monkeypatch):
+    router = LLMRouter(model_configs=[])
+    primary = FakeProvider(name="primary", chat_content="primary-should-not-run")
+    backup = FakeProvider(name="backup-bailian", chat_content="backup-ok")
+    router._primary = primary
+    router._backups = [backup]
+    router._providers = {primary.name: primary, backup.name: backup}
+    breaker = circuit_breaker_manager.get_breaker(primary.name)
+    breaker.reset()
+    router._provider_health_cache[primary.name] = (__import__("time").monotonic(), False)
+
+    emitted_events: list[dict] = []
+
+    class FakeFallbackEventLogger:
+        def log_event(self, **payload):
+            emitted_events.append(payload)
+
+    monkeypatch.setattr(
+        "src.services.llm.router.get_llm_fallback_event_logger",
+        lambda: FakeFallbackEventLogger(),
+        raising=False,
+    )
+
+    result = await router.chat([{"role": "user", "content": "hello"}], stream=False)
+
+    assert result.content == "backup-ok"
+    assert emitted_events == [
+        {
+            "session_id": None,
+            "original_primary_provider_name": "primary",
+            "failed_provider_name": "primary",
+            "next_provider_name": "backup-bailian",
+            "provider_attempt_order": ["primary", "backup-bailian"],
+            "provider_attempt_index": 1,
+            "fallback_trigger": "recent_failed_health_probe",
+            "fallback_reason": "recent_failed_health_probe",
+            "error_code": None,
+            "status_code": None,
+            "request_id": None,
+            "error_type": "RecentFailedHealthProbe",
+            "error": "Recent failed health probe cached for provider",
+        }
+    ]

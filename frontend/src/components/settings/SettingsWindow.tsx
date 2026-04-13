@@ -7,6 +7,7 @@ import { Spinner } from '../ui/Spinner';
 import { ModelEditor } from './ModelEditor';
 import { ProviderStatusCard } from './ProviderStatusCard';
 import { CronManager } from './CronManager';
+import { VoiceConfigEditor, type EditableVoiceConfig } from './VoiceConfigEditor';
 
 interface ProviderStatus {
   name: string;
@@ -45,6 +46,7 @@ interface ConfigStatus {
 
 interface EditableConfig {
   models: EditableModel[];
+  voice: EditableVoiceConfig;
   config_path: string;
 }
 
@@ -242,6 +244,31 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setIsUpdating(null);
+    }
+  };
+
+  const handleUpdateVoice = async (updates: Record<string, unknown>) => {
+    setIsUpdating('voice');
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/config/voice`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Voice config update failed');
+      }
+
+      await fetchData();
+      setSuccess('语音配置已更新');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Voice config update failed');
     } finally {
       setIsUpdating(null);
     }
@@ -558,6 +585,14 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
                   isUpdating={isUpdating === model.name}
                 />
               ))}
+
+              {editableConfig?.voice && (
+                <VoiceConfigEditor
+                  voice={editableConfig.voice}
+                  onUpdate={handleUpdateVoice}
+                  isUpdating={isUpdating === 'voice'}
+                />
+              )}
             </>
           )}
         </div>

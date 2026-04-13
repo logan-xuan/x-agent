@@ -39,19 +39,19 @@ def _map_finish_reason(reason: str | None) -> str:
 
 class XAgentLLMAdapter:
     """LLMPort 适配器，包装 X-Agent 的 LLMRouter.
-    
+
     Example:
         from src.services.llm.router import LLMRouter
-        
+
         router = LLMRouter()
         adapter = XAgentLLMAdapter(router)
-        
+
         config = AgentCoreConfig(llm=adapter)
     """
 
     def __init__(self, router: Any, *, force_non_streaming: bool = False) -> None:
         """初始化适配器.
-        
+
         Args:
             router: X-Agent LLMRouter 实例
             force_non_streaming: 是否强制走非流式模式并合成 StreamChunk
@@ -68,14 +68,14 @@ class XAgentLLMAdapter:
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """流式生成 LLM 响应.
-        
+
         Args:
             system_prompt: 系统提示词
             messages: LLM 格式消息列表
             tools: 可用工具列表
             provider_name: 首选 provider 名称
             max_tokens: 输出 token 上限
-        
+
         Yields:
             StreamChunk 事件
         """
@@ -124,10 +124,10 @@ class XAgentLLMAdapter:
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """流式文本路径 (无工具).
-        
+
         Args:
             messages: 消息列表
-        
+
         Yields:
             StreamChunk
         """
@@ -160,11 +160,11 @@ class XAgentLLMAdapter:
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """非流式路径 (有工具).
-        
+
         Args:
             messages: 消息列表
             openai_tools: OpenAI 格式工具定义
-        
+
         Yields:
             StreamChunk
         """

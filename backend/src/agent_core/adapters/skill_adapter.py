@@ -70,27 +70,27 @@ Before replying: scan <available_skills> <description> entries.
 
 class XAgentSkillAdapter:
     """SkillPort 适配器，包装 X-Agent 技能系统.
-    
+
     连接 agent_core 与 X-Agent 的技能系统，提供：
     - 技能发现（关键词 + 语义搜索）
     - 技能执行
     - System Prompt 注入内容生成
-    
+
     Example:
         from src.services.skill.registry import get_skill_registry
         from src.services.skill.adapter import SkillAdapter
-        
+
         registry = get_skill_registry()
         skill_adapter = SkillAdapter(registry=registry)
-        
+
         adapter = XAgentSkillAdapter(
             registry=registry,
             skill_adapter=skill_adapter,
         )
-        
+
         # 匹配技能
         matched = adapter.match_skills("帮我制作一个 PPT")
-        
+
         # 生成 prompt 注入
         prompt = adapter.build_skill_prompt(matched)
     """
@@ -101,7 +101,7 @@ class XAgentSkillAdapter:
         skill_adapter: SkillAdapter | None = None,
     ) -> None:
         """初始化适配器.
-        
+
         Args:
             registry: 技能注册表
             skill_adapter: 技能适配器（可选，用于执行）
@@ -152,16 +152,16 @@ class XAgentSkillAdapter:
         min_score: float = 0.3,
     ) -> list[SkillManifest]:
         """匹配技能.
-        
+
         使用两阶段匹配:
         1. 精确命令匹配 (/skill)
         2. 关键词 + 语义匹配
-        
+
         Args:
             query: 用户查询
             top_k: 最大返回数量
             min_score: 最小匹配分数
-        
+
         Returns:
             匹配的技能清单列表（按相关度排序）
         """
@@ -199,9 +199,7 @@ class XAgentSkillAdapter:
 
         # 过滤和排序
         matched: list[tuple[str, float]] = [
-            (skill_id, score)
-            for skill_id, score in scores.items()
-            if score >= min_score
+            (skill_id, score) for skill_id, score in scores.items() if score >= min_score
         ]
         matched.sort(key=lambda x: (-x[1], x[0]))  # 按分数降序，skill_id 升序
 
@@ -219,12 +217,12 @@ class XAgentSkillAdapter:
         query: str,
     ) -> SkillManifest | None:
         """根据意图匹配单个最佳技能.
-        
+
         专门用于自动触发场景，返回最匹配的一个技能。
-        
+
         Args:
             query: 用户输入
-        
+
         Returns:
             最匹配的技能，或 None
         """
@@ -256,16 +254,16 @@ class XAgentSkillAdapter:
 
     def _compact_path(self, file_path: str) -> str:
         """路径压缩: 用 ~ 替换 home 目录.
-        
+
         节省约 5-6 tokens/路径 × N 个技能 ≈ 400-600 tokens。
-        
+
         Example:
             /Users/alice/.x-agent/skills/pptx/SKILL.md
             → ~/.x-agent/skills/pptx/SKILL.md
-        
+
         Args:
             file_path: 原始文件路径
-        
+
         Returns:
             压缩后的路径
         """
@@ -278,7 +276,7 @@ class XAgentSkillAdapter:
             home = home + os.sep
 
         if file_path.startswith(home):
-            return "~/" + file_path[len(home):]
+            return "~/" + file_path[len(home) :]
 
         return file_path
 
@@ -287,10 +285,10 @@ class XAgentSkillAdapter:
         skills: list[SkillManifest],
     ) -> str:
         """生成 XML 格式技能列表 (OpenClaw 风格).
-        
+
         只包含 name/description/location，不包含完整 SKILL.md 内容。
         模型需要用 read_file 按需读取 SKILL.md。
-        
+
         Example:
             <available_skills>
               <skill>
@@ -299,10 +297,10 @@ class XAgentSkillAdapter:
                 <location>~/.x-agent/skills/pptx/SKILL.md</location>
               </skill>
             </available_skills>
-        
+
         Args:
             skills: 技能清单列表
-        
+
         Returns:
             XML 格式的技能列表字符串
         """
@@ -324,13 +322,15 @@ class XAgentSkillAdapter:
             if len(description) > 200:
                 description = description[:197] + "..."
 
-            lines.extend([
-                "  <skill>",
-                f"    <name>{skill.skill_id}</name>",
-                f"    <description>{description}</description>",
-                f"    <location>{location}</location>",
-                "  </skill>",
-            ])
+            lines.extend(
+                [
+                    "  <skill>",
+                    f"    <name>{skill.skill_id}</name>",
+                    f"    <description>{description}</description>",
+                    f"    <location>{location}</location>",
+                    "  </skill>",
+                ]
+            )
 
         lines.append("</available_skills>")
         return "\n".join(lines)
@@ -340,14 +340,14 @@ class XAgentSkillAdapter:
         skills: list[SkillManifest],
     ) -> tuple[list[SkillManifest], bool, str | None]:
         """应用技能列表截断限制.
-        
+
         两阶段截断:
         1. 数量限制: 最多 MAX_SKILLS_IN_PROMPT 个
         2. 字符数限制: 使用二分搜索找最大可用前缀
-        
+
         Args:
             skills: 原始技能列表
-        
+
         Returns:
             (截断后的技能列表, 是否被截断, 截断原因)
         """
@@ -382,16 +382,16 @@ class XAgentSkillAdapter:
         skills: list[SkillManifest] | None = None,
     ) -> str:
         """构建完整的 Skills Section (OpenClaw 风格).
-        
+
         包含:
         1. 强制性技能指令 (## Skills (mandatory))
         2. XML 格式技能列表
-        
+
         如果不传 skills，则使用所有可用技能。
-        
+
         Args:
             skills: 技能列表，None 表示使用所有技能
-        
+
         Returns:
             完整的 Skills Section 字符串
         """
@@ -422,11 +422,11 @@ class XAgentSkillAdapter:
         include_full_content: bool = False,
     ) -> str:
         """为匹配的技能生成 System Prompt 注入内容.
-        
+
         Args:
             skills: 技能清单列表
             include_full_content: 是否包含完整 SKILL.md 内容
-        
+
         Returns:
             格式化的 prompt 内容
         """
@@ -472,10 +472,10 @@ class XAgentSkillAdapter:
 
     def load_skill_content(self, skill_id: str) -> str | None:
         """加载技能的完整 SKILL.md 内容.
-        
+
         Args:
             skill_id: 技能 ID
-        
+
         Returns:
             SKILL.md 内容（不含 frontmatter），或 None
         """
@@ -517,12 +517,12 @@ class XAgentSkillAdapter:
         query: str | None = None,
     ) -> list[SkillMetadata]:
         """发现技能.
-        
+
         Args:
             category: 按分类筛选
             tags: 按标签筛选
             query: 搜索查询
-        
+
         Returns:
             匹配的技能元数据列表
         """
@@ -535,10 +535,7 @@ class XAgentSkillAdapter:
 
         # 按标签过滤
         if tags:
-            all_skills = [
-                s for s in all_skills
-                if any(t in s.tags for t in tags)
-            ]
+            all_skills = [s for s in all_skills if any(t in s.tags for t in tags)]
 
         return [self._convert_to_metadata(m) for m in all_skills]
 
@@ -616,9 +613,9 @@ class XAgentSkillAdapter:
 
 def create_skill_adapter() -> XAgentSkillAdapter | None:
     """创建技能适配器的便捷方法.
-    
+
     自动初始化 SkillRegistry 和 SkillAdapter。
-    
+
     Returns:
         XAgentSkillAdapter 实例，或初始化失败时返回 None
     """
@@ -646,7 +643,7 @@ def create_skill_adapter() -> XAgentSkillAdapter | None:
             extra={
                 "user_skills_dir": str(user_skills_dir),
                 "system_skills_dir": str(system_skills_dir),
-            }
+            },
         )
 
         # 初始化注册表
@@ -666,10 +663,11 @@ def create_skill_adapter() -> XAgentSkillAdapter | None:
         # 记录详细错误以便调试
         try:
             from ...utils.logger import get_logger
+
             logger = get_logger(__name__)
             logger.error(
                 "Failed to create skill adapter",
-                extra={"error": str(e), "error_type": type(e).__name__}
+                extra={"error": str(e), "error_type": type(e).__name__},
             )
         except Exception:
             pass

@@ -1,4 +1,5 @@
 """临时脚本：重写 websocket.py"""
+
 import pathlib
 
 target = pathlib.Path(__file__).parent / "websocket.py"

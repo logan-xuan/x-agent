@@ -1,7 +1,6 @@
 """Unit tests for runtime gateway bridge helpers."""
 
 from types import SimpleNamespace
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -9,18 +8,38 @@ import pytest
 from src.agent_core.adapters.llm_adapter import XAgentLLMAdapter
 from src.agent_core.api.dev_routes import get_logger as get_agent_logger
 from src.agent_core.config import AgentCoreConfig
-from src.conversation.context import AgentContext, clear_current_context, get_current_context, set_current_context
+from src.agent_core.types import AssistantMessage, MessageEndEvent, TextContent, UserMessage
+from src.conversation.context import (
+    AgentContext,
+    clear_current_context,
+    get_current_context,
+    set_current_context,
+)
 from src.conversation.identity import ChannelProtocol, ChannelType
 from src.gateway.agent_bridge import AgentBridge
 from src.gateway.agent_invoker import AgentInvoker, InvokeSource
 from src.gateway.dispatcher import GatewayDispatcher
 from src.gateway.envelope import Envelope
 from src.gateway.response import GatewayEvent, GatewayEventType
-from src.agent_core.types import AssistantMessage, MessageEndEvent, TextContent, UserMessage
+from src.gateway.tool_result_normalizer import RuntimeToolResultNormalizer
 from src.runtime.adapters import GatewayAdapter
-from src.runtime.repositories import ResumeSessionState, StateSnapshotRecord, SummaryRecord, TranscriptEntry
+from src.runtime.repositories import (
+    ResumeSessionState,
+    StateSnapshotRecord,
+    SummaryRecord,
+    TranscriptEntry,
+)
 from src.runtime.turn.state import TurnState
-from src.runtime.types import CompactResult, RouteMeta, SessionDescriptor, TaskFrame, TurnRequest, TurnResult
+from src.runtime.types import (
+    CompactResult,
+    GovernedToolPlan,
+    RouteMeta,
+    SessionDescriptor,
+    TaskFrame,
+    ToolCallSpec,
+    TurnRequest,
+    TurnResult,
+)
 
 
 @pytest.mark.asyncio
@@ -673,9 +692,129 @@ async def test_agent_bridge_runtime_model_call_uses_runtime_context_pipeline_not
     assert state.metadata["runtime_context_summary"] == "microcompact"
     assert agent_logger.llm_call_count == 1
     assert len(agent_logger.get_llm_calls_by_trace("runtime-trace-test")) == 1
+    context_logs = [
+        entry
+        for entry in agent_logger.get_logs(trace_id="runtime-trace-test", limit=100)
+        if entry.event == "runtime_context_prepared"
+    ]
+    assert context_logs
+    assert context_logs[0].data["runtime_model_budget"]["max_context_tokens"] == 200000
+    assert context_logs[0].data["runtime_model_budget"]["discounted_context_window"] == 114800
     bridge.runtime_session_orchestrator.append_transcript_entry.assert_awaited_once()  # type: ignore[attr-defined]
     bridge.runtime_session_orchestrator.append_compression_event.assert_awaited_once()  # type: ignore[attr-defined]
     clear_current_context()
+
+
+@pytest.mark.asyncio
+async def test_runtime_prepare_model_input_exposes_memory_flush_placeholder_to_llm():
+    bridge = AgentBridge()
+
+    class StubBuilder:
+        async def build(self, request):
+            from src.runtime.context.builder import ContextBuildResult
+
+            history_messages = [
+                {"role": "user", "content": "请生成一个PPT模板"},
+                {"role": "assistant", "content": "我先查一些模版参考"},
+                {
+                    "role": "tool",
+                    "tool_name": "web_search",
+                    "content": "杭州明天中雨，18到24度。" + ("x" * 20000),
+                },
+            ]
+            history_messages.extend(
+                {"role": "assistant", "content": f"中间过程消息 {index}"}
+                for index in range(11)
+            )
+            history_messages.append({"role": "user", "content": "继续"})
+            return ContextBuildResult(
+                system_prompt="runtime prompt",
+                active_messages=history_messages,
+                active_artifacts=[],
+                estimated_input_tokens=6206,
+            )
+
+    bridge._runtime_context_builder = StubBuilder()
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-runtime-flush", session_id="sess-runtime-flush"),
+        user_input="请生成一个PPT模板",
+        task_frame=TaskFrame(objective="请生成一个PPT模板"),
+        route=RouteMeta(channel="web_chat"),
+        metadata={"persist_user_message": False},
+    )
+    state = TurnState.from_request(request)
+    state.active_messages = [UserMessage.from_text("请生成一个PPT模板")]
+    state.metadata["runtime_prompt_mode"] = "full"
+
+    _system_prompt, llm_messages = await bridge._runtime_prepare_model_input(
+        state,
+        system_prompt="legacy prompt",
+        available_tools=[],
+    )
+
+    flushed = [
+        message
+        for message in llm_messages
+        if str(message.get("content", "")).startswith("[Memory-flushed tool result]")
+    ]
+    assert len(flushed) == 1
+    assert flushed[0]["role"] == "tool"
+    assert "Artifact: artifact:1" in flushed[0]["content"]
+    assert state.metadata["compression_operations"] == ["memory_flush"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_executor_normalizes_terminal_tool_result_before_transcript(monkeypatch):
+    bridge = AgentBridge()
+    bridge._runtime_tool_result_normalizer = RuntimeToolResultNormalizer(
+        terminal_head_chars=20,
+        terminal_tail_chars=10,
+    )
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-runtime-normalize", session_id="sess-runtime-normalize"),
+        user_input="run command",
+        task_frame=TaskFrame(objective="run command"),
+        route=RouteMeta(channel="web_chat"),
+        metadata={"persist_user_message": False},
+    )
+    state = TurnState.from_request(request)
+    state.metadata["runtime_config"] = AgentCoreConfig(
+        llm=Mock(),
+        tools=SimpleNamespace(get_tools=lambda: [SimpleNamespace(name="run_in_terminal")]),
+        logger=None,
+        context=None,
+        system_prompt="runtime prompt",
+    )
+    state.metadata["runtime_agent_info"] = SimpleNamespace(agent_id="main-agent")
+    bridge.runtime_session_orchestrator.append_transcript_entry = AsyncMock()  # type: ignore[method-assign]
+
+    async def fake_execute_tool_calls(**kwargs):
+        from src.agent_core.types import ToolExecutionEndEvent, ToolResult
+
+        _ = kwargs
+        yield ToolExecutionEndEvent(
+            tool_call_id="tool-1",
+            tool_name="run_in_terminal",
+            result=ToolResult.from_text(
+                "STDOUT:\n" + ("A" * 200) + "\nSTDERR:\n" + ("B" * 200),
+                details={"returncode": 0},
+            ),
+            duration_ms=10.0,
+        )
+
+    monkeypatch.setattr("src.agent_core.tool_executor.execute_tool_calls", fake_execute_tool_calls)
+    plan = GovernedToolPlan(
+        calls=[ToolCallSpec(tool_name="run_in_terminal", arguments={"command": "echo hi"})],
+        max_parallelism=1,
+    )
+
+    observed = await bridge._runtime_controller_executor(plan, state)
+
+    assert observed[0].tool_name == "run_in_terminal"
+    assert observed[0].output.startswith("[run_in_terminal]")
+    transcript_entry = bridge.runtime_session_orchestrator.append_transcript_entry.await_args.args[0]  # type: ignore[attr-defined]
+    assert transcript_entry.text.startswith("[run_in_terminal]")
+    assert "[... " in transcript_entry.text
 
 
 @pytest.mark.asyncio

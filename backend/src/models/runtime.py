@@ -1,6 +1,6 @@
 """Generic runtime record model for control-plane persistence."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Column, DateTime, String, Text
 

@@ -14,11 +14,11 @@ Session 相关模型已迁移到 backend/src/models/session.py（Session 模型�
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.orm import Mapped, mapped_column
 
 from ...config.manager import get_config
 from ...models.base import Base
@@ -27,13 +27,14 @@ if TYPE_CHECKING:
     pass
 
 
-class SessionStatus(str, Enum):
+class SessionStatus(StrEnum):
     """会话生命周期状态。
 
     - ACTIVE: 活跃中，用户可继续对话。
     - CLOSED: 已关闭，用户主动结束。
     - ARCHIVED: 已归档，系统自动归档或用户手动归档。
     """
+
     ACTIVE = "active"
     CLOSED = "closed"
     ARCHIVED = "archived"
@@ -44,14 +45,19 @@ class User(Base):
 
     系统中的终端用户，保留数据库持久化。
     """
+
     __tablename__ = "users"
 
     user_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     create_time: Mapped[datetime] = mapped_column(
-        DateTime, default=func.now(), index=True,
+        DateTime,
+        default=func.now(),
+        index=True,
     )
 
     def __repr__(self) -> str:
@@ -87,6 +93,7 @@ class Agent:
         enable_context_compression: 是否启用上下文压缩
         enable_experience_learning: 是否启用经验学习
     """
+
     agent_id: str
     agent_name: str
     agent_type: str = "main"
@@ -95,6 +102,7 @@ class Agent:
     feature: str = ""
     user_id: str = "system"
     model_config: dict = field(default_factory=dict)
+    voice_config: dict = field(default_factory=dict)
     enable_memory: bool = True
     enable_plan: bool = False
     enable_context_compression: bool = True
@@ -127,6 +135,7 @@ class Agent:
                 "temperature": agent_cfg.model.temperature,
                 "max_tokens": agent_cfg.model.max_tokens,
             },
+            voice_config=agent_cfg.voice.model_dump(),
             enable_memory=agent_cfg.enable_memory,
             enable_plan=agent_cfg.enable_plan,
             enable_context_compression=agent_cfg.enable_context_compression,
@@ -162,6 +171,7 @@ class Agent:
             "feature": self.feature,
             "user_id": self.user_id,
             "model_config": self.model_config,
+            "voice_config": self.voice_config,
             "enable_memory": self.enable_memory,
             "enable_plan": self.enable_plan,
         }
@@ -183,6 +193,7 @@ class Channel:
         enabled: 是否启用
         config: 渠道特定配置
     """
+
     channel_id: str
     channel_type: str
     channel_protocol: str = "websocket"
@@ -272,9 +283,7 @@ class Channel:
 
         # 使用 bindings 解析
         config = get_config()
-        return config.multi_agent.resolve_agent_for_channel(
-            self.channel_id, peer_id, peer_kind
-        )
+        return config.multi_agent.resolve_agent_for_channel(self.channel_id, peer_id, peer_kind)
 
     @classmethod
     def list_all(cls) -> list["Channel"]:
@@ -368,5 +377,3 @@ class Channel:
             "enabled": self.enabled,
             "config": self.config,
         }
-
-

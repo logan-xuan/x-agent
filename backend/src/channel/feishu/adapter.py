@@ -74,13 +74,19 @@ class FeishuChannelAdapter(ChannelAdapter):
     async def start(self) -> None:
         """Start the Feishu WebSocket connection."""
         try:
+            import importlib
+
             import lark_oapi as lark
             from lark_oapi.ws import Client as WsClient
 
             try:
-                from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
+                dispatcher_handler_module = importlib.import_module(
+                    "lark_oapi.event.dispatcher_handler"
+                )
             except ImportError:
-                EventDispatcherHandler = None  # type: ignore[assignment]
+                event_dispatcher_handler_cls = None  # type: ignore[assignment]
+            else:
+                event_dispatcher_handler_cls = dispatcher_handler_module.EventDispatcherHandler
 
             self._loop = asyncio.get_running_loop()
             self._client = (
@@ -95,9 +101,9 @@ class FeishuChannelAdapter(ChannelAdapter):
                 self._handle_message_sync(event)
 
             event_handler = None
-            if EventDispatcherHandler is not None:
+            if event_dispatcher_handler_cls is not None:
                 event_handler = (
-                    EventDispatcherHandler.builder(
+                    event_dispatcher_handler_cls.builder(
                         encrypt_key="",
                         verification_token="",
                     )
@@ -224,7 +230,9 @@ class FeishuChannelAdapter(ChannelAdapter):
             is_error=is_error,
         )
 
-    async def _send_text_message(self, receive_id: str, receive_id_type: str, content: str) -> str | None:
+    async def _send_text_message(
+        self, receive_id: str, receive_id_type: str, content: str
+    ) -> str | None:
         return await self._message_client.send_text_message(receive_id, receive_id_type, content)
 
     async def _update_message(

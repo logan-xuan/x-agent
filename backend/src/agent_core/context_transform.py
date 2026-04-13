@@ -19,10 +19,10 @@ if TYPE_CHECKING:
 
 def convert_message_to_llm(message: AgentMessage) -> dict[str, Any]:
     """将 AgentMessage 转换为 LLM API 格式.
-    
+
     Args:
         message: Agent 消息
-    
+
     Returns:
         dict: LLM API 格式的消息
     """
@@ -45,19 +45,23 @@ def _convert_user_message(message: UserMessage) -> dict[str, Any]:
     content_list = []
     for c in message.content:
         if isinstance(c, TextContent):
-            content_list.append({
-                "type": "text",
-                "text": c.text,
-            })
+            content_list.append(
+                {
+                    "type": "text",
+                    "text": c.text,
+                }
+            )
         elif isinstance(c, ImageContent):
-            content_list.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": c.mime_type,
-                    "data": c.data,
-                },
-            })
+            content_list.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": c.mime_type,
+                        "data": c.data,
+                    },
+                }
+            )
 
     # 如果只有一个文本内容，简化为字符串
     if len(content_list) == 1 and content_list[0]["type"] == "text":
@@ -87,14 +91,18 @@ def _convert_assistant_message(message: AssistantMessage) -> dict[str, Any]:
             text_parts.append(c.text)
         elif isinstance(c, ToolCallContent):
             # OpenAI 格式的 tool_calls
-            tool_calls.append({
-                "id": c.id,
-                "type": "function",
-                "function": {
-                    "name": c.name,
-                    "arguments": json.dumps(c.arguments) if isinstance(c.arguments, dict) else c.arguments,
+            tool_calls.append(
+                {
+                    "id": c.id,
+                    "type": "function",
+                    "function": {
+                        "name": c.name,
+                        "arguments": json.dumps(c.arguments)
+                        if isinstance(c.arguments, dict)
+                        else c.arguments,
+                    },
                 }
-            })
+            )
 
     result: dict[str, Any] = {
         "role": "assistant",
@@ -131,10 +139,10 @@ def _convert_tool_result_message(message: ToolResultMessage) -> dict[str, Any]:
 
 def convert_messages_to_llm(messages: list[AgentMessage]) -> list[dict[str, Any]]:
     """将消息列表转换为 LLM API 格式.
-    
+
     Args:
         messages: Agent 消息列表
-    
+
     Returns:
         list: LLM API 格式的消息列表
     """
@@ -143,10 +151,10 @@ def convert_messages_to_llm(messages: list[AgentMessage]) -> list[dict[str, Any]
 
 def content_to_dict(content: Content) -> dict[str, Any]:
     """将 Content 转换为字典.
-    
+
     Args:
         content: 内容对象
-    
+
     Returns:
         dict: 字典表示
     """
@@ -175,10 +183,10 @@ def content_to_dict(content: Content) -> dict[str, Any]:
 
 def message_to_dict(message: AgentMessage) -> dict[str, Any]:
     """将 AgentMessage 转换为字典.
-    
+
     Args:
         message: Agent 消息
-    
+
     Returns:
         dict: 字典表示
     """
@@ -215,10 +223,10 @@ def message_to_dict(message: AgentMessage) -> dict[str, Any]:
 
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """估算消息列表的 token 数量.
-    
+
     Args:
         messages: LLM 格式的消息列表
-    
+
     Returns:
         int: 估算的 token 数量
     """
@@ -229,11 +237,11 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
 
 def truncate_string(s: str, max_len: int = 500) -> str:
     """截断字符串.
-    
+
     Args:
         s: 原始字符串
         max_len: 最大长度
-    
+
     Returns:
         str: 截断后的字符串
     """

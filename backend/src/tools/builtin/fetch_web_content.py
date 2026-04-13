@@ -8,32 +8,32 @@ Provides comprehensive web content fetching with:
 - Batch URL processing
 """
 
+import asyncio
 import json
 from pathlib import Path
-from typing import Any, Optional
-import asyncio
 
-from ..base import BaseTool, ToolResult, ToolParameter, ToolParameterType
-from .web_fetch.http_client import HTTPClient
-from .web_fetch.html_parser import HTMLParser
+from src.utils.logger import get_logger
+
+from ..base import BaseTool, ToolParameter, ToolParameterType, ToolResult
 from .web_fetch.content_extractor import ContentExtractor
+from .web_fetch.html_parser import HTMLParser
+from .web_fetch.http_client import HTTPClient
 from .web_fetch.markdown_storage import MarkdownStorageManager
 from .web_fetch.sqlite_index import SQLiteIndexManager
-from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class FetchWebContentTool(BaseTool):
     """Fetch and analyze web page content.
-    
+
     Features:
     - Extract title, main content, images, tables
     - Store content as Markdown files
     - SQLite index with 72h TTL and LRU management
     - Batch URL processing (up to 10 URLs)
     - Independent and portable component
-    
+
     Usage Scenarios:
     - Research specific webpages
     - Gather information for reports
@@ -41,10 +41,10 @@ class FetchWebContentTool(BaseTool):
     - Monitor website changes
     - Batch processing multiple URLs
     """
-    
-    def __init__(self, workspace_path: Optional[str] = None):
+
+    def __init__(self, workspace_path: str | None = None):
         """Initialize tool.
-        
+
         Args:
             workspace_path: Path to workspace directory. If None, loads from x-agent.yaml config.
         """
@@ -56,26 +56,42 @@ class FetchWebContentTool(BaseTool):
             # 从当前请求上下文获取 agent 专属 workspace
             try:
                 from ...conversation.context import get_current_context
+
                 context = get_current_context()
                 if context is not None and context.agent_id:
                     try:
-                        from ...conversation.multi_agent_context_loader import get_multi_agent_context_loader
+                        from ...conversation.multi_agent_context_loader import (
+                            get_multi_agent_context_loader,
+                        )
+
                         loader = get_multi_agent_context_loader()
                         if loader is not None:
                             agent_ctx = loader.get_agent_context(context.agent_id)
                             if agent_ctx is not None:
-                                resolved_path = Path(str(agent_ctx.workspace_path)).expanduser().resolve()
+                                resolved_path = (
+                                    Path(str(agent_ctx.workspace_path)).expanduser().resolve()
+                                )
                     except Exception:
                         pass
 
                     if resolved_path is None:
                         try:
                             from ...config.manager import get_config
+
                             config = get_config()
-                            if hasattr(config, 'multi_agent') and config.multi_agent and config.multi_agent.agents:
+                            if (
+                                hasattr(config, "multi_agent")
+                                and config.multi_agent
+                                and config.multi_agent.agents
+                            ):
                                 for agent_config in config.multi_agent.agents:
-                                    if agent_config.id == context.agent_id and agent_config.workspace:
-                                        resolved_path = Path(agent_config.workspace).expanduser().resolve()
+                                    if (
+                                        agent_config.id == context.agent_id
+                                        and agent_config.workspace
+                                    ):
+                                        resolved_path = (
+                                            Path(agent_config.workspace).expanduser().resolve()
+                                        )
                                         break
                         except Exception:
                             pass
@@ -86,6 +102,7 @@ class FetchWebContentTool(BaseTool):
             if resolved_path is None:
                 try:
                     from ...config.manager import ConfigManager
+
                     config = ConfigManager().config
                     if config.workspace and config.workspace.path:
                         resolved_path = Path(config.workspace.path).expanduser().resolve()
@@ -102,16 +119,15 @@ class FetchWebContentTool(BaseTool):
         self._extractor = ContentExtractor()
         self._markdown_storage = MarkdownStorageManager(str(self.workspace_path))
         self._sqlite_index = SQLiteIndexManager()
-        
+
         logger.info(
-            "FetchWebContentTool initialized",
-            extra={"workspace_path": str(self.workspace_path)}
+            "FetchWebContentTool initialized", extra={"workspace_path": str(self.workspace_path)}
         )
-    
+
     @property
     def name(self) -> str:
         return "fetch_web_content"
-    
+
     @property
     def description(self) -> str:
         return (
@@ -122,7 +138,43 @@ class FetchWebContentTool(BaseTool):
             "Returns file paths and metadata. "
             "Use this tool when you need to read or analyze specific webpages."
         )
-    
+
+    @staticmethod
+    def _format_request_error(error: Exception) -> str:
+        """格式化请求异常，避免空字符串错误信息."""
+
+        message = str(error).strip()
+        if message:
+            return message
+        return type(error).__name__
+
+    def _build_markdown_preview_metadata(self, markdown_path: str) -> dict[str, object]:
+        """从已保存的 Markdown 文件构建预览与分块读取元数据."""
+
+        path = Path(markdown_path)
+        preview_source = ""
+        post = self._markdown_storage.read_markdown_file(str(path))
+        if post is not None:
+            preview_source = str(getattr(post, "content", "") or "")
+
+        try:
+            raw_markdown = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            raw_markdown = preview_source
+
+        if not preview_source:
+            preview_source = raw_markdown
+
+        preview_text = " ".join(preview_source.split())
+        if len(preview_text) > 500:
+            preview_text = preview_text[:500].rstrip() + "..."
+
+        return {
+            "line_count": len(raw_markdown.splitlines()),
+            "preview_text": preview_text,
+            "recommended_chunk_lines": 120,
+        }
+
     @property
     def parameters(self) -> list[ToolParameter]:
         return [
@@ -137,6 +189,7 @@ class FetchWebContentTool(BaseTool):
                 type=ToolParameterType.ARRAY,
                 description="List of URLs to fetch (up to 10). Use for batch processing.",
                 required=False,
+                items_schema={"type": ToolParameterType.STRING.value},
             ),
             ToolParameter(
                 name="max_images",
@@ -167,11 +220,11 @@ class FetchWebContentTool(BaseTool):
                 default=30,
             ),
         ]
-    
+
     async def execute(
         self,
-        url: Optional[str] = None,
-        batch_urls: Optional[list[str]] = None,
+        url: str | None = None,
+        batch_urls: list[str] | None = None,
         max_images: int = 20,
         extract_tables: bool = True,
         use_cache: bool = True,
@@ -179,7 +232,7 @@ class FetchWebContentTool(BaseTool):
         **kwargs,
     ) -> ToolResult:
         """Execute the web content fetching tool.
-        
+
         Args:
             url: Single URL to fetch
             batch_urls: List of URLs for batch processing
@@ -187,7 +240,7 @@ class FetchWebContentTool(BaseTool):
             extract_tables: Whether to extract tables
             use_cache: Whether to use cache
             timeout: Request timeout
-            
+
         Returns:
             Tool result
         """
@@ -201,12 +254,12 @@ class FetchWebContentTool(BaseTool):
                     use_cache=use_cache,
                     timeout=timeout,
                 )
-                
+
                 return ToolResult.ok(
                     json.dumps(result, ensure_ascii=False, indent=2),
                     **result,
                 )
-            
+
             # Batch mode
             elif batch_urls:
                 results = await self._fetch_batch_urls(
@@ -216,21 +269,19 @@ class FetchWebContentTool(BaseTool):
                     use_cache=use_cache,
                     timeout=timeout,
                 )
-                
+
                 return ToolResult.ok(
                     json.dumps(results, ensure_ascii=False, indent=2),
                     **results,
                 )
-            
+
             else:
-                return ToolResult.error_result(
-                    "Either 'url' or 'batch_urls' must be provided"
-                )
-                
+                return ToolResult.error_result("Either 'url' or 'batch_urls' must be provided")
+
         except Exception as e:
             logger.error(f"Failed to fetch web content: {e}", exc_info=True)
             return ToolResult.error_result(str(e))
-    
+
     async def _fetch_single_url(
         self,
         url: str,
@@ -240,32 +291,34 @@ class FetchWebContentTool(BaseTool):
         timeout: int,
     ) -> dict:
         """Fetch a single URL.
-        
+
         Args:
             url: URL to fetch
             max_images: Maximum images
             extract_tables: Extract tables flag
             use_cache: Use cache flag
             timeout: Timeout
-            
+
         Returns:
             Result dictionary
         """
         import time
+
         start_time = time.time()
-        
+
         # Step 1: Check cache/index
         if use_cache:
             index_entry = await self._sqlite_index.get_index(url)
             if index_entry:
                 logger.info(f"Cache hit for {url}")
-                
+
                 # Read Markdown file using absolute path
                 abs_markdown_path = str(self.workspace_path / index_entry["markdown_path"])
                 post = self._markdown_storage.read_markdown_file(abs_markdown_path)
-                
+
                 if post:
                     elapsed_ms = int((time.time() - start_time) * 1000)
+                    preview_metadata = self._build_markdown_preview_metadata(abs_markdown_path)
                     return {
                         "success": True,
                         "url": url,
@@ -279,9 +332,10 @@ class FetchWebContentTool(BaseTool):
                             "fetched_at": index_entry["fetched_at"],
                             "response_time_ms": elapsed_ms,
                             "cache_hit": True,
+                            **preview_metadata,
                         },
                     }
-        
+
         # Step 2: Validate URL
         if not self._validate_url(url):
             return {
@@ -289,30 +343,38 @@ class FetchWebContentTool(BaseTool):
                 "url": url,
                 "error": "Invalid URL format",
             }
-        
+
         # Step 3: HTTP request
         try:
             response = await self._http_client.fetch(url, timeout=timeout)
             html_content = response.text
         except Exception as e:
-            logger.error(f"HTTP request failed: {e}")
+            error_detail = self._format_request_error(e)
+            logger.error(
+                "HTTP request failed",
+                extra={
+                    "url": url,
+                    "error_type": type(e).__name__,
+                    "error": error_detail,
+                },
+            )
             return {
                 "success": False,
                 "url": url,
-                "error": f"HTTP request failed: {str(e)}",
+                "error": f"HTTP request failed: {error_detail}",
             }
-        
+
         # Step 4: Parse HTML
         soup = self._html_parser.parse(html_content)
         soup = self._html_parser.remove_unwanted_tags(soup)
-        
+
         # Step 5: Extract content
         title = self._html_parser.get_title(soup)
         body_html = self._extractor.extract_body(soup)
         images = self._extractor.extract_images(soup, max_images=max_images)
         tables = self._extractor.extract_tables(soup) if extract_tables else []
         language = self._html_parser.get_language(soup)
-        
+
         # Step 6: Save to Markdown files
         try:
             rel_markdown_path, rel_images_dir = await self._markdown_storage.save_content(
@@ -323,11 +385,12 @@ class FetchWebContentTool(BaseTool):
                 tables=tables,
                 metadata={"status_code": response.status_code},
             )
-            
+
             # Convert to absolute paths for consistency
             markdown_path = str(self.workspace_path / rel_markdown_path)
             images_dir = str(self.workspace_path / rel_images_dir)
-            
+            preview_metadata = self._build_markdown_preview_metadata(markdown_path)
+
             # Add to SQLite index (72h TTL) with absolute paths
             await self._sqlite_index.add_index(
                 url=url,
@@ -338,9 +401,9 @@ class FetchWebContentTool(BaseTool):
                 language=language,
                 ttl_hours=72,
             )
-            
+
             logger.info(f"Saved to {markdown_path}")
-            
+
         except Exception as e:
             logger.error(f"Failed to save content: {e}")
             return {
@@ -348,10 +411,10 @@ class FetchWebContentTool(BaseTool):
                 "url": url,
                 "error": f"Content save failed: {str(e)}",
             }
-        
+
         # Step 7: Build response
         elapsed_ms = int((time.time() - start_time) * 1000)
-        
+
         return {
             "success": True,
             "url": url,
@@ -369,9 +432,10 @@ class FetchWebContentTool(BaseTool):
                 "images_count": len(images),
                 "tables_count": len(tables),
                 "cache_hit": False,
+                **preview_metadata,
             },
         }
-    
+
     async def _fetch_batch_urls(
         self,
         urls: list[str],
@@ -381,27 +445,28 @@ class FetchWebContentTool(BaseTool):
         timeout: int,
     ) -> dict:
         """Fetch multiple URLs concurrently.
-        
+
         Args:
             urls: List of URLs
             max_images: Maximum images per URL
             extract_tables: Extract tables flag
             use_cache: Use cache flag
             timeout: Timeout
-            
+
         Returns:
             Batch result dictionary
         """
         import time
+
         start_time = time.time()
-        
+
         # Limit to 10 URLs
         if len(urls) > 10:
             urls = urls[:10]
-        
+
         # Create tasks with semaphore (limit concurrency to 5)
         semaphore = asyncio.Semaphore(5)
-        
+
         async def limited_fetch(url: str):
             async with semaphore:
                 return await self._fetch_single_url(
@@ -411,18 +476,18 @@ class FetchWebContentTool(BaseTool):
                     use_cache=use_cache,
                     timeout=timeout,
                 )
-        
+
         # Execute concurrently
         tasks = [limited_fetch(url) for url in urls]
         results = await asyncio.gather(*tasks)
-        
+
         # Aggregate statistics
         successful = [r for r in results if r.get("success")]
         failed = [r for r in results if not r.get("success")]
         cached = [r for r in results if r.get("from_cache")]
-        
+
         elapsed_ms = int((time.time() - start_time) * 1000)
-        
+
         return {
             "success": len(successful) > 0,
             "batch_mode": True,
@@ -434,35 +499,32 @@ class FetchWebContentTool(BaseTool):
             "total_time_ms": elapsed_ms,
             "errors": [r.get("error") for r in failed if r.get("error")],
         }
-    
+
     def _validate_url(self, url: str) -> bool:
         """Validate URL format.
-        
+
         Args:
             url: URL to validate
-            
+
         Returns:
             True if valid
         """
         from urllib.parse import urlparse
-        
+
         try:
             parsed = urlparse(url)
-            
+
             # Only allow HTTP and HTTPS
             if parsed.scheme not in ["http", "https"]:
                 return False
-            
+
             # Must have hostname
             if not parsed.hostname:
                 return False
-            
+
             # Block private IP ranges (basic check)
             hostname = parsed.hostname
-            if hostname in ["localhost", "127.0.0.1"]:
-                return False
-            
-            return True
-            
+            return hostname not in ["localhost", "127.0.0.1"]
+
         except Exception:
             return False

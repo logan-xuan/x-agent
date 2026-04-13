@@ -18,7 +18,7 @@ from typing import Any, Protocol
 @dataclass
 class DelegateTask:
     """委派任务描述.
-    
+
     Attributes:
         task_type: 任务类型标识（如 "research", "code-analysis", "summarize"）
         description: 任务描述（自然语言）
@@ -28,10 +28,10 @@ class DelegateTask:
         required_capabilities: 指定目标 Agent 所需能力而非 ID
     """
 
-    task_type: str          # 任务类型标识
-    description: str        # 任务描述（自然语言）
+    task_type: str  # 任务类型标识
+    description: str  # 任务描述（自然语言）
     payload: dict[str, Any] = field(default_factory=dict)  # 任务参数
-    priority: int = 0       # 优先级
+    priority: int = 0  # 优先级
     timeout: float = 120.0  # 超时秒数
 
     # 可选：指定目标 Agent 能力而非 ID
@@ -46,13 +46,13 @@ class DelegateTask:
         **kwargs: Any,
     ) -> DelegateTask:
         """创建委派任务的便捷方法.
-        
+
         Args:
             task_type: 任务类型
             description: 任务描述
             payload: 任务参数
             **kwargs: 其他参数（priority, timeout, required_capabilities）
-            
+
         Returns:
             DelegateTask: 委派任务
         """
@@ -67,7 +67,7 @@ class DelegateTask:
 @dataclass
 class DelegateResult:
     """委派结果.
-    
+
     Attributes:
         success: 是否成功
         result: 执行结果
@@ -93,13 +93,13 @@ class DelegateResult:
         metadata: dict[str, Any] | None = None,
     ) -> DelegateResult:
         """创建成功结果.
-        
+
         Args:
             result: 执行结果
             agent_id: 执行的 Agent ID
             execution_time_ms: 执行时间
             metadata: 额外元数据
-            
+
         Returns:
             DelegateResult: 成功结果
         """
@@ -120,13 +120,13 @@ class DelegateResult:
         metadata: dict[str, Any] | None = None,
     ) -> DelegateResult:
         """创建失败结果.
-        
+
         Args:
             error: 错误信息
             agent_id: 尝试执行的 Agent ID（可选）
             execution_time_ms: 执行时间
             metadata: 额外元数据
-            
+
         Returns:
             DelegateResult: 失败结果
         """
@@ -141,21 +141,21 @@ class DelegateResult:
 
 class DelegatePort(Protocol):
     """Agent Core 的委派接口.
-    
+
     允许 Agent 在循环中委派任务给其他 Agent。
-    
+
     支持的委派模式：
     1. 定向委派：指定目标 Agent ID
     2. 能力匹配：根据所需能力自动选择 Agent
     3. 广播通知：向所有 Agent 发送通知
     4. 并行委派：同时委派多个任务
-    
+
     Example:
         class MyDelegateAdapter:
             def __init__(self, bus: AgentBus, registry: AgentRegistry):
                 self.bus = bus
                 self.registry = registry
-            
+
             async def delegate(
                 self,
                 target_agent_id: str,
@@ -172,16 +172,16 @@ class DelegatePort(Protocol):
                     },
                     ttl=task.timeout,
                 )
-                
+
                 # 发送并等待响应
                 response = await self.bus.request(request, timeout=task.timeout)
-                
+
                 if response.message_type == AgentMessageType.ERROR:
                     return DelegateResult.from_error(
                         error=response.payload.get("error", "Unknown error"),
                         agent_id=target_agent_id,
                     )
-                
+
                 return DelegateResult.from_success(
                     result=response.payload,
                     agent_id=target_agent_id,
@@ -194,11 +194,11 @@ class DelegatePort(Protocol):
         task: DelegateTask,
     ) -> DelegateResult:
         """委派任务给指定 Agent.
-        
+
         Args:
             target_agent_id: 目标 Agent ID
             task: 委派任务描述
-            
+
         Returns:
             DelegateResult: 委派结果
         """
@@ -209,15 +209,15 @@ class DelegatePort(Protocol):
         task: DelegateTask,
     ) -> DelegateResult:
         """根据所需能力自动选择 Agent 并委派.
-        
+
         选择策略：
         1. 查找拥有所有 required_capabilities 的 Agent
         2. 选择负载最低的 Agent
         3. 如果没有合适的 Agent，返回失败
-        
+
         Args:
             task: 委派任务描述（需设置 required_capabilities）
-            
+
         Returns:
             DelegateResult: 委派结果
         """
@@ -228,10 +228,10 @@ class DelegatePort(Protocol):
         notification: dict[str, Any],
     ) -> int:
         """广播通知给所有 Agent.
-        
+
         Args:
             notification: 通知内容
-            
+
         Returns:
             int: 接收通知的 Agent 数量
         """
@@ -242,10 +242,10 @@ class DelegatePort(Protocol):
         tasks: list[tuple[str, DelegateTask]],
     ) -> list[DelegateResult]:
         """并行委派多个任务，等待所有完成.
-        
+
         Args:
             tasks: 任务列表，每项为 (target_agent_id, task)
-            
+
         Returns:
             list[DelegateResult]: 结果列表，顺序与输入一致
         """

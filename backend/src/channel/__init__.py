@@ -10,12 +10,11 @@
 - ChannelRegistry: 渠道注册表
 """
 
-from .base import ChannelAdapter
-from .registry import ChannelRegistry
-
 # 导入 adapters 子模块（具体适配器实现）
 # 后续可通过 from channel.adapters import DingTalkAdapter, FeishuAdapter 等
 from . import adapters
+from .base import ChannelAdapter
+from .registry import ChannelRegistry
 
 __all__ = [
     "ChannelAdapter",

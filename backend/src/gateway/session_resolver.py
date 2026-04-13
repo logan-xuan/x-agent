@@ -11,16 +11,16 @@ ActiveSessionResolver 负责解析 Agent 在指定渠道的最新有效 Session�
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 from ..conversation.identity import ChannelType
 from .errors import GatewayError
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -42,14 +42,13 @@ class NoActiveSessionError(GatewayError):
     ) -> None:
         self.agent_id = agent_id
         self.channel_type = channel_type
-        super().__init__(
-            f"{message} (agent_id={agent_id}, channel_type={channel_type.value})"
-        )
+        super().__init__(f"{message} (agent_id={agent_id}, channel_type={channel_type.value})")
 
 
 def _get_storage_service():
     """获取 StorageService 实例。"""
     from ..services.storage import get_storage_service
+
     return get_storage_service()
 
 
@@ -99,8 +98,8 @@ class ActiveSessionResolver:
         Raises:
             NoActiveSessionError: auto_create=False 且无有效 session。
         """
-        from ..conversation.session import SessionManager
         from ..config.manager import get_config
+        from ..conversation.session import SessionManager
 
         session_manager = SessionManager()
         canonical_agent_id = get_config().multi_agent.resolve_agent_id(agent_id) or agent_id
@@ -126,6 +125,7 @@ class ActiveSessionResolver:
         # 3. 自动创建新 session（新系统 sessions 表）
         # 使用 Agent 名称作为会话标题
         from ..conversation.dao.models import Agent
+
         agent = Agent.from_config(canonical_agent_id)
         title = f"{agent.agent_name} 对话" if agent else f"Auto-created for {channel_type.value}"
         new_session = await session_manager.create_session(

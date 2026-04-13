@@ -1,4 +1,3 @@
-
 """首次启动自动注册默认实体。
 
 Agent 和 Channel 已全部改为配置驱动（从 x-agent.yaml 加载），
@@ -21,6 +20,7 @@ DEFAULT_USER_ID = "admin"
 DEFAULT_AGENT_ID = "main-agent"
 DEFAULT_CHANNEL_ID = "web_channel"  # web chat 交互默认 channel
 CLI_CHANNEL_ID = "cli_channel"  # CLI 交互默认 channel
+
 
 async def ensure_default_entities(workspace_path: str | None = None) -> None:
     """确保默认 User 存在。

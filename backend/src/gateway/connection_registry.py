@@ -13,24 +13,27 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Any, Callable, Optional
+from enum import StrEnum
+from typing import Any
 
-from ..conversation.identity import ChannelType, ChannelProtocol
+from ..conversation.identity import ChannelProtocol, ChannelType
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
-class PushStatus(str, Enum):
+class PushStatus(StrEnum):
     """推送结果状态。"""
+
     DELIVERED = "delivered"
     PARTIAL = "partial"
     NO_CONNECTION = "no_connection"
@@ -47,6 +50,7 @@ class PushResult:
         total_count: 尝试投递的连接总数。
         failed_channel_ids: 投递失败的 channel_id 列表。
     """
+
     status: PushStatus
     delivered_count: int = 0
     total_count: int = 0
@@ -67,6 +71,7 @@ class ConnectionHandle:
         send: 异步发送闭包，返回 True 表示发送成功。
         created_at: 连接建立时间。
     """
+
     channel_id: str
     channel_type: ChannelType
     channel_protocol: ChannelProtocol
@@ -99,7 +104,7 @@ class ConnectionRegistry:
         registry.unregister("sess-123", "ws-abc")
     """
 
-    _instance: Optional[ConnectionRegistry] = None
+    _instance: ConnectionRegistry | None = None
 
     def __new__(cls) -> ConnectionRegistry:
         if cls._instance is None:
@@ -265,9 +270,7 @@ class ConnectionRegistry:
         Returns:
             包含 session 数量和连接数量的字典。
         """
-        total_connections = sum(
-            len(handles) for handles in self._connections.values()
-        )
+        total_connections = sum(len(handles) for handles in self._connections.values())
         return {
             "active_sessions": len(self._connections),
             "total_connections": total_connections,
@@ -277,6 +280,7 @@ class ConnectionRegistry:
 # ---------------------------------------------------------------------------
 # 模块级单例访问
 # ---------------------------------------------------------------------------
+
 
 def get_connection_registry() -> ConnectionRegistry:
     """获取全局 ConnectionRegistry 单例。"""

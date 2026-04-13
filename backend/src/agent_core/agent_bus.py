@@ -15,28 +15,29 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class AgentMessageType(str, Enum):
+class AgentMessageType(StrEnum):
     """Agent 消息类型."""
 
-    REQUEST = "request"           # 请求-响应
-    RESPONSE = "response"         # 响应
-    NOTIFICATION = "notification" # 单向通知
-    ERROR = "error"               # 错误响应
+    REQUEST = "request"  # 请求-响应
+    RESPONSE = "response"  # 响应
+    NOTIFICATION = "notification"  # 单向通知
+    ERROR = "error"  # 错误响应
 
 
 @dataclass(frozen=True)
 class AgentBusMessage:
     """Agent 间通信的消息.
-    
+
     消息是不可变的值对象，一旦创建就不能修改。
-    
+
     Attributes:
         message_id: 消息唯一标识符
         message_type: 消息类型
@@ -76,7 +77,7 @@ class AgentBusMessage:
         delegation_chain: tuple[str, ...] = (),
     ) -> AgentBusMessage:
         """创建请求消息.
-        
+
         Args:
             source: 发送方 Agent ID
             target: 接收方 Agent ID
@@ -84,7 +85,7 @@ class AgentBusMessage:
             trace_id: 分布式追踪 ID
             ttl: 超时时间（秒）
             delegation_chain: 委派链路
-            
+
         Returns:
             AgentBusMessage: 请求消息
         """
@@ -107,11 +108,11 @@ class AgentBusMessage:
         payload: dict[str, Any],
     ) -> AgentBusMessage:
         """创建响应消息.
-        
+
         Args:
             request: 原始请求消息
             payload: 响应内容
-            
+
         Returns:
             AgentBusMessage: 响应消息
         """
@@ -139,13 +140,13 @@ class AgentBusMessage:
         trace_id: str | None = None,
     ) -> AgentBusMessage:
         """创建通知消息.
-        
+
         Args:
             source: 发送方 Agent ID
             target: 接收方 Agent ID（"*" 表示广播）
             payload: 通知内容
             trace_id: 分布式追踪 ID
-            
+
         Returns:
             AgentBusMessage: 通知消息
         """
@@ -167,12 +168,12 @@ class AgentBusMessage:
         details: dict[str, Any] | None = None,
     ) -> AgentBusMessage:
         """创建错误响应消息.
-        
+
         Args:
             request: 原始请求消息
             error: 错误信息
             details: 错误详情
-            
+
         Returns:
             AgentBusMessage: 错误响应消息
         """
@@ -207,19 +208,19 @@ class AgentBusMessage:
 
 class AgentBus:
     """Agent 间消息总线.
-    
+
     支持:
     - 请求-响应模式（带超时）
     - 单向通知
     - 广播通知
     - 消息订阅（按 agent_id）
-    
+
     Example:
         bus = AgentBus()
-        
+
         # Agent 订阅消息
         queue = bus.subscribe("agent-001")
-        
+
         # 发送请求并等待响应
         request = AgentBusMessage.create_request(
             source="agent-001",
@@ -227,7 +228,7 @@ class AgentBus:
             payload={"task": "analyze"},
         )
         response = await bus.request(request, timeout=30.0)
-        
+
         # 广播通知
         notification = AgentBusMessage.create_notification(
             source="agent-001",
@@ -239,7 +240,7 @@ class AgentBus:
 
     def __init__(self, max_history: int = 500):
         """初始化消息总线.
-        
+
         Args:
             max_history: 最大消息历史记录数
         """
@@ -251,11 +252,11 @@ class AgentBus:
 
     def subscribe(self, agent_id: str, queue_size: int = 100) -> asyncio.Queue[AgentBusMessage]:
         """Agent 订阅消息.
-        
+
         Args:
             agent_id: Agent ID
             queue_size: 消息队列大小
-            
+
         Returns:
             asyncio.Queue: 消息队列
         """
@@ -265,7 +266,7 @@ class AgentBus:
 
     def unsubscribe(self, agent_id: str) -> None:
         """Agent 取消订阅.
-        
+
         Args:
             agent_id: Agent ID
         """
@@ -273,11 +274,11 @@ class AgentBus:
 
     async def send(self, message: AgentBusMessage) -> None:
         """发送消息（单向）.
-        
+
         如果是广播（target="*"），发送给所有订阅者（除发送者）。
         如果是定向消息，只发送给目标。
         如果是响应，还需要解析 pending_requests 的 Future。
-        
+
         Args:
             message: 要发送的消息
         """
@@ -285,7 +286,7 @@ class AgentBus:
             # 记录到历史
             self._message_history.append(message)
             if len(self._message_history) > self._max_history:
-                self._message_history = self._message_history[-self._max_history:]
+                self._message_history = self._message_history[-self._max_history :]
 
         # 处理响应消息
         if message.is_response() and message.correlation_id:
@@ -298,21 +299,15 @@ class AgentBus:
         if message.is_broadcast():
             for agent_id, queue in self._subscribers.items():
                 if agent_id != message.source_agent_id:
-                    try:
+                    with contextlib.suppress(asyncio.QueueFull):
                         queue.put_nowait(message)
-                    except asyncio.QueueFull:
-                        # 队列满，丢弃消息
-                        pass
             return
 
         # 处理定向消息
         target_queue = self._subscribers.get(message.target_agent_id)
         if target_queue:
-            try:
+            with contextlib.suppress(asyncio.QueueFull):
                 target_queue.put_nowait(message)
-            except asyncio.QueueFull:
-                # 队列满，丢弃消息
-                pass
 
     async def request(
         self,
@@ -320,14 +315,14 @@ class AgentBus:
         timeout: float | None = None,
     ) -> AgentBusMessage:
         """发送请求并等待响应（带超时）.
-        
+
         Args:
             message: 请求消息
             timeout: 超时时间（秒），默认使用消息的 ttl_seconds 或 60 秒
-            
+
         Returns:
             AgentBusMessage: 响应消息
-            
+
         Raises:
             asyncio.TimeoutError: 超时未收到响应
         """
@@ -361,11 +356,11 @@ class AgentBus:
         timeout: float | None = None,
     ) -> AgentBusMessage | None:
         """接收消息（阻塞式）.
-        
+
         Args:
             agent_id: Agent ID
             timeout: 超时时间（秒）
-            
+
         Returns:
             AgentBusMessage | None: 接收到的消息，超时返回 None
         """
@@ -384,10 +379,10 @@ class AgentBus:
 
     def get_pending_count(self, agent_id: str) -> int:
         """获取待处理消息数.
-        
+
         Args:
             agent_id: Agent ID
-            
+
         Returns:
             int: 待处理消息数
         """
@@ -396,7 +391,7 @@ class AgentBus:
 
     def get_statistics(self) -> dict[str, Any]:
         """获取总线统计信息.
-        
+
         Returns:
             dict: 统计信息
         """
@@ -415,12 +410,12 @@ class AgentBus:
         limit: int = 100,
     ) -> list[AgentBusMessage]:
         """获取消息历史.
-        
+
         Args:
             agent_id: 过滤 Agent ID（可选）
             message_type: 过滤消息类型（可选）
             limit: 返回数量限制
-            
+
         Returns:
             list[AgentBusMessage]: 消息历史
         """
@@ -428,8 +423,7 @@ class AgentBus:
 
         if agent_id:
             history = [
-                m for m in history
-                if m.source_agent_id == agent_id or m.target_agent_id == agent_id
+                m for m in history if m.source_agent_id == agent_id or m.target_agent_id == agent_id
             ]
 
         if message_type:
@@ -461,7 +455,7 @@ _global_bus: AgentBus | None = None
 
 def get_agent_bus() -> AgentBus:
     """获取全局 AgentBus 实例.
-    
+
     Returns:
         AgentBus: 全局消息总线实例
     """

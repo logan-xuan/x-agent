@@ -13,19 +13,19 @@ if TYPE_CHECKING:
 
 class LoggerPort(Protocol):
     """日志接口.
-    
+
     agent_core 通过此接口记录日志，不关心具体实现。
     实现者可以将日志输出到文件、数据库、远程服务等。
-    
+
     Example:
         class FileLoggerAdapter:
             def __init__(self, log_file: str):
                 self.log_file = log_file
-            
+
             def log(self, entry: LogEntry) -> None:
                 with open(self.log_file, "a") as f:
                     f.write(json.dumps(entry.__dict__) + "\\n")
-            
+
             def log_llm_call_start(self, log: LLMCallLog) -> None:
                 self.log(LogEntry(
                     event="llm_call_start",
@@ -35,7 +35,7 @@ class LoggerPort(Protocol):
 
     def log(self, entry: LogEntry) -> None:
         """记录通用日志.
-        
+
         Args:
             entry: 日志条目
         """
@@ -43,7 +43,7 @@ class LoggerPort(Protocol):
 
     def log_llm_call_start(self, log: LLMCallLog) -> None:
         """记录 LLM 调用开始.
-        
+
         Args:
             log: LLM 调用日志（包含请求信息）
         """
@@ -58,7 +58,7 @@ class LoggerPort(Protocol):
         error: str | None = None,
     ) -> None:
         """记录 LLM 调用结束.
-        
+
         Args:
             call_id: 调用 ID
             response: 响应内容
@@ -70,7 +70,7 @@ class LoggerPort(Protocol):
 
     def log_tool_call_start(self, log: ToolCallLog) -> None:
         """记录工具调用开始.
-        
+
         Args:
             log: 工具调用日志（包含入参信息）
         """
@@ -85,7 +85,7 @@ class LoggerPort(Protocol):
         error: str | None = None,
     ) -> None:
         """记录工具调用结束.
-        
+
         Args:
             call_id: 调用 ID
             result: 执行结果
@@ -104,14 +104,14 @@ class LoggerPort(Protocol):
         offset: int = 0,
     ) -> list[LogEntry]:
         """查询日志.
-        
+
         Args:
             trace_id: 按 trace_id 过滤
             category: 按分类过滤
             level: 按级别过滤
             limit: 返回数量上限
             offset: 分页偏移量
-        
+
         Returns:
             list[LogEntry]: 日志列表
         """
@@ -119,10 +119,10 @@ class LoggerPort(Protocol):
 
     def get_llm_call(self, call_id: str) -> LLMCallLog | None:
         """获取 LLM 调用详情.
-        
+
         Args:
             call_id: 调用 ID
-        
+
         Returns:
             LLMCallLog | None: LLM 调用日志，不存在时返回 None
         """
@@ -130,10 +130,10 @@ class LoggerPort(Protocol):
 
     def get_tool_call(self, call_id: str) -> ToolCallLog | None:
         """获取工具调用详情.
-        
+
         Args:
             call_id: 调用 ID
-        
+
         Returns:
             ToolCallLog | None: 工具调用日志，不存在时返回 None
         """

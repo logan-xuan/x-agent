@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
-from ..conversation.identity import ChannelType, ChannelProtocol
+from ..conversation.identity import ChannelProtocol, ChannelType
 
 
-class EnvelopeIntent(str, Enum):
+class EnvelopeIntent(StrEnum):
     """消息意图。
 
     描述上游端点发送此消息的目的：
@@ -197,9 +197,8 @@ class Envelope:
             if not self.session_id:
                 errors.append("CHAT intent requires session_id")
 
-        if self.intent == EnvelopeIntent.ABORT:
-            if not self.session_id:
-                errors.append("ABORT intent requires session_id")
+        if self.intent == EnvelopeIntent.ABORT and not self.session_id:
+            errors.append("ABORT intent requires session_id")
 
         return errors
 

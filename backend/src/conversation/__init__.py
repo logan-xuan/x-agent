@@ -4,10 +4,17 @@ from .context import (
     AgentContext,
     ContextManager,
     ContextSource,  # ChannelProtocol 的向后兼容别名
+    clear_current_context,
     context_manager,
     get_current_context,
     set_current_context,
-    clear_current_context,
+)
+from .dao import (
+    Agent,
+    Channel,
+    SessionStatus,
+    User,
+    UserDAO,
 )
 from .identity import (
     AgentType,
@@ -21,13 +28,6 @@ from .identity import (
 )
 from .session import SessionManager
 from .system_prompt_builder import SystemPromptBuilder
-from .dao import (
-    Agent,
-    Channel,
-    SessionStatus,
-    User,
-    UserDAO,
-)
 
 __all__ = [
     # 身份

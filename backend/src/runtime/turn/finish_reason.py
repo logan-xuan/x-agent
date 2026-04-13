@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Literal, cast, get_args
 
-
 FinishReason = Literal[
     "done_definition_satisfied",
     "max_turns",

@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime
-from uuid import uuid4
 
 from ...config.models import CompressionConfig
+from ...models.compression import CompressionEvent
+from ...services.storage import get_storage_service
 from ...utils.logger import get_logger
 from .compressor import CompressionResult, ContextCompressor, SummaryFn
 from .token_counter import TokenCounter
-from ...models.compression import CompressionEvent
-from ...services.storage import get_storage_service
 
 logger = get_logger(__name__)
 
@@ -22,10 +20,10 @@ logger = get_logger(__name__)
 @dataclass
 class PreparedContext:
     """Prepared context for LLM."""
-    
-    messages: list[dict]              # Final message list
-    summary: str | None = None        # Summary if compression occurred
-    total_tokens: int = 0             # Total token count
+
+    messages: list[dict]  # Final message list
+    summary: str | None = None  # Summary if compression occurred
+    total_tokens: int = 0  # Total token count
 
 
 @dataclass
@@ -38,9 +36,9 @@ class _CompressionCache:
     - compressed_messages: 上次压缩后的完整消息列表（含摘要）
     """
 
-    compressed_message_count: int     # 上次压缩时的原始消息总数
-    summary: str                      # 上次压缩生成的摘要
-    compressed_messages: list[dict]   # 上次压缩后的完整消息列表
+    compressed_message_count: int  # 上次压缩时的原始消息总数
+    summary: str  # 上次压缩生成的摘要
+    compressed_messages: list[dict]  # 上次压缩后的完整消息列表
 
 
 @dataclass
@@ -59,18 +57,18 @@ class CompressionBudgetProfile:
 
 class ContextCompressionManager:
     """Context compression manager - main entry point.
-    
+
     Handles:
     - Token counting and budget management
     - Compression triggering logic
     - Context preparation for LLM
-    
-    Note: 
+
+    Note:
     - Configuration is read dynamically from ConfigManager to support hot-reload.
     - Compression summary is only used for LLM context understanding.
     - Important info is archived to long-term memory via MemoryManager before compression.
     """
-    
+
     def __init__(
         self,
         config: CompressionConfig,
@@ -99,21 +97,21 @@ class ContextCompressionManager:
             self.compressor = ContextCompressor(summary_fn, self.token_counter)
         else:
             self.compressor = None
-        
+
         logger.info(
             "ContextCompressionManager initialized",
             extra={
                 "threshold_rounds": self.config.threshold_rounds,
                 "threshold_tokens": self.config.threshold_tokens,
                 "retention_count": self.config.retention_count,
-            }
+            },
         )
-    
+
     @property
     def config(self) -> CompressionConfig:
         """Get the compression configuration used by this manager instance."""
         return self._initial_config
-    
+
     async def prepare_context(
         self,
         session_id: str,
@@ -146,7 +144,7 @@ class ContextCompressionManager:
         # 计算新消息数：如果有缓存，只算缓存之后新增的消息
         if cache:
             new_message_count = len(current_messages) - cache.compressed_message_count
-            new_messages = current_messages[cache.compressed_message_count:]
+            new_messages = current_messages[cache.compressed_message_count :]
             new_token_count = self.token_counter.count_messages(new_messages)
         else:
             new_message_count = len(current_messages)
@@ -193,12 +191,13 @@ class ContextCompressionManager:
         if not needs_compression:
             if cache:
                 # 有缓存但不需要再次压缩：用缓存的压缩结果 + 新消息构建上下文
-                new_messages = current_messages[cache.compressed_message_count:]
+                new_messages = current_messages[cache.compressed_message_count :]
                 merged_messages = list(cache.compressed_messages) + new_messages
                 return PreparedContext(
                     messages=merged_messages,
                     summary=cache.summary,
-                    total_tokens=self.token_counter.count_messages(merged_messages) + tool_definition_tokens,
+                    total_tokens=self.token_counter.count_messages(merged_messages)
+                    + tool_definition_tokens,
                 )
             return PreparedContext(
                 messages=current_messages,
@@ -219,7 +218,9 @@ class ContextCompressionManager:
 
         # 如果有缓存，构建包含旧摘要的消息列表再压缩（增量压缩）
         if cache:
-            messages_for_compression = list(cache.compressed_messages) + current_messages[cache.compressed_message_count:]
+            messages_for_compression = (
+                list(cache.compressed_messages) + current_messages[cache.compressed_message_count :]
+            )
         else:
             messages_for_compression = current_messages
 
@@ -235,12 +236,8 @@ class ContextCompressionManager:
         result.total_tokens += tool_definition_tokens
 
         return result
-    
-    async def _compress_context(
-        self,
-        session_id: str,
-        messages: list[dict]
-    ) -> PreparedContext:
+
+    async def _compress_context(self, session_id: str, messages: list[dict]) -> PreparedContext:
         """Execute compression flow.
 
         Args:
@@ -253,23 +250,20 @@ class ContextCompressionManager:
         if not self.compressor:
             logger.warning(
                 "Compression requested but no LLM service available",
-                extra={"session_id": session_id}
+                extra={"session_id": session_id},
             )
             # Return original messages if no compressor
             return PreparedContext(
                 messages=messages,
                 summary=None,
-                total_tokens=self.token_counter.count_messages(messages)
+                total_tokens=self.token_counter.count_messages(messages),
             )
 
         # 1. Archive important info before compression
         await self._archive_before_compression(session_id, messages)
 
         # 2. Compress
-        result = await self.compressor.compress(
-            messages,
-            self.config.retention_count
-        )
+        result = await self.compressor.compress(messages, self.config.retention_count)
 
         if self.config.compression_quality_gate_enabled:
             token_savings = result.original_token_count - result.compressed_token_count
@@ -290,16 +284,14 @@ class ContextCompressionManager:
 
         # 3. Store compression event to track history
         await self._store_compression_event(
-            session_id=session_id,
-            original_messages=messages,
-            compressed_result=result
+            session_id=session_id, original_messages=messages, compressed_result=result
         )
 
         # 4. Return prepared context with compressed results
         return PreparedContext(
             messages=result.compressed_messages,
             summary=result.summary,
-            total_tokens=result.compressed_token_count
+            total_tokens=result.compressed_token_count,
         )
 
     def _resolve_budget_profile(self) -> CompressionBudgetProfile | None:
@@ -308,10 +300,7 @@ class ContextCompressionManager:
         return self._budget_resolver()
 
     async def _store_compression_event(
-        self,
-        session_id: str,
-        original_messages: list[dict],
-        compressed_result: CompressionResult
+        self, session_id: str, original_messages: list[dict], compressed_result: CompressionResult
     ) -> None:
         """Store compression event to database for audit and analysis.
 
@@ -321,8 +310,8 @@ class ContextCompressionManager:
             compressed_result: Result of compression operation
         """
         try:
-            from datetime import datetime
             import uuid
+            from datetime import datetime
 
             # Generate unique ID for this compression event
             event_id = f"comp-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:8]}"
@@ -336,14 +325,20 @@ class ContextCompressionManager:
                 original_token_count=compressed_result.original_token_count,
                 compressed_token_count=compressed_result.compressed_token_count,
                 compression_ratio=(
-                    (compressed_result.original_token_count - compressed_result.compressed_token_count) /
-                    compressed_result.original_token_count
-                    if compressed_result.original_token_count > 0 else 0
+                    (
+                        compressed_result.original_token_count
+                        - compressed_result.compressed_token_count
+                    )
+                    / compressed_result.original_token_count
+                    if compressed_result.original_token_count > 0
+                    else 0
                 ),
                 original_messages=json.dumps(original_messages, ensure_ascii=False),
-                compressed_messages=json.dumps(compressed_result.compressed_messages, ensure_ascii=False),
+                compressed_messages=json.dumps(
+                    compressed_result.compressed_messages, ensure_ascii=False
+                ),
                 archived_message_count=len(compressed_result.archived_messages),
-                retained_message_count=len(compressed_result.recent_messages)
+                retained_message_count=len(compressed_result.recent_messages),
             )
 
             # Store in database
@@ -359,7 +354,7 @@ class ContextCompressionManager:
                     "session_id": session_id,
                     "original_message_count": len(original_messages),
                     "compressed_message_count": len(compressed_result.compressed_messages),
-                }
+                },
             )
 
         except Exception as e:
@@ -369,7 +364,7 @@ class ContextCompressionManager:
                     "session_id": session_id,
                     "error": str(e),
                     "error_type": type(e).__name__,
-                }
+                },
             )
 
     async def _archive_before_compression(
@@ -391,6 +386,7 @@ class ContextCompressionManager:
 
         try:
             from ...memory.manager import get_memory_manager
+
             memory_manager = get_memory_manager()
             archived = await memory_manager.archive_before_compression(
                 messages=messages,
@@ -445,9 +441,7 @@ class ContextCompressionManager:
             if event is None:
                 return None
 
-            compressed_messages: list[dict] = json.loads(
-                str(event.compressed_messages)
-            )
+            compressed_messages: list[dict] = json.loads(str(event.compressed_messages))
             original_message_count: int = int(event.original_message_count)  # type: ignore[arg-type]
 
             logger.info(
@@ -463,9 +457,8 @@ class ContextCompressionManager:
             # 从 compressed_messages 中提取摘要文本
             summary = ""
             for msg in compressed_messages:
-                if (
-                    msg.get("role") == "system"
-                    and self._SUMMARY_MARKER in (msg.get("content") or "")
+                if msg.get("role") == "system" and self._SUMMARY_MARKER in (
+                    msg.get("content") or ""
                 ):
                     summary = msg.get("content", "")
                     break

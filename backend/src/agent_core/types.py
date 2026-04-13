@@ -20,11 +20,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Union
+from typing import Any
 
 # ============================================================
 # 内容类型 (Content Types)
 # ============================================================
+
 
 @dataclass
 class TextContent:
@@ -62,12 +63,13 @@ class ToolCallContent:
 
 
 # Content 联合类型
-Content = Union[TextContent, ImageContent, ThinkingContent, ToolCallContent]
+Content = TextContent | ImageContent | ThinkingContent | ToolCallContent
 
 
 # ============================================================
 # 消息类型 (Message Types)
 # ============================================================
+
 
 @dataclass
 class UserMessage:
@@ -84,12 +86,10 @@ class UserMessage:
 
     @classmethod
     def from_text_and_images(
-        cls,
-        text: str,
-        images: list[tuple[str, str]] | None = None
+        cls, text: str, images: list[tuple[str, str]] | None = None
     ) -> UserMessage:
         """从文本和图片创建用户消息.
-        
+
         Args:
             text: 文本内容
             images: 图片列表，每项为 (base64_data, mime_type)
@@ -175,12 +175,13 @@ class ToolResultMessage:
 
 
 # AgentMessage 联合类型
-AgentMessage = Union[UserMessage, AssistantMessage, ToolResultMessage]
+AgentMessage = UserMessage | AssistantMessage | ToolResultMessage
 
 
 # ============================================================
 # 事件类型 (Event Types)
 # ============================================================
+
 
 @dataclass
 class AgentStartEvent:
@@ -205,7 +206,7 @@ class AgentEndEvent:
 @dataclass
 class TurnStartEvent:
     """Turn 开始事件.
-    
+
     一个 Turn 包含一次 LLM 调用及其可能的工具调用。
     """
 
@@ -237,7 +238,7 @@ class MessageStartEvent:
 @dataclass
 class MessageUpdateEvent:
     """消息更新事件 (流式).
-    
+
     用于流式响应时的增量更新。
     """
 
@@ -271,7 +272,7 @@ class ToolExecutionStartEvent:
 @dataclass
 class ToolExecutionUpdateEvent:
     """工具执行更新事件.
-    
+
     用于工具执行过程中的进度更新。
     """
 
@@ -296,23 +297,24 @@ class ToolExecutionEndEvent:
 
 
 # AgentEvent 联合类型
-AgentEvent = Union[
-    AgentStartEvent,
-    AgentEndEvent,
-    TurnStartEvent,
-    TurnEndEvent,
-    MessageStartEvent,
-    MessageUpdateEvent,
-    MessageEndEvent,
-    ToolExecutionStartEvent,
-    ToolExecutionUpdateEvent,
-    ToolExecutionEndEvent,
-]
+AgentEvent = (
+    AgentStartEvent
+    | AgentEndEvent
+    | TurnStartEvent
+    | TurnEndEvent
+    | MessageStartEvent
+    | MessageUpdateEvent
+    | MessageEndEvent
+    | ToolExecutionStartEvent
+    | ToolExecutionUpdateEvent
+    | ToolExecutionEndEvent
+)
 
 
 # ============================================================
 # 工具类型 (Tool Types)
 # ============================================================
+
 
 @dataclass
 class ToolParameter:
@@ -404,10 +406,11 @@ class ToolResult:
 # 配置类型 (Config Types)
 # ============================================================
 
+
 @dataclass
 class AgentContext:
     """Agent 上下文.
-    
+
     包含 LLM 调用所需的所有上下文信息。
     """
 
@@ -419,7 +422,7 @@ class AgentContext:
 @dataclass
 class AgentLoopConfig:
     """Agent Loop 配置.
-    
+
     控制 agent_loop 的行为。
     """
 
@@ -444,7 +447,7 @@ class AgentLoopConfig:
 @dataclass
 class AgentState:
     """Agent 状态.
-    
+
     跟踪 Agent 的运行时状态。
     """
 
@@ -474,6 +477,7 @@ class AgentState:
 # 流式数据类型 (Stream Types)
 # ============================================================
 
+
 class StreamChunkType(Enum):
     """流式数据块类型."""
 
@@ -487,7 +491,7 @@ class StreamChunkType(Enum):
 @dataclass
 class StreamChunk:
     """流式数据块.
-    
+
     用于 LLMPort.stream() 返回的流式数据。
     """
 
@@ -519,12 +523,7 @@ class StreamChunk:
         return cls(type=StreamChunkType.THINKING_DELTA, delta=delta)
 
     @classmethod
-    def tool(
-        cls,
-        tool_call_id: str,
-        tool_name: str,
-        arguments: dict[str, Any]
-    ) -> StreamChunk:
+    def tool(cls, tool_call_id: str, tool_name: str, arguments: dict[str, Any]) -> StreamChunk:
         """创建工具调用块."""
         return cls(
             type=StreamChunkType.TOOL_CALL,
@@ -534,11 +533,7 @@ class StreamChunk:
         )
 
     @classmethod
-    def done(
-        cls,
-        stop_reason: str,
-        usage: dict[str, int] | None = None
-    ) -> StreamChunk:
+    def done(cls, stop_reason: str, usage: dict[str, int] | None = None) -> StreamChunk:
         """创建完成块."""
         return cls(
             type=StreamChunkType.DONE,
@@ -555,6 +550,7 @@ class StreamChunk:
 # ============================================================
 # 日志类型 (Logger Types)
 # ============================================================
+
 
 class LogLevel(Enum):
     """日志级别."""

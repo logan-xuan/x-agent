@@ -38,6 +38,7 @@ from agent_core.types import (
 # Mock 实现（模拟真实 LLM 和工具）
 # ============================================================
 
+
 class DemoLLM:
     """模拟 LLM，演示文本响应和工具调用."""
 
@@ -73,10 +74,13 @@ class DemoLLM:
             yield StreamChunk.text(part)
             await asyncio.sleep(0.1)  # 模拟流式延迟
 
-        yield StreamChunk.done("end_turn", {
-            "input_tokens": 100,
-            "output_tokens": len("".join(response_parts)),
-        })
+        yield StreamChunk.done(
+            "end_turn",
+            {
+                "input_tokens": 100,
+                "output_tokens": len("".join(response_parts)),
+            },
+        )
 
 
 class DemoToolPort:
@@ -97,6 +101,7 @@ class DemoToolPort:
 # ============================================================
 # 演示脚本
 # ============================================================
+
 
 async def demo_basic_conversation():
     """演示 1: 基本对话."""
@@ -165,7 +170,9 @@ async def demo_tool_call():
         if isinstance(event, ToolExecutionStartEvent):
             print(f"  [工具调用] {event.tool_name}({event.arguments})")
         elif isinstance(event, ToolExecutionEndEvent):
-            result_text = event.result.content[0].text if event.result and event.result.content else ""
+            result_text = (
+                event.result.content[0].text if event.result and event.result.content else ""
+            )
             print(f"  [工具结果] {result_text}")
         elif isinstance(event, MessageUpdateEvent) and event.delta_type == "text":
             print(event.delta, end="", flush=True)
@@ -194,6 +201,7 @@ async def demo_adapter_conversion():
 
     # LLM 适配器
     from agent_core.adapters.llm_adapter import _map_finish_reason
+
     print("\nfinish_reason 映射:")
     for reason in ["stop", "tool_calls", "length", None]:
         print(f"  {reason!r:15} → {_map_finish_reason(reason)!r}")

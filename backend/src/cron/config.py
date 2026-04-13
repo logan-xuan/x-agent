@@ -1,6 +1,7 @@
 """APScheduler configuration models."""
 
-from typing import Literal, Any
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field
 
 # Define TriggerType as a Literal type
@@ -9,7 +10,7 @@ TriggerType = Literal["interval", "cron", "date"]
 
 class JobConfig(BaseModel):
     """Configuration for a scheduled job."""
-    
+
     id: str = Field(..., description="Unique job identifier")
     func: str = Field(..., description="Function to execute")
     trigger_type: TriggerType = Field(..., description="Trigger type")
@@ -24,26 +25,18 @@ class JobConfig(BaseModel):
 
 class CronConfig(BaseModel):
     """APScheduler configuration."""
-    
+
     enabled: bool = Field(default=True, description="Enable scheduler")
     timezone: str = Field(default="Asia/Shanghai", description="Scheduler timezone")
     job_store_url: str | None = Field(
-        default=None,
-        description="Job store database URL (None for memory store)"
+        default=None, description="Job store database URL (None for memory store)"
     )
     max_workers: int = Field(default=10, ge=1, description="Max worker threads")
-    cleanup_interval: int = Field(
-        default=3600,
-        ge=60,
-        description="Cleanup interval in seconds"
-    )
+    cleanup_interval: int = Field(default=3600, ge=60, description="Cleanup interval in seconds")
     task_defaults: dict[str, Any] = Field(
         default_factory=lambda: {
             "misfire_grace_time": 3600,
             "max_running_jobs": 1,
         }
     )
-    jobs: list[JobConfig] = Field(
-        default_factory=list,
-        description="Predefined jobs"
-    )
+    jobs: list[JobConfig] = Field(default_factory=list, description="Predefined jobs")

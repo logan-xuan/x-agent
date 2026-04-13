@@ -25,9 +25,11 @@ from .base import ChannelAdapter
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -52,9 +54,7 @@ class ChannelRegistry:
             ValueError: 如果该 channel_id 已被注册。
         """
         if channel_id in self._adapters:
-            raise ValueError(
-                f"Channel ID {channel_id} is already registered"
-            )
+            raise ValueError(f"Channel ID {channel_id} is already registered")
         self._adapters[channel_id] = adapter
         logger.info(
             "Channel registered",
@@ -122,9 +122,7 @@ class ChannelRegistry:
                     },
                 )
 
-        await asyncio.gather(
-            *(_start_one(cid, ad) for cid, ad in self._adapters.items())
-        )
+        await asyncio.gather(*(_start_one(cid, ad) for cid, ad in self._adapters.items()))
 
     async def stop_all(self) -> None:
         """并行停止所有已注册的渠道。
@@ -151,9 +149,7 @@ class ChannelRegistry:
                     },
                 )
 
-        await asyncio.gather(
-            *(_stop_one(cid, ad) for cid, ad in self._adapters.items())
-        )
+        await asyncio.gather(*(_stop_one(cid, ad) for cid, ad in self._adapters.items()))
 
     def __len__(self) -> int:
         return len(self._adapters)

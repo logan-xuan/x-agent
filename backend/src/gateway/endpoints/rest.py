@@ -22,27 +22,28 @@ import json
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
-from uuid import uuid4
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..dispatcher import GatewayDispatcher
-from ..envelope import Envelope
-from ..response import GatewayEvent, GatewayEventType
-from ..errors import GatewayError, EnvelopeValidationError
+from ...conversation.identity import ChannelProtocol, ChannelType
 from ..connection_registry import (
     ConnectionHandle,
     get_connection_registry,
 )
-from ...conversation.identity import ChannelType, ChannelProtocol
+from ..dispatcher import GatewayDispatcher
+from ..envelope import Envelope
+from ..errors import EnvelopeValidationError, GatewayError
+from ..response import GatewayEvent
 
 try:
     from ...utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/gateway", tags=["Gateway"])
@@ -63,6 +64,7 @@ def _get_dispatcher() -> GatewayDispatcher:
 # Request / Response Models
 # ============================================================================
 
+
 class ImagePayload(BaseModel):
     """图片附件。
 
@@ -70,6 +72,7 @@ class ImagePayload(BaseModel):
         data: Base64 编码的图片数据。
         mime_type: 图片 MIME 类型。
     """
+
     data: str
     mime_type: str = "image/png"
 
@@ -85,6 +88,7 @@ class ChatRequest(BaseModel):
         agent_name: 目标 Agent 名称（可选，按名称路由）。
         metadata: 附加元数据。
     """
+
     content: str
     session_id: str | None = None
     images: list[ImagePayload] | None = None
@@ -92,9 +96,11 @@ class ChatRequest(BaseModel):
     agent_name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+
 # ============================================================================
 # GatewayEvent -> SSE 转换
 # ============================================================================
+
 
 def _gateway_event_to_sse(event: GatewayEvent) -> str:
     """将 GatewayEvent 转换为 SSE data 行。
@@ -116,9 +122,11 @@ def _gateway_event_to_sse(event: GatewayEvent) -> str:
 
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+
 # ============================================================================
 # REST/SSE 端点
 # ============================================================================
+
 
 @router.post("/chat")
 async def gateway_chat(request: ChatRequest) -> StreamingResponse:
@@ -169,6 +177,7 @@ async def gateway_chat(request: ChatRequest) -> StreamingResponse:
     # 注册 SSE 连接到 ConnectionRegistry
     # web chat 交互使用统一的 web_channel 作为默认 channel_id
     from ...conversation.dao import DEFAULT_CHANNEL_ID
+
     registry = get_connection_registry()
     sse_channel_id = DEFAULT_CHANNEL_ID  # 统一使用 "web_channel"
     sse_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -177,12 +186,15 @@ async def gateway_chat(request: ChatRequest) -> StreamingResponse:
         await sse_queue.put(message)
         return True
 
-    registry.register(session_id, ConnectionHandle(
-        channel_id=sse_channel_id,
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.SSE,
-        send=sse_sender,
-    ))
+    registry.register(
+        session_id,
+        ConnectionHandle(
+            channel_id=sse_channel_id,
+            channel_type=ChannelType.WEB_CHAT,
+            channel_protocol=ChannelProtocol.SSE,
+            send=sse_sender,
+        ),
+    )
 
     logger.info(
         "SSE connection registered",

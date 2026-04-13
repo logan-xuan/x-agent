@@ -31,5 +31,9 @@ export default defineConfig(({ mode }) => {
       // 支持客户端路由 - 所有路由都返回 index.html
       historyApiFallback: true,
     },
+    test: {
+      environment: 'jsdom',
+      setupFiles: './src/test/setup.ts',
+    },
   }
 })

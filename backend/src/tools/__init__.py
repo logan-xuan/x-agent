@@ -7,7 +7,7 @@ This module provides the tool system that enables the agent to:
 - Extend with custom tools
 """
 
-from .base import BaseTool, ToolResult, ToolParameter
+from .base import BaseTool, ToolParameter, ToolResult
 from .manager import ToolManager, get_tool_manager
 
 __all__ = [

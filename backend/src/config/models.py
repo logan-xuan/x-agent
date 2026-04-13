@@ -2,19 +2,17 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, HttpUrl, SecretStr, model_validator
 
 
 class ModelConfig(BaseModel):
     """Model configuration - vendor-agnostic design.
-    
+
     Supports any OpenAI-compatible API provider.
     """
-    
+
     name: str = Field(..., description="Configuration name (e.g., primary, backup-1)")
-    provider: Literal["openai", "bailian", "custom"] = Field(
-        ..., description="Provider type"
-    )
+    provider: Literal["openai", "bailian", "custom"] = Field(..., description="Provider type")
     base_url: HttpUrl = Field(..., description="API base URL")
     api_key: SecretStr = Field(..., description="API key (encrypted in memory)")
     model_id: str = Field(..., description="Model identifier")
@@ -22,7 +20,27 @@ class ModelConfig(BaseModel):
     timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Request timeout in seconds")
     max_retries: int = Field(default=2, ge=0, le=5, description="Max retry attempts")
     priority: int = Field(default=0, ge=0, description="Backup priority (lower = higher priority)")
-    
+    max_context_tokens: int | None = Field(
+        default=None,
+        ge=1000,
+        description="Model context window in tokens used for runtime budget derivation",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Model output ceiling in tokens used for runtime budget derivation",
+    )
+
+    @model_validator(mode="after")
+    def validate_runtime_limits(self) -> "ModelConfig":
+        if (
+            self.max_context_tokens is not None
+            and self.max_output_tokens is not None
+            and self.max_output_tokens > self.max_context_tokens
+        ):
+            raise ValueError("max_output_tokens cannot exceed max_context_tokens")
+        return self
+
     def get_masked_key(self) -> str:
         """Return masked API key for logging."""
         key = self.api_key.get_secret_value()
@@ -33,19 +51,18 @@ class ModelConfig(BaseModel):
 
 class ServerConfig(BaseModel):
     """Server configuration."""
-    
+
     host: str = Field(default="0.0.0.0", description="Listen address")
     port: int = Field(default=8000, ge=1, le=65535, description="Server port")
     cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173"],
-        description="Allowed CORS origins"
+        default_factory=lambda: ["http://localhost:5173"], description="Allowed CORS origins"
     )
     reload: bool = Field(default=False, description="Enable auto-reload (dev mode)")
 
 
 class LoggingConfig(BaseModel):
     """Logging configuration."""
-    
+
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", description="Log level"
     )
@@ -54,70 +71,74 @@ class LoggingConfig(BaseModel):
     max_size: str = Field(default="10MB", description="Max log file size")
     backup_count: int = Field(default=5, ge=0, description="Number of backup files")
     console: bool = Field(default=True, description="Output to console")
-    when: str = Field(default="D", description="Time interval for rotation: S=seconds, M=minutes, H=hours, D=days, W=weekday, midnight=end of day")
-    interval: int = Field(default=1, ge=1, description="Rotation interval multiplier (e.g., 1 means every day/week)")
-    
+    when: str = Field(
+        default="D",
+        description="Time interval for rotation: S=seconds, M=minutes, H=hours, D=days, W=weekday, midnight=end of day",
+    )
+    interval: int = Field(
+        default=1, ge=1, description="Rotation interval multiplier (e.g., 1 means every day/week)"
+    )
+
     # LLM prompt log configuration
-    prompt_llm_file: str = Field(default="logs/prompt-llm.log", description="LLM prompt log file path")
+    prompt_llm_file: str = Field(
+        default="logs/prompt-llm.log", description="LLM prompt log file path"
+    )
     prompt_llm_max_size: str = Field(default="50MB", description="Max LLM prompt log file size")
-    prompt_llm_backup_count: int = Field(default=5, ge=0, description="Number of LLM prompt log backups")
-    
+    prompt_llm_backup_count: int = Field(
+        default=5, ge=0, description="Number of LLM prompt log backups"
+    )
+
     # Server log configuration
     server_log_file: str = Field(default="logs/server.log", description="Server log file path")
     server_log_max_size: str = Field(default="10MB", description="Max server log file size")
-    server_log_backup_count: int = Field(default=3, ge=0, description="Number of server log backups")
-    
+    server_log_backup_count: int = Field(
+        default=3, ge=0, description="Number of server log backups"
+    )
+
     # AgentLogger file persistence configuration
-    agent_log_file: str = Field(default="logs/agent-core.log", description="AgentLogger log file path")
+    agent_log_file: str = Field(
+        default="logs/agent-core.log", description="AgentLogger log file path"
+    )
     agent_log_max_size: str = Field(default="20MB", description="Max AgentLogger log file size")
-    agent_log_backup_count: int = Field(default=5, ge=0, description="Number of AgentLogger log backups")
+    agent_log_backup_count: int = Field(
+        default=5, ge=0, description="Number of AgentLogger log backups"
+    )
 
 
 class WorkspaceConfig(BaseModel):
     """Workspace configuration."""
-    
+
     path: str = Field(default="workspace", description="Path to workspace directory")
     skills_dir: str = Field(
-        default="skills",
-        description="User skills directory (relative to workspace path)"
+        default="skills", description="User skills directory (relative to workspace path)"
     )
     jobs_dir: str = Field(
-        default="jobs",
-        description="Cron jobs directory (relative to workspace path)"
+        default="jobs", description="Cron jobs directory (relative to workspace path)"
     )
 
 
 class SearchConfig(BaseModel):
     """Hybrid search configuration.
-    
+
     Controls the behavior of memory search combining vector and text similarity.
     """
-    
+
     vector_weight: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=1.0,
-        description="Weight for vector similarity score (0.0-1.0)"
+        default=0.7, ge=0.0, le=1.0, description="Weight for vector similarity score (0.0-1.0)"
     )
     text_weight: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        description="Weight for text similarity score (0.0-1.0)"
+        default=0.3, ge=0.0, le=1.0, description="Weight for text similarity score (0.0-1.0)"
     )
     min_score: float = Field(
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Minimum relevance score threshold for search results"
+        description="Minimum relevance score threshold for search results",
     )
     limit: int = Field(
-        default=10,
-        ge=1,
-        le=100,
-        description="Maximum number of search results to return"
+        default=10, ge=1, le=100, description="Maximum number of search results to return"
     )
-    
+
     @model_validator(mode="after")
     def validate_weights(self) -> "SearchConfig":
         """Ensure weights sum to approximately 1.0."""
@@ -129,27 +150,27 @@ class SearchConfig(BaseModel):
 
 class CompressionConfig(BaseModel):
     """Context compression configuration.
-    
+
     Controls when and how conversation context is compressed to manage token usage.
     """
-    
+
     threshold_rounds: int = Field(
         default=100,
         ge=10,
         le=1000,
-        description="Trigger compression when message count exceeds this threshold"
+        description="Trigger compression when message count exceeds this threshold",
     )
     threshold_tokens: int = Field(
         default=4000,
         ge=1000,
         le=32000,
-        description="Trigger compression when token count exceeds this threshold"
+        description="Trigger compression when token count exceeds this threshold",
     )
     retention_count: int = Field(
         default=50,
         ge=5,
         le=200,
-        description="Number of most recent messages to retain after compression"
+        description="Number of most recent messages to retain after compression",
     )
     max_context_tokens: int = Field(default=32000, ge=1000)
     max_tool_message_chars: int = Field(default=4000, ge=100)
@@ -267,20 +288,30 @@ class RuntimeCompressionProfileConfig(BaseModel):
     """Named runtime compression profile."""
 
     mode: str = Field(default="balanced")
-    pressure: RuntimeCompressionPressureConfig = Field(default_factory=RuntimeCompressionPressureConfig)
-    persist: RuntimeCompressionPersistConfig = Field(default_factory=RuntimeCompressionPersistConfig)
-    pruning: RuntimeCompressionPruningConfig = Field(default_factory=RuntimeCompressionPruningConfig)
+    pressure: RuntimeCompressionPressureConfig = Field(
+        default_factory=RuntimeCompressionPressureConfig
+    )
+    persist: RuntimeCompressionPersistConfig = Field(
+        default_factory=RuntimeCompressionPersistConfig
+    )
+    pruning: RuntimeCompressionPruningConfig = Field(
+        default_factory=RuntimeCompressionPruningConfig
+    )
     microcompact: RuntimeCompressionMicrocompactConfig = Field(
         default_factory=RuntimeCompressionMicrocompactConfig
     )
-    collapse: RuntimeCompressionCollapseConfig = Field(default_factory=RuntimeCompressionCollapseConfig)
+    collapse: RuntimeCompressionCollapseConfig = Field(
+        default_factory=RuntimeCompressionCollapseConfig
+    )
     autocompact: RuntimeCompressionAutocompactConfig = Field(
         default_factory=RuntimeCompressionAutocompactConfig
     )
     memory_flush: RuntimeCompressionMemoryFlushConfig = Field(
         default_factory=RuntimeCompressionMemoryFlushConfig
     )
-    quality: RuntimeCompressionQualityConfig = Field(default_factory=RuntimeCompressionQualityConfig)
+    quality: RuntimeCompressionQualityConfig = Field(
+        default_factory=RuntimeCompressionQualityConfig
+    )
     retain_recent_messages: int = Field(default=12, ge=1, le=100)
 
 
@@ -303,7 +334,9 @@ class RuntimeSessionProfileConfig(BaseModel):
     child_prompt_mode: Literal["full", "minimal", "none"] = Field(default="minimal")
     child_max_depth: int = Field(default=1, ge=0, le=3)
     child_default_budget_profile: str = Field(default="child-default")
-    lane_limits: RuntimeSessionLaneLimitsConfig = Field(default_factory=RuntimeSessionLaneLimitsConfig)
+    lane_limits: RuntimeSessionLaneLimitsConfig = Field(
+        default_factory=RuntimeSessionLaneLimitsConfig
+    )
 
 
 class RuntimeToolPolicyConfig(BaseModel):
@@ -383,7 +416,9 @@ def _default_runtime_compression_profiles() -> dict[str, RuntimeCompressionProfi
                 soft_trim_head_chars=900,
                 soft_trim_tail_chars=900,
             ),
-            microcompact=RuntimeCompressionMicrocompactConfig(trigger_pct=0.45, max_units_per_pass=12),
+            microcompact=RuntimeCompressionMicrocompactConfig(
+                trigger_pct=0.45, max_units_per_pass=12
+            ),
             collapse=RuntimeCompressionCollapseConfig(trigger_pct=0.60, max_segment_tokens=8000),
             autocompact=RuntimeCompressionAutocompactConfig(
                 trigger_pct=0.72,
@@ -418,7 +453,9 @@ def _default_runtime_compression_profiles() -> dict[str, RuntimeCompressionProfi
                 soft_trim_tail_chars=1800,
                 hard_clear_enabled=False,
             ),
-            microcompact=RuntimeCompressionMicrocompactConfig(trigger_pct=0.60, max_units_per_pass=4),
+            microcompact=RuntimeCompressionMicrocompactConfig(
+                trigger_pct=0.60, max_units_per_pass=4
+            ),
             collapse=RuntimeCompressionCollapseConfig(trigger_pct=0.75, max_segment_tokens=18000),
             autocompact=RuntimeCompressionAutocompactConfig(
                 trigger_pct=0.88,
@@ -485,7 +522,8 @@ class RuntimeConfig(BaseModel):
                     f"runtime.compression_profiles.{name} has invalid max_history_share"
                 )
             if not (
-                0 < profile.pressure.yellow_pct
+                0
+                < profile.pressure.yellow_pct
                 < profile.pressure.orange_pct
                 < profile.pressure.red_pct
                 < profile.pressure.hard_stop_pct
@@ -507,84 +545,85 @@ class RuntimeConfig(BaseModel):
 
 class PlanConfig(BaseModel):
     """Plan mode configuration.
-    
+
     Controls the behavior of task planning and replanning for complex tasks.
     """
-    
+
     consecutive_failures: int = Field(
         default=2,
         ge=1,
         le=10,
-        description="Trigger replanning after this many consecutive failures"
+        description="Trigger replanning after this many consecutive failures",
     )
     stuck_iterations: int = Field(
         default=3,
         ge=1,
         le=20,
-        description="Trigger replanning if stuck on same step for this many iterations without progress"
+        description="Trigger replanning if stuck on same step for this many iterations without progress",
     )
     max_replan_count: int = Field(
         default=2,
         ge=0,
         le=5,
-        description="Maximum number of replanning attempts before giving up (prevents infinite loops)"
+        description="Maximum number of replanning attempts before giving up (prevents infinite loops)",
     )
 
 
 class SkillMetadata(BaseModel):
     """Single skill metadata entry."""
-    
+
     name: str = Field(..., description="Skill name (directory name)")
     description: str = Field(..., description="Skill description")
     keywords: list[str] = Field(default_factory=list, description="Keywords for skill matching")
     auto_trigger: bool = Field(default=True, description="Whether to auto-trigger this skill")
-    priority: int = Field(default=999, ge=1, le=999, description="Priority (lower number = higher priority)")
+    priority: int = Field(
+        default=999, ge=1, le=999, description="Priority (lower number = higher priority)"
+    )
 
 
 class SkillsConfig(BaseModel):
     """Skills metadata configuration.
-    
+
     Controls skill discovery and recommendation in task analysis phase.
     """
-    
+
     registered: list[SkillMetadata] = Field(
-        default_factory=list,
-        description="List of registered skills with metadata"
+        default_factory=list, description="List of registered skills with metadata"
     )
-    
+
     def get_skill_by_name(self, name: str) -> SkillMetadata | None:
         """Get skill metadata by name."""
         for skill in self.registered:
             if skill.name == name:
                 return skill
         return None
-    
+
     def get_auto_trigger_skills(self) -> list[SkillMetadata]:
         """Get skills that can be auto-triggered."""
         return [s for s in self.registered if s.auto_trigger]
-    
+
     def match_skills_by_keywords(self, query: str) -> list[SkillMetadata]:
         """Match skills based on query keywords."""
         matched = []
         query_lower = query.lower()
-        
+
         for skill in self.registered:
             # Check if any keyword matches
             for keyword in skill.keywords:
                 if keyword.lower() in query_lower:
                     matched.append(skill)
                     break
-        
+
         # Sort by priority
         return sorted(matched, key=lambda s: s.priority)
 
 
 class ToolsConfig(BaseModel):
     """Tools configuration.
-    
+
     Controls the behavior and security settings for agent tools.
     """
-    
+
     # Terminal tool configuration
     terminal_blacklist: list[str] = Field(
         default_factory=lambda: [
@@ -605,23 +644,17 @@ class ToolsConfig(BaseModel):
             "passwd",
             "chpasswd",
         ],
-        description="List of blocked commands for terminal tool"
+        description="List of blocked commands for terminal tool",
     )
     terminal_timeout: int = Field(
-        default=60,
-        ge=1,
-        le=3600,
-        description="Default timeout for terminal commands in seconds"
+        default=60, ge=1, le=3600, description="Default timeout for terminal commands in seconds"
     )
     terminal_max_output: int = Field(
-        default=10000,
-        ge=1000,
-        le=100000,
-        description="Maximum output length before truncation"
+        default=10000, ge=1000, le=100000, description="Maximum output length before truncation"
     )
     terminal_allowed_dirs: list[str] = Field(
         default_factory=list,
-        description="List of allowed working directories (empty = any directory)"
+        description="List of allowed working directories (empty = any directory)",
     )
     terminal_high_risk: list[str] = Field(
         default_factory=lambda: [
@@ -644,123 +677,258 @@ class ToolsConfig(BaseModel):
             "pacman",
             "brew",
         ],
-        description="List of high-risk commands requiring user confirmation"
+        description="List of high-risk commands requiring user confirmation",
     )
     terminal_default_workdir: str = Field(
         default="",
-        description="Default working directory for terminal commands (empty = use workspace path from workspace.path config)"
+        description="Default working directory for terminal commands (empty = use workspace path from workspace.path config)",
     )
 
 
 class AliyunOpensearchSearchParams(BaseModel):
     """Aliyun OpenSearch search parameters."""
-    
+
     default_top_k: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Default number of search results to return"
+        default=5, ge=1, le=20, description="Default number of search results to return"
     )
     query_rewrite: bool = Field(
-        default=True,
-        description="Whether to enable query rewriting using LLM"
+        default=True, description="Whether to enable query rewriting using LLM"
     )
     content_type: Literal["snippet", "full"] = Field(
         default="snippet",
-        description="Content type: 'snippet' for summary or 'full' for complete content"
+        description="Content type: 'snippet' for summary or 'full' for complete content",
     )
 
 
 class AliyunOpensearchConfig(BaseModel):
     """Aliyun OpenSearch configuration.
-    
+
     Provides high-quality Chinese real-time search capability.
     """
-    
+
     api_key: str = Field(..., description="API Key from Aliyun console")
     host: str = Field(..., description="Service host URL (public or VPC)")
     workspace: str = Field(default="default", description="Workspace name")
     enabled: bool = Field(default=True, description="Whether to enable Aliyun OpenSearch")
     search_params: AliyunOpensearchSearchParams = Field(
-        default_factory=AliyunOpensearchSearchParams,
-        description="Search parameter configuration"
+        default_factory=AliyunOpensearchSearchParams, description="Search parameter configuration"
     )
+
+
+class ImageGenerationConfig(BaseModel):
+    """Text-to-image generation configuration."""
+
+    enabled: bool = Field(default=False, description="Whether image generation is enabled")
+    provider: Literal["modelscope"] = Field(default="modelscope")
+    endpoint: HttpUrl = Field(
+        default="https://api-inference.modelscope.cn/v1/images/generations",
+        description="ModelScope image generation endpoint",
+    )
+    api_key: SecretStr = Field(
+        default_factory=lambda: SecretStr(""), description="ModelScope API token"
+    )
+    model: str = Field(default="Tongyi-MAI/Z-Image-Turbo")
+    timeout: int = Field(default=180, ge=10, le=600)
+    download_timeout: int = Field(default=180, ge=10, le=600)
+    assets_dir: str = Field(default="backend/assets/generated-images")
+    public_base_url: HttpUrl = Field(
+        default="http://localhost:8888/api/v1/assets/generated-images"
+    )
+    default_size: Literal["1024x1024", "768x1024", "1024x768"] = Field(
+        default="1024x1024"
+    )
+    default_count: int = Field(default=1, ge=1, le=4)
+    max_count: int = Field(default=4, ge=1, le=8)
+
+    @model_validator(mode="after")
+    def validate_count_limits(self) -> "ImageGenerationConfig":
+        if self.default_count > self.max_count:
+            raise ValueError("default_count cannot exceed max_count")
+        return self
+
+
+class VoiceOpenAIConfig(BaseModel):
+    """OpenAI-backed voice configuration."""
+
+    enabled: bool = Field(default=False)
+    base_url: HttpUrl = Field(default="https://api.openai.com/v1")
+    api_key: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    timeout: int = Field(default=120, ge=10, le=600)
+    tts_model: str = Field(default="gpt-4o-mini-tts")
+    tts_default_voice: str = Field(default="alloy")
+    asr_model: str = Field(default="gpt-4o-transcribe")
+
+
+class VoiceWhisperCompatibleConfig(BaseModel):
+    """Whisper-compatible ASR endpoint configuration."""
+
+    enabled: bool = Field(default=False)
+    endpoint: HttpUrl = Field(default="http://localhost:9000/v1/audio/transcriptions")
+    timeout: int = Field(default=120, ge=10, le=600)
+    default_model: str = Field(default="whisper-1")
+    auth_token: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    response_format: str = Field(default="verbose_json")
+
+
+class VoiceFunASRBailianConfig(BaseModel):
+    """Alibaba Bailian Fun-ASR configuration."""
+
+    enabled: bool = Field(default=False)
+    websocket_url: str = Field(default="wss://dashscope.aliyuncs.com/api-ws/v1/inference")
+    timeout: int = Field(default=120, ge=10, le=600)
+    api_key: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    model: str = Field(default="fun-asr-realtime-2026-02-28")
+    sample_rate_hz: int = Field(default=16000, ge=8000, le=48000)
+    chunk_interval_ms: int = Field(default=100, ge=0, le=5000)
+    chunk_size_bytes: int = Field(default=3200, ge=256, le=262144)
+    language_hints: list[str] = Field(default_factory=lambda: ["zh", "en"])
+
+
+class VoiceGPTSoVITSConfig(BaseModel):
+    """GPT-SoVITS service configuration."""
+
+    enabled: bool = Field(default=False)
+    endpoint: HttpUrl = Field(default="http://localhost:9880")
+    timeout: int = Field(default=120, ge=10, le=600)
+    ref_audio_path: str = Field(default="")
+    ref_text: str = Field(default="")
+    text_lang: str = Field(default="zh")
+    prompt_lang: str = Field(default="zh")
+
+
+class VoiceConfig(BaseModel):
+    """Voice extension configuration."""
+
+    enabled: bool = Field(default=True)
+    assets_dir: str = Field(default="backend/assets/audio")
+    public_base_url: HttpUrl = Field(default="http://localhost:8888/api/v1/assets/audio")
+    playback_base_url: str = Field(default="/api/v1/assets/audio")
+    upload_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+    edge_default_voice: str = Field(default="zh-CN-YunxiNeural")
+    openai: VoiceOpenAIConfig = Field(default_factory=VoiceOpenAIConfig)
+    whisper_compatible: VoiceWhisperCompatibleConfig = Field(
+        default_factory=VoiceWhisperCompatibleConfig
+    )
+    funasr_bailian: VoiceFunASRBailianConfig = Field(default_factory=VoiceFunASRBailianConfig)
+    gpt_sovits: VoiceGPTSoVITSConfig = Field(default_factory=VoiceGPTSoVITSConfig)
 
 
 class AgentModelConfig(BaseModel):
     """Agent-specific model configuration."""
-    
+
     name: str = Field(default="", description="Model configuration name to use")
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0, description="Temperature parameter")
+    temperature: float | None = Field(
+        default=None, ge=0.0, le=2.0, description="Temperature parameter"
+    )
     max_tokens: int | None = Field(default=None, ge=1, description="Maximum tokens to generate")
 
 
 class AgentConfig(BaseModel):
     """Agent configuration - defines an AI agent."""
-    
+
     id: str = Field(..., description="Unique agent identifier")
     aliases: list[str] = Field(default_factory=list, description="向后兼容用的 Agent 别名列表")
     name: str = Field(..., description="Display name")
     type: Literal["main", "specialized"] = Field(default="main", description="Agent type")
     persona: str = Field(default="", description="System prompt/persona description")
     workspace: str = Field(default="", description="Agent workspace directory path")
-    features: str = Field(default="", description="Feature tags, comma-separated (e.g., 'code-review,daily-summary')")
-    model: AgentModelConfig = Field(default_factory=AgentModelConfig, description="Model configuration")
+    features: str = Field(
+        default="", description="Feature tags, comma-separated (e.g., 'code-review,daily-summary')"
+    )
+    model: AgentModelConfig = Field(
+        default_factory=AgentModelConfig, description="Model configuration"
+    )
     enable_memory: bool = Field(default=True, description="Whether to enable memory")
     enable_plan: bool = Field(default=False, description="Whether to enable plan mode")
-    enable_context_compression: bool = Field(default=True, description="Whether to enable context compression")
-    enable_experience_learning: bool = Field(default=True, description="Whether to enable experience learning")
+    enable_context_compression: bool = Field(
+        default=True, description="Whether to enable context compression"
+    )
+    enable_experience_learning: bool = Field(
+        default=True, description="Whether to enable experience learning"
+    )
+    voice: "AgentVoiceConfig" = Field(
+        default_factory=lambda: AgentVoiceConfig(),
+        description="Agent-level voice behavior",
+    )
+
+
+class AgentVoiceConfig(BaseModel):
+    """Agent-level voice preferences."""
+
+    enabled: bool = Field(default=False)
+    reply_enabled: bool = Field(default=False)
+    tts_provider: str = Field(default="edge")
+    asr_provider: str = Field(default="openai")
+    tts_voice: str | None = Field(default=None)
+    gpt_sovits_endpoint: str | None = Field(default=None)
+    gpt_sovits_ref_audio_path: str | None = Field(default=None)
+    gpt_sovits_ref_text: str | None = Field(default=None)
 
 
 class PeerMatch(BaseModel):
     """Peer matching condition for agent binding."""
-    
-    kind: Literal["user", "group", "channel"] = Field(..., description="Peer kind: user, group, or channel")
+
+    kind: Literal["user", "group", "channel"] = Field(
+        ..., description="Peer kind: user, group, or channel"
+    )
     id: str = Field(..., description="Peer ID (e.g., user ID, group ID, or '*' for wildcard)")
+
 
 class BindingMatch(BaseModel):
     """Binding match condition."""
-    
+
     channel: str = Field(..., description="Channel ID to match")
     peer: PeerMatch = Field(..., description="Peer matching condition")
 
+
 class AgentBinding(BaseModel):
     """Agent binding configuration - defines which agent handles messages from specific channel/peer combinations."""
-    
+
     agent_id: str = Field(..., description="Agent ID to bind to")
     match: BindingMatch = Field(..., description="Match condition for this binding")
 
+
 class ChannelConfig(BaseModel):
     """Channel configuration - defines how users interact with agents.
-    
+
     Note: agent_id is kept for backward compatibility with web/cli channels.
     For third-party channels (telegram, slack, etc.), use bindings instead.
     """
-    
+
     id: str = Field(..., description="Unique channel identifier")
     type: str = Field(..., description="Channel type (web, slack, email, etc.)")
-    protocol: Literal["websocket", "webhook", "smtp", "http", "stream"] = Field(default="websocket", description="Communication protocol")
-    agent_id: str | None = Field(default=None, description="Associated agent ID (for backward compatibility)")
+    protocol: Literal["websocket", "webhook", "smtp", "http", "stream"] = Field(
+        default="websocket", description="Communication protocol"
+    )
+    agent_id: str | None = Field(
+        default=None, description="Associated agent ID (for backward compatibility)"
+    )
     default_user: str = Field(default="admin", description="Default user for this channel")
     enabled: bool = Field(default=True, description="Whether this channel is enabled")
-    config: dict[str, Any] = Field(default_factory=dict, description="Channel-specific configuration")
+    config: dict[str, Any] = Field(
+        default_factory=dict, description="Channel-specific configuration"
+    )
 
 
 class MultiAgentConfig(BaseModel):
     """Multi-agent configuration.
-    
+
     Defines agents, channels, and bindings, loaded from x-agent.yaml.
     Replaces database-stored Agent/Channel entities.
-    
+
     Binding Logic:
     - For web/cli channels: use channel.agent_id (backward compatible)
     - For third-party channels: use bindings to match channel + peer -> agent
     """
-    
-    agents: list[AgentConfig] = Field(default_factory=list, description="List of agent configurations")
-    channels: list[ChannelConfig] = Field(default_factory=list, description="List of channel configurations")
+
+    agents: list[AgentConfig] = Field(
+        default_factory=list, description="List of agent configurations"
+    )
+    channels: list[ChannelConfig] = Field(
+        default_factory=list, description="List of channel configurations"
+    )
     bindings: list[AgentBinding] = Field(default_factory=list, description="List of agent bindings")
-    
+
     def get_agent(self, agent_id: str) -> AgentConfig | None:
         """Get agent by ID."""
         for agent in self.agents:
@@ -772,14 +940,14 @@ class MultiAgentConfig(BaseModel):
         """将 Agent ID 或别名解析为配置中的标准 ID。"""
         agent = self.get_agent(agent_id)
         return agent.id if agent is not None else None
-    
+
     def get_agent_by_name(self, name: str) -> AgentConfig | None:
         """Get agent by name."""
         for agent in self.agents:
             if agent.name == name:
                 return agent
         return None
-    
+
     def get_channels_for_agent(self, agent_id: str) -> list[ChannelConfig]:
         """Get all channels for a specific agent (backward compatible)."""
         canonical_agent_id = self.resolve_agent_id(agent_id) or agent_id
@@ -788,56 +956,59 @@ class MultiAgentConfig(BaseModel):
             for ch in self.channels
             if (self.resolve_agent_id(ch.agent_id) if ch.agent_id else None) == canonical_agent_id
         ]
-    
+
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
         """Get channel by ID."""
         for ch in self.channels:
             if ch.id == channel_id:
                 return ch
         return None
-    
+
     def get_enabled_channels(self) -> list[ChannelConfig]:
         """Get all enabled channels."""
         return [ch for ch in self.channels if ch.enabled]
-    
-    def resolve_agent_for_channel(self, channel_id: str, peer_id: str | None = None, peer_kind: str = "user") -> str | None:
+
+    def resolve_agent_for_channel(
+        self, channel_id: str, peer_id: str | None = None, peer_kind: str = "user"
+    ) -> str | None:
         """Resolve agent ID for a channel and peer.
-        
+
         Priority:
         1. If channel has agent_id set, use it (backward compatibility for web/cli)
         2. If bindings defined, match by channel + peer
         3. Return None if no match
-        
+
         Args:
             channel_id: Channel ID
             peer_id: Peer ID (user ID, group ID, etc.)
             peer_kind: Peer kind (user, group, channel)
-        
+
         Returns:
             Agent ID or None
         """
         channel = self.get_channel(channel_id)
-        
+
         # Priority 1: Check channel.agent_id (backward compatibility)
         if channel and channel.agent_id:
             return self.resolve_agent_id(channel.agent_id) or channel.agent_id
-        
+
         # Priority 2: Match bindings
         for binding in self.bindings:
             if binding.match.channel != channel_id:
                 continue
-            
+
             # Check peer match
-            if binding.match.peer.kind == peer_kind:
-                if binding.match.peer.id == "*" or binding.match.peer.id == peer_id:
-                    return self.resolve_agent_id(binding.agent_id) or binding.agent_id
-        
+            if binding.match.peer.kind == peer_kind and (
+                binding.match.peer.id == "*" or binding.match.peer.id == peer_id
+            ):
+                return self.resolve_agent_id(binding.agent_id) or binding.agent_id
+
         return None
-    
+
     def get_bindings_for_channel(self, channel_id: str) -> list[AgentBinding]:
         """Get all bindings for a specific channel."""
         return [b for b in self.bindings if b.match.channel == channel_id]
-    
+
     @model_validator(mode="after")
     def validate_agent_references(self) -> "MultiAgentConfig":
         """Ensure all channel agent_id and binding agent_id references exist."""
@@ -856,37 +1027,58 @@ class MultiAgentConfig(BaseModel):
                         f"Agent alias '{alias}' is defined by both '{owner}' and '{agent.id}'"
                     )
                 alias_owners[alias] = agent.id
-        
+
         # Validate channel.agent_id references
         for channel in self.channels:
             if channel.agent_id and self.resolve_agent_id(channel.agent_id) is None:
-                raise ValueError(f"Channel '{channel.id}' references unknown agent '{channel.agent_id}'")
-        
+                raise ValueError(
+                    f"Channel '{channel.id}' references unknown agent '{channel.agent_id}'"
+                )
+
         # Validate binding agent_id references
         for binding in self.bindings:
             if self.resolve_agent_id(binding.agent_id) is None:
                 raise ValueError(f"Binding references unknown agent '{binding.agent_id}'")
-            
+
             # Validate binding channel reference
             if not self.get_channel(binding.match.channel):
                 raise ValueError(f"Binding references unknown channel '{binding.match.channel}'")
-        
+
         return self
 
 
 class Config(BaseModel):
     """Root configuration model."""
-    
+
     models: list[ModelConfig] = Field(..., min_length=1, description="Model configurations")
     server: ServerConfig = Field(default_factory=ServerConfig, description="Server config")
     logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging config")
-    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig, description="Workspace config")
+    workspace: WorkspaceConfig = Field(
+        default_factory=WorkspaceConfig, description="Workspace config"
+    )
     search: SearchConfig = Field(default_factory=SearchConfig, description="Hybrid search config")
     tools: ToolsConfig = Field(default_factory=ToolsConfig, description="Tools config")
-    compression: CompressionConfig = Field(default_factory=CompressionConfig, description="Context compression config")
+    compression: CompressionConfig = Field(
+        default_factory=CompressionConfig, description="Context compression config"
+    )
     plan: PlanConfig = Field(default_factory=PlanConfig, description="Plan mode config")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills metadata config")
-    aliyun_opensearch: AliyunOpensearchConfig = Field(default_factory=lambda: AliyunOpensearchConfig(api_key="", host=""), description="Aliyun OpenSearch config")
+    aliyun_opensearch: AliyunOpensearchConfig = Field(
+        default_factory=lambda: AliyunOpensearchConfig(api_key="", host=""),
+        description="Aliyun OpenSearch config",
+    )
+    image_generation: ImageGenerationConfig = Field(
+        default_factory=ImageGenerationConfig,
+        description="ModelScope image generation config",
+    )
+    voice: VoiceConfig = Field(
+        default_factory=VoiceConfig,
+        description="Voice extension config",
+    )
     cron: dict[str, Any] = Field(default_factory=dict, description="Cron scheduler config")
-    multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig, description="Multi-agent configuration")
-    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig, description="Runtime control-plane configuration")
+    multi_agent: MultiAgentConfig = Field(
+        default_factory=MultiAgentConfig, description="Multi-agent configuration"
+    )
+    runtime: RuntimeConfig = Field(
+        default_factory=RuntimeConfig, description="Runtime control-plane configuration"
+    )

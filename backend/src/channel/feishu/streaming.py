@@ -112,7 +112,11 @@ class FeishuStreamProcessor:
                 state.card_stream_enabled = False
             return
 
-        if state.card_stream_enabled and state.message_id and should_flush_card_update(state.last_card_update_at):
+        if (
+            state.card_stream_enabled
+            and state.message_id
+            and should_flush_card_update(state.last_card_update_at)
+        ):
             updated = await self._message_client.update_card_message(
                 message_id=state.message_id,
                 content=state.accumulated_text,

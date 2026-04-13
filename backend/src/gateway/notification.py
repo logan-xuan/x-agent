@@ -20,22 +20,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
-from ..conversation.identity import ChannelType
 from ..conversation.dao import DEFAULT_AGENT_ID
+from ..conversation.identity import ChannelType
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
 # ============================================================================
 # 数据模型
 # ============================================================================
+
 
 @dataclass
 class NotificationTarget:
@@ -55,6 +58,7 @@ class NotificationTarget:
         user_id: 平台用户 ID。
         email_address: 邮箱地址。
     """
+
     agent_id: str | None = None
     session_id: str | None = None
     chat_id: str | None = None
@@ -76,6 +80,7 @@ class NotificationMessage:
         metadata: 附加元数据。
         created_at: 创建时间。
     """
+
     content: str
     title: str | None = None
     urgency: str = "normal"
@@ -94,6 +99,7 @@ class NotificationMessage:
             适合通过 WebSocket 发送的字典。
         """
         import uuid
+
         return {
             "type": "notification",
             "message_id": message_id or str(uuid.uuid4()),
@@ -117,6 +123,7 @@ class ChannelSendResult:
         session_id: 目标会话 ID（有状态通道）。
         error: 错误信息（如有）。
     """
+
     channel_type: ChannelType
     delivered: bool = False
     queued: bool = False
@@ -127,6 +134,7 @@ class ChannelSendResult:
 # ============================================================================
 # 通知通道 Protocol
 # ============================================================================
+
 
 @runtime_checkable
 class NotificationChannel(Protocol):
@@ -174,6 +182,7 @@ class NotificationChannel(Protocol):
 # WebChat 通知通道（有状态）
 # ============================================================================
 
+
 class WebChatNotificationChannel:
     """WebChat 通知通道 — 通过 ConnectionRegistry + MessageBus 推送。
 
@@ -207,8 +216,8 @@ class WebChatNotificationChannel:
         Returns:
             发送结果。
         """
+        from .message_bus import OutboundMessage, get_message_bus
         from .session_resolver import ActiveSessionResolver
-        from .message_bus import MessageBus, OutboundMessage, get_message_bus
 
         try:
             # 1. 解析 session_id（当指定了 agent_id 时自动创建 session）
@@ -251,6 +260,7 @@ class WebChatNotificationChannel:
                 # 没有 session_id，暂存到 outbox（等待用户创建 session 后投递）
                 await bus._outbox.save(outbound)
                 from .message_bus import SendResult
+
                 result = SendResult(
                     delivered=False,
                     queued=True,
@@ -344,6 +354,7 @@ class WebChatNotificationChannel:
 # DingTalk 通知通道（无状态）
 # ============================================================================
 
+
 class DingTalkNotificationChannel:
     """DingTalk 通知通道 — 通过 Webhook 或 API 推送。
 
@@ -435,6 +446,7 @@ class DingTalkNotificationChannel:
 # ============================================================================
 # Telegram 通知通道（无状态）
 # ============================================================================
+
 
 class TelegramNotificationChannel:
     """Telegram 通知通道 — 通过 Bot API 推送。
@@ -540,6 +552,7 @@ class TelegramNotificationChannel:
 # 通知路由器
 # ============================================================================
 
+
 class NotificationRouter:
     """通知路由器 — 根据目标自动选择通知通道。
 
@@ -572,7 +585,7 @@ class NotificationRouter:
         )
     """
 
-    _instance: Optional[NotificationRouter] = None
+    _instance: NotificationRouter | None = None
 
     def __new__(cls) -> NotificationRouter:
         if cls._instance is None:
@@ -641,11 +654,7 @@ class NotificationRouter:
         if broadcast:
             selected_channels = list(self._channels.values())
         elif channel_types:
-            selected_channels = [
-                self._channels[ct]
-                for ct in channel_types
-                if ct in self._channels
-            ]
+            selected_channels = [self._channels[ct] for ct in channel_types if ct in self._channels]
         elif targets:
             # 根据 target 中的字段推断通道
             selected_channels = self._infer_channels_from_targets(targets)
@@ -678,11 +687,13 @@ class NotificationRouter:
                             "error": str(exc),
                         },
                     )
-                    results.append(ChannelSendResult(
-                        channel_type=channel.channel_type,
-                        delivered=False,
-                        error=str(exc),
-                    ))
+                    results.append(
+                        ChannelSendResult(
+                            channel_type=channel.channel_type,
+                            delivered=False,
+                            error=str(exc),
+                        )
+                    )
 
         delivered_count = sum(1 for r in results if r.delivered)
         queued_count = sum(1 for r in results if r.queued)
@@ -732,16 +743,13 @@ class NotificationRouter:
         if not inferred_types:
             inferred_types.add(ChannelType.WEB_CHAT)
 
-        return [
-            self._channels[ct]
-            for ct in inferred_types
-            if ct in self._channels
-        ]
+        return [self._channels[ct] for ct in inferred_types if ct in self._channels]
 
 
 # ---------------------------------------------------------------------------
 # 模块级单例访问
 # ---------------------------------------------------------------------------
+
 
 def get_notification_router() -> NotificationRouter:
     """获取全局 NotificationRouter 单例。"""

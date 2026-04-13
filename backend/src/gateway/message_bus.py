@@ -20,26 +20,27 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any
 
 from .connection_registry import (
-    ConnectionRegistry,
-    PushResult,
     PushStatus,
     get_connection_registry,
 )
 
 try:
     from ..utils.logger import get_logger
+
     logger = get_logger(__name__)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
-class DeliveryStatus(str, Enum):
+class DeliveryStatus(StrEnum):
     """消息投递状态。"""
+
     DELIVERED = "delivered"
     QUEUED = "queued"
     FAILED = "failed"
@@ -58,6 +59,7 @@ class OutboundMessage:
         source: 消息来源（agent/cron/system）。
         created_at: 创建时间。
     """
+
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = ""
     agent_id: str = ""
@@ -93,6 +95,7 @@ class SendResult:
         session_id: 目标会话 ID。
         error: 错误信息（如有）。
     """
+
     delivered: bool = False
     queued: bool = False
     session_id: str = ""
@@ -115,8 +118,9 @@ class OutboxStore:
             return
 
         try:
-            from ..services.storage import get_storage_service
             import sqlalchemy as sa
+
+            from ..services.storage import get_storage_service
 
             storage = get_storage_service()
             async with storage.session() as db_session:
@@ -169,8 +173,9 @@ class OutboxStore:
         await self._ensure_table()
 
         try:
-            from ..services.storage import get_storage_service
             import sqlalchemy as sa
+
+            from ..services.storage import get_storage_service
 
             storage = get_storage_service()
             async with storage.session() as db_session:
@@ -226,8 +231,9 @@ class OutboxStore:
         await self._ensure_table()
 
         try:
-            from ..services.storage import get_storage_service
             import sqlalchemy as sa
+
+            from ..services.storage import get_storage_service
 
             storage = get_storage_service()
             async with storage.session() as db_session:
@@ -269,8 +275,9 @@ class OutboxStore:
         await self._ensure_table()
 
         try:
-            from ..services.storage import get_storage_service
             import sqlalchemy as sa
+
+            from ..services.storage import get_storage_service
 
             storage = get_storage_service()
             async with storage.session() as db_session:
@@ -303,14 +310,18 @@ class OutboxStore:
         """将数据库行转换为 OutboundMessage 列表。"""
         messages: list[OutboundMessage] = []
         for row in rows:
-            messages.append(OutboundMessage(
-                message_id=row[0],
-                session_id=row[1] or "",
-                message_type=row[2],
-                content=json.loads(row[3]) if isinstance(row[3], str) else row[3],
-                source=row[4],
-                created_at=datetime.fromisoformat(row[5]) if isinstance(row[5], str) else row[5],
-            ))
+            messages.append(
+                OutboundMessage(
+                    message_id=row[0],
+                    session_id=row[1] or "",
+                    message_type=row[2],
+                    content=json.loads(row[3]) if isinstance(row[3], str) else row[3],
+                    source=row[4],
+                    created_at=datetime.fromisoformat(row[5])
+                    if isinstance(row[5], str)
+                    else row[5],
+                )
+            )
         return messages
 
     async def mark_delivered(self, message_ids: list[str]) -> None:
@@ -325,8 +336,9 @@ class OutboxStore:
         await self._ensure_table()
 
         try:
-            from ..services.storage import get_storage_service
             import sqlalchemy as sa
+
+            from ..services.storage import get_storage_service
 
             storage = get_storage_service()
             async with storage.session() as db_session:
@@ -367,8 +379,9 @@ class OutboxStore:
         await self._ensure_table()
 
         try:
-            from ..services.storage import get_storage_service
             import sqlalchemy as sa
+
+            from ..services.storage import get_storage_service
 
             storage = get_storage_service()
             async with storage.session() as db_session:
@@ -420,7 +433,7 @@ class MessageBus:
         messages = await bus.drain_outbox("sess-123")
     """
 
-    _instance: Optional[MessageBus] = None
+    _instance: MessageBus | None = None
 
     def __new__(cls) -> MessageBus:
         if cls._instance is None:
@@ -581,7 +594,9 @@ class MessageBus:
 
         return delivered_messages
 
-    async def _persist_notification_message(self, session_id: str, message: OutboundMessage) -> None:
+    async def _persist_notification_message(
+        self, session_id: str, message: OutboundMessage
+    ) -> None:
         """将通知消息持久化到 messages 表。
 
         Args:
@@ -592,7 +607,7 @@ class MessageBus:
             from ..conversation.session import SessionManager
 
             session_manager = SessionManager()
-            
+
             # 格式化消息内容
             title = message.content.get("title", "")
             content = message.content.get("content", "")
@@ -655,6 +670,7 @@ class MessageBus:
 # ---------------------------------------------------------------------------
 # 模块级单例访问
 # ---------------------------------------------------------------------------
+
 
 def get_message_bus() -> MessageBus:
     """获取全局 MessageBus 单例。"""

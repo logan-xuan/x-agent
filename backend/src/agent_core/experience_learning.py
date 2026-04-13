@@ -85,25 +85,29 @@ def detect_retry_patterns(
 
         if current["tool_name"] == next_call["tool_name"]:
             # retry_success: 同一工具重试成功
-            patterns.append({
-                "pattern": "retry_success",
-                "tool_name": current["tool_name"],
-                "failed_args": current.get("arguments", {}),
-                "success_args": next_call.get("arguments", {}),
-                "error_summary": current.get("result_summary", ""),
-                "success_summary": next_call.get("result_summary", ""),
-            })
+            patterns.append(
+                {
+                    "pattern": "retry_success",
+                    "tool_name": current["tool_name"],
+                    "failed_args": current.get("arguments", {}),
+                    "success_args": next_call.get("arguments", {}),
+                    "error_summary": current.get("result_summary", ""),
+                    "success_summary": next_call.get("result_summary", ""),
+                }
+            )
         else:
             # fallback_success: 回退到另一工具成功
-            patterns.append({
-                "pattern": "fallback_success",
-                "tool_name": current["tool_name"],
-                "fallback_tool": next_call["tool_name"],
-                "failed_args": current.get("arguments", {}),
-                "success_args": next_call.get("arguments", {}),
-                "error_summary": current.get("result_summary", ""),
-                "success_summary": next_call.get("result_summary", ""),
-            })
+            patterns.append(
+                {
+                    "pattern": "fallback_success",
+                    "tool_name": current["tool_name"],
+                    "fallback_tool": next_call["tool_name"],
+                    "failed_args": current.get("arguments", {}),
+                    "success_args": next_call.get("arguments", {}),
+                    "error_summary": current.get("result_summary", ""),
+                    "success_summary": next_call.get("result_summary", ""),
+                }
+            )
 
     return patterns
 

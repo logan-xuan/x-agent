@@ -13,7 +13,9 @@ class AnnouncementManager:
 
     queue: list[dict[str, object]] = field(default_factory=list)
 
-    async def build(self, parent: SessionDescriptor, child: SessionDescriptor, result: ChildResult) -> dict[str, object]:
+    async def build(
+        self, parent: SessionDescriptor, child: SessionDescriptor, result: ChildResult
+    ) -> dict[str, object]:
         """Build a structured announcement payload."""
         return {
             "target_session_key": parent.session_key,

@@ -15,23 +15,26 @@ from __future__ import annotations
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any
 
 
-class AgentType(str, Enum):
+class AgentType(StrEnum):
     """多 Agent 层级中的 Agent 类型。
 
     - MAIN: 直接服务用户的主 Agent。
     - PARTNER: 与主 Agent 协作的对等 Agent。
     - SUB: 由主/对等 Agent 派生的子 Agent，用于子任务委派。
     """
+
     MAIN = "main"
     PARTNER = "partner"
     SUB = "sub"
 
-class ChannelType(str, Enum):
+
+class ChannelType(StrEnum):
     """用户交互渠道（用户从哪个渠道发起对话）。"""
+
     WEB_CHAT = "web_chat"
     CLI = "cli"
     DINGTALK = "dingtalk"
@@ -41,8 +44,10 @@ class ChannelType(str, Enum):
     SLACK = "slack"
     EMAIL = "email"
 
-class ChannelProtocol(str, Enum):
+
+class ChannelProtocol(StrEnum):
     """渠道底层通信协议。"""
+
     WEBSOCKET = "websocket"
     REST_API = "rest_api"
     SSE = "sse"
@@ -74,17 +79,17 @@ class Identity:
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
-    channel_id: Optional[str] = None
+    channel_id: str | None = None
     channel_type: ChannelType = ChannelType.WEB_CHAT
     channel_protocol: ChannelProtocol = ChannelProtocol.WEBSOCKET
-    user_id: Optional[str] = None
+    user_id: str | None = None
     agent_type: AgentType = AgentType.MAIN
-    parent_trace_id: Optional[str] = None
+    parent_trace_id: str | None = None
     metadata: tuple[tuple[str, Any], ...] = ()
-    
+
     # 多 Agent 协同相关
-    delegation_chain: tuple[str, ...] = ()      # 委派链路记录
-    shared_context_id: Optional[str] = None     # 关联的共享上下文 ID
+    delegation_chain: tuple[str, ...] = ()  # 委派链路记录
+    shared_context_id: str | None = None  # 关联的共享上下文 ID
 
     # ---- 便捷方法 ------------------------------------------------
 
@@ -136,15 +141,18 @@ class Identity:
 # 上下文变量 — 当前协程的全局"活跃身份"
 # ---------------------------------------------------------------------------
 
-_current_identity: ContextVar[Optional[Identity]] = ContextVar(
-    "current_identity", default=None,
+_current_identity: ContextVar[Identity | None] = ContextVar(
+    "current_identity",
+    default=None,
 )
 
-def get_current_identity() -> Optional[Identity]:
+
+def get_current_identity() -> Identity | None:
     """返回绑定到当前异步上下文的身份，如果未设置则返回 None。"""
     return _current_identity.get()
 
-def set_current_identity(identity: Optional[Identity]) -> None:
+
+def set_current_identity(identity: Identity | None) -> None:
     """将 identity 绑定到当前异步上下文。"""
     _current_identity.set(identity)
 
@@ -152,6 +160,7 @@ def set_current_identity(identity: Optional[Identity]) -> None:
 # ---------------------------------------------------------------------------
 # IdentityManager — 管理身份生命周期的单例
 # ---------------------------------------------------------------------------
+
 
 class IdentityManager:
     """全局单例，负责创建、注册和查询身份。
@@ -179,7 +188,7 @@ class IdentityManager:
         manager.deactivate()
     """
 
-    _instance: Optional[IdentityManager] = None
+    _instance: IdentityManager | None = None
 
     def __new__(cls) -> IdentityManager:
         if cls._instance is None:
@@ -195,16 +204,16 @@ class IdentityManager:
     def create(
         self,
         *,
-        session_id: Optional[str] = None,
-        trace_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        channel_id: Optional[str] = None,
+        session_id: str | None = None,
+        trace_id: str | None = None,
+        agent_id: str | None = None,
+        channel_id: str | None = None,
         channel_type: ChannelType = ChannelType.WEB_CHAT,
         channel_protocol: ChannelProtocol = ChannelProtocol.WEBSOCKET,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         agent_type: AgentType = AgentType.MAIN,
-        parent_trace_id: Optional[str] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        parent_trace_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Identity:
         """创建新的 Identity，支持显式指定或自动生成字段。
 
@@ -265,7 +274,7 @@ class IdentityManager:
         self._active_identities[identity.trace_id] = identity
         set_current_identity(identity)
 
-    def deactivate(self, identity: Optional[Identity] = None) -> Optional[Identity]:
+    def deactivate(self, identity: Identity | None = None) -> Identity | None:
         """清除活跃身份并从注册表中移除。
 
         Args:
@@ -284,15 +293,15 @@ class IdentityManager:
     # ---- 查询 -------------------------------------------------------------
 
     @property
-    def current(self) -> Optional[Identity]:
+    def current(self) -> Identity | None:
         """绑定到当前异步上下文的身份。"""
         return get_current_identity()
 
-    def get_by_trace(self, trace_id: str) -> Optional[Identity]:
+    def get_by_trace(self, trace_id: str) -> Identity | None:
         """根据 trace_id 查找已注册的身份。"""
         return self._active_identities.get(trace_id)
 
-    def get_by_trace_id(self, trace_id: str) -> Optional[Identity]:
+    def get_by_trace_id(self, trace_id: str) -> Identity | None:
         """根据 trace_id 查找已注册的身份（get_by_trace 的别名）。"""
         return self.get_by_trace(trace_id)
 
@@ -300,8 +309,10 @@ class IdentityManager:
         """返回所有当前已注册的身份（跨上下文）。"""
         return list(self._active_identities.values())
 
+
 # 模块级便捷访问器
-_manager: Optional[IdentityManager] = None
+_manager: IdentityManager | None = None
+
 
 def get_identity_manager() -> IdentityManager:
     """返回全局 IdentityManager 单例。"""

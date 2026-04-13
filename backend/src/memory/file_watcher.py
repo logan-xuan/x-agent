@@ -6,8 +6,8 @@ This module provides:
 - Event handlers for .md file changes
 """
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -19,11 +19,11 @@ logger = get_logger(__name__)
 
 class MemoryFileHandler(FileSystemEventHandler):
     """Handler for memory file system events.
-    
+
     Monitors changes to .md files in the workspace directory
     and triggers appropriate callbacks.
     """
-    
+
     def __init__(
         self,
         on_spirit_changed: Callable[[], None] | None = None,
@@ -34,7 +34,7 @@ class MemoryFileHandler(FileSystemEventHandler):
         on_identity_changed: Callable[[], None] | None = None,
     ) -> None:
         """Initialize file handler.
-        
+
         Args:
             on_spirit_changed: Callback for SPIRIT.md changes
             on_owner_changed: Callback for OWNER.md changes
@@ -50,28 +50,28 @@ class MemoryFileHandler(FileSystemEventHandler):
         self.on_memory_changed = on_memory_changed
         self.on_agents_changed = on_agents_changed
         self.on_identity_changed = on_identity_changed
-        
+
         logger.debug("MemoryFileHandler initialized")
-    
+
     def on_modified(self, event: FileSystemEvent) -> None:
         """Handle file modification event."""
         if event.is_directory:
             return
-            
+
         path = Path(event.src_path)
-        
+
         # Only process .md files
         if path.suffix != ".md":
             return
-        
+
         logger.info(
             "File modified detected",
             extra={
                 "file_path": str(path),
                 "file_name": path.name,
-            }
+            },
         )
-        
+
         # Trigger appropriate callback
         if path.name == "SPIRIT.md" and self.on_spirit_changed:
             logger.info("SPIRIT.md changed, triggering reload")
@@ -91,48 +91,42 @@ class MemoryFileHandler(FileSystemEventHandler):
         elif path.parent.name == "memory" and self.on_memory_changed:
             logger.info("Memory file changed, triggering sync", extra={"file_path": str(path)})
             self.on_memory_changed(str(path))
-    
+
     def on_created(self, event: FileSystemEvent) -> None:
         """Handle file creation event."""
         if event.is_directory:
             return
-            
+
         path = Path(event.src_path)
-        
+
         if path.suffix != ".md":
             return
-        
-        logger.info(
-            "File created detected",
-            extra={"file_path": str(path)}
-        )
-        
+
+        logger.info("File created detected", extra={"file_path": str(path)})
+
         # Treat creation same as modification for simplicity
         self.on_modified(event)
-    
+
     def on_deleted(self, event: FileSystemEvent) -> None:
         """Handle file deletion event."""
         if event.is_directory:
             return
-            
+
         path = Path(event.src_path)
-        
-        logger.warning(
-            "File deleted detected",
-            extra={"file_path": str(path)}
-        )
+
+        logger.warning("File deleted detected", extra={"file_path": str(path)})
 
 
 class FileWatcher:
     """File watcher for memory system.
-    
+
     Monitors the workspace directory for file changes and
     triggers appropriate callbacks for hot-reload.
     """
-    
+
     def __init__(self, workspace_path: str) -> None:
         """Initialize file watcher.
-        
+
         Args:
             workspace_path: Path to workspace directory
         """
@@ -140,12 +134,9 @@ class FileWatcher:
         self._observer: Observer | None = None
         self._handler: MemoryFileHandler | None = None
         self._running = False
-        
-        logger.info(
-            "FileWatcher created",
-            extra={"workspace_path": str(self.workspace_path)}
-        )
-    
+
+        logger.info("FileWatcher created", extra={"workspace_path": str(self.workspace_path)})
+
     def start(
         self,
         on_spirit_changed: Callable[[], None] | None = None,
@@ -156,7 +147,7 @@ class FileWatcher:
         on_identity_changed: Callable[[], None] | None = None,
     ) -> None:
         """Start watching for file changes.
-        
+
         Args:
             on_spirit_changed: Callback for SPIRIT.md changes
             on_owner_changed: Callback for OWNER.md changes
@@ -168,7 +159,7 @@ class FileWatcher:
         if self._running:
             logger.warning("FileWatcher already running")
             return
-        
+
         self._handler = MemoryFileHandler(
             on_spirit_changed=on_spirit_changed,
             on_owner_changed=on_owner_changed,
@@ -177,32 +168,29 @@ class FileWatcher:
             on_agents_changed=on_agents_changed,
             on_identity_changed=on_identity_changed,
         )
-        
+
         self._observer = Observer()
         self._observer.schedule(
             self._handler,
             str(self.workspace_path),
-            recursive=True  # Watch subdirectories (memory/)
+            recursive=True,  # Watch subdirectories (memory/)
         )
         self._observer.start()
         self._running = True
-        
-        logger.info(
-            "FileWatcher started",
-            extra={"workspace_path": str(self.workspace_path)}
-        )
-    
+
+        logger.info("FileWatcher started", extra={"workspace_path": str(self.workspace_path)})
+
     def stop(self) -> None:
         """Stop watching for file changes."""
         if not self._running or self._observer is None:
             return
-        
+
         self._observer.stop()
         self._observer.join()
         self._running = False
-        
+
         logger.info("FileWatcher stopped")
-    
+
     def is_running(self) -> bool:
         """Check if watcher is running."""
         return self._running
@@ -214,10 +202,10 @@ _file_watcher: FileWatcher | None = None
 
 def get_file_watcher(workspace_path: str | None = None) -> FileWatcher:
     """Get or create global file watcher instance.
-    
+
     Args:
         workspace_path: Path to workspace directory
-        
+
     Returns:
         FileWatcher instance
     """

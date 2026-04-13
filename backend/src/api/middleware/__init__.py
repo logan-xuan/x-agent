@@ -1,6 +1,6 @@
 """Middleware module for X-Agent."""
 
-from .tracing import TracingMiddleware
 from .error_handler import ErrorHandlerMiddleware
+from .tracing import TracingMiddleware
 
 __all__ = ["TracingMiddleware", "ErrorHandlerMiddleware"]

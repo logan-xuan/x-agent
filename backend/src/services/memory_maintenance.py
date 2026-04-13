@@ -31,7 +31,9 @@ class MemoryMaintenanceService:
                         processed_entries += 1
 
         if harvested:
-            existing = memory_md.read_text(encoding="utf-8") if memory_md.exists() else "# 长期记忆\n\n"
+            existing = (
+                memory_md.read_text(encoding="utf-8") if memory_md.exists() else "# 长期记忆\n\n"
+            )
             additions = "\n".join(item for item in harvested if item not in existing)
             if additions:
                 if not existing.endswith("\n"):

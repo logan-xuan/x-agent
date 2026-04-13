@@ -19,44 +19,41 @@ SummaryFn = Callable[[str], Awaitable[str]]
 @dataclass
 class CompressionResult:
     """Result of context compression."""
-    
-    compressed_messages: list[dict]   # Final message list (summary + retained)
-    recent_messages: list[dict]       # Retained recent N messages
-    archived_messages: list[dict]     # Archived messages
-    summary: str                      # Generated summary
-    original_token_count: int         # Original token count
-    compressed_token_count: int       # Compressed token count
+
+    compressed_messages: list[dict]  # Final message list (summary + retained)
+    recent_messages: list[dict]  # Retained recent N messages
+    archived_messages: list[dict]  # Archived messages
+    summary: str  # Generated summary
+    original_token_count: int  # Original token count
+    compressed_token_count: int  # Compressed token count
 
 
 class ContextCompressor:
     """Context compressor using hybrid compression strategy.
-    
+
     Strategy:
     1. Separate messages into archive zone and retention zone
     2. Generate summary for archived messages (for LLM context only)
     3. Build final message list with original system prompt + summary + retained messages
-    
+
     Note: Summary is NOT stored to memory files. SmartMemoryService handles
     real-time memory storage independently.
     """
-    
+
     def __init__(self, summary_fn: SummaryFn, token_counter: TokenCounter):
         """Initialize compressor.
-        
+
         Args:
             summary_fn: Async callback that takes a prompt string and returns summary text.
                         Caller is responsible for providing the actual LLM call implementation.
             token_counter: Token counter for statistics
         """
         self._summary_fn = summary_fn
-        self.token_counter = token_counter    
+        self.token_counter = token_counter
+
     _SUMMARY_MARKER = "[历史对话摘要]"
 
-    async def compress(
-        self,
-        messages: list[dict],
-        retention_count: int
-    ) -> CompressionResult:
+    async def compress(self, messages: list[dict], retention_count: int) -> CompressionResult:
         """Compress conversation context.
 
         采用「摘要拼接」策略避免信息失真：
@@ -79,7 +76,7 @@ class ContextCompressor:
                 archived_messages=[],
                 summary="",
                 original_token_count=self.token_counter.count_messages(messages),
-                compressed_token_count=self.token_counter.count_messages(messages)
+                compressed_token_count=self.token_counter.count_messages(messages),
             )
 
         # Extract and preserve original system prompt (AGENTS.md)
@@ -110,9 +107,7 @@ class ContextCompressor:
 
         # 2. 只对新产生的对话消息生成增量摘要
         incremental_summary = (
-            await self._generate_summary(archive_messages)
-            if archive_messages
-            else ""
+            await self._generate_summary(archive_messages) if archive_messages else ""
         )
 
         # 3. 将旧摘要与增量摘要拼接，保留完整历史上下文
@@ -129,12 +124,10 @@ class ContextCompressor:
             archived_messages=archive_messages,
             summary=combined_summary,
             original_token_count=self.token_counter.count_messages(messages),
-            compressed_token_count=self.token_counter.count_messages(compressed_messages)
+            compressed_token_count=self.token_counter.count_messages(compressed_messages),
         )
 
-    def _extract_previous_summary(
-        self, messages: list[dict]
-    ) -> tuple[str, list[dict]]:
+    def _extract_previous_summary(self, messages: list[dict]) -> tuple[str, list[dict]]:
         """从消息列表中剥离上一次压缩注入的摘要 system 消息.
 
         上一次压缩会在消息列表中插入一条 role=system、content 以
@@ -152,10 +145,7 @@ class ContextCompressor:
 
         for msg in messages:
             content = msg.get("content", "")
-            if (
-                msg.get("role") == "system"
-                and self._SUMMARY_MARKER in content
-            ):
+            if msg.get("role") == "system" and self._SUMMARY_MARKER in content:
                 # 提取摘要正文：去掉标记行和尾部提示
                 summary_text = content.replace(self._SUMMARY_MARKER, "").strip()
                 trailing_hint = "以上是对话的历史摘要，请结合当前对话理解上下文。"
@@ -193,7 +183,7 @@ class ContextCompressor:
             return previous_summary
 
         return f"{previous_summary}\n\n---\n\n{incremental_summary}"
-    
+
     def _find_safe_split_point(self, messages: list[dict], initial_split: int) -> int:
         """找到安全的分割点，确保不会拆分 tool_calls/tool 消息配对.
 
@@ -234,10 +224,9 @@ class ContextCompressor:
         Returns:
             Generated summary text
         """
-        conversation_text = "\n".join([
-            f"{msg.get('role', 'user')}: {msg.get('content', '')}"
-            for msg in messages
-        ])
+        conversation_text = "\n".join(
+            [f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in messages]
+        )
 
         prompt = f"""请对以下对话历史生成简洁的摘要：
 
@@ -260,7 +249,7 @@ class ContextCompressor:
                 extra={
                     "summary_length": len(summary),
                     "archived_message_count": len(messages),
-                }
+                },
             )
             return summary
         except Exception as e:
@@ -270,23 +259,20 @@ class ContextCompressor:
                     "error": str(e),
                     "error_type": type(e).__name__,
                     "archived_message_count": len(messages),
-                }
+                },
             )
             return f"[对话历史摘要] 共{len(messages)}轮对话"
-    
+
     def _build_compressed_messages(
-        self,
-        system_message: dict | None,
-        recent_messages: list[dict],
-        summary: str
+        self, system_message: dict | None, recent_messages: list[dict], summary: str
     ) -> list[dict]:
         """Build final compressed message list.
-        
+
         Args:
             system_message: Original system message (from AGENTS.md)
             recent_messages: Recent messages to retain
             summary: Generated summary
-            
+
         Returns:
             Final message list with:
             1. Original system prompt (preserved)
@@ -294,19 +280,21 @@ class ContextCompressor:
             3. Retained recent messages
         """
         compressed = []
-        
+
         # 1. Preserve original system prompt (from AGENTS.md)
         if system_message:
             compressed.append(system_message)
-        
+
         # 2. Add summary as context (separate from system prompt)
         if summary:
-            compressed.append({
-                "role": "system",
-                "content": f"[历史对话摘要]\n{summary}\n\n以上是对话的历史摘要，请结合当前对话理解上下文。"
-            })
-        
+            compressed.append(
+                {
+                    "role": "system",
+                    "content": f"[历史对话摘要]\n{summary}\n\n以上是对话的历史摘要，请结合当前对话理解上下文。",
+                }
+            )
+
         # 3. Add retained recent messages
         compressed.extend(recent_messages)
-        
+
         return compressed

@@ -32,7 +32,7 @@ Example:
         ],
         parallel=True,
     )
-    
+
     # Pipeline 模式
     pipeline = PipelinePlan(
         plan_id="pipeline-001",
@@ -42,7 +42,7 @@ Example:
             PipelineStage(stage_id="stage-3", agent_id="agent-003", description="生成报告"),
         ],
     )
-    
+
     # Discussion 模式
     discussion = DiscussionPlan(
         plan_id="discussion-001",
@@ -58,19 +58,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol
 
 
-class CollaborationMode(str, Enum):
+class CollaborationMode(StrEnum):
     """协同模式类型"""
-    LEADER_WORKER = "leader_worker"   # 主从模式
-    PIPELINE = "pipeline"             # 管道模式
-    DISCUSSION = "discussion"         # 讨论模式
+
+    LEADER_WORKER = "leader_worker"  # 主从模式
+    PIPELINE = "pipeline"  # 管道模式
+    DISCUSSION = "discussion"  # 讨论模式
 
 
-class CollaborationStatus(str, Enum):
+class CollaborationStatus(StrEnum):
     """协同任务状态"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -80,12 +82,14 @@ class CollaborationStatus(str, Enum):
 
 # === Leader-Worker 模式 ===
 
+
 @dataclass
 class WorkerTask:
     """分配给 Worker 的子任务"""
+
     task_id: str
-    agent_id: str               # 目标 Worker Agent
-    description: str            # 任务描述
+    agent_id: str  # 目标 Worker Agent
+    description: str  # 任务描述
     payload: dict[str, Any] = field(default_factory=dict)
     timeout: float = 120.0
     priority: int = 0
@@ -100,18 +104,21 @@ class WorkerTask:
 @dataclass
 class LeaderWorkerPlan:
     """Leader-Worker 协作计划"""
+
     plan_id: str
     leader_agent_id: str
     tasks: list[WorkerTask]
     aggregate_strategy: str = "merge"  # "merge" | "select_best" | "custom"
-    parallel: bool = True              # 是否并行执行
+    parallel: bool = True  # 是否并行执行
     shared_context_id: str | None = None
 
     @property
     def all_completed(self) -> bool:
         """检查所有任务是否已完成（成功或失败）"""
-        return all(t.status in (CollaborationStatus.COMPLETED, CollaborationStatus.FAILED)
-                   for t in self.tasks)
+        return all(
+            t.status in (CollaborationStatus.COMPLETED, CollaborationStatus.FAILED)
+            for t in self.tasks
+        )
 
     @property
     def successful_tasks(self) -> list[WorkerTask]:
@@ -128,16 +135,23 @@ class LeaderWorkerPlan:
         """获取完成率（0.0-1.0）"""
         if not self.tasks:
             return 0.0
-        completed = len([t for t in self.tasks
-                        if t.status in (CollaborationStatus.COMPLETED, CollaborationStatus.FAILED)])
+        completed = len(
+            [
+                t
+                for t in self.tasks
+                if t.status in (CollaborationStatus.COMPLETED, CollaborationStatus.FAILED)
+            ]
+        )
         return completed / len(self.tasks)
 
 
 # === Pipeline 模式 ===
 
+
 @dataclass
 class PipelineStage:
     """管道中的一个阶段"""
+
     stage_id: str
     agent_id: str
     description: str
@@ -156,8 +170,9 @@ class PipelineStage:
 @dataclass
 class PipelinePlan:
     """管道协作计划"""
+
     plan_id: str
-    stages: list[PipelineStage]          # 按顺序执行
+    stages: list[PipelineStage]  # 按顺序执行
     shared_context_id: str | None = None
 
     @property
@@ -190,43 +205,46 @@ class PipelinePlan:
         """获取进度（0.0-1.0）"""
         if not self.stages:
             return 0.0
-        completed = len([s for s in self.stages
-                        if s.status == CollaborationStatus.COMPLETED])
+        completed = len([s for s in self.stages if s.status == CollaborationStatus.COMPLETED])
         return completed / len(self.stages)
 
 
 # === Discussion 模式 ===
 
+
 @dataclass
 class DiscussionContribution:
     """讨论中的一个观点"""
+
     agent_id: str
-    viewpoint: str              # 观点内容
-    reasoning: str              # 推理过程
-    confidence: float = 0.5     # 置信度 0.0-1.0
+    viewpoint: str  # 观点内容
+    reasoning: str  # 推理过程
+    confidence: float = 0.5  # 置信度 0.0-1.0
     timestamp: datetime | None = None
-    round_number: int = 0       # 第几轮讨论
+    round_number: int = 0  # 第几轮讨论
 
 
 @dataclass
 class DiscussionPlan:
     """讨论协作计划"""
+
     plan_id: str
-    topic: str                            # 讨论主题
-    participant_agent_ids: list[str]       # 参与讨论的 Agent
-    moderator_agent_id: str               # 主持人 Agent
-    max_rounds: int = 3                   # 最大讨论轮次
-    consensus_threshold: float = 0.7      # 共识阈值
+    topic: str  # 讨论主题
+    participant_agent_ids: list[str]  # 参与讨论的 Agent
+    moderator_agent_id: str  # 主持人 Agent
+    max_rounds: int = 3  # 最大讨论轮次
+    consensus_threshold: float = 0.7  # 共识阈值
     shared_context_id: str | None = None
 
     # 讨论状态
     contributions: list[DiscussionContribution] = field(default_factory=list)
     current_round: int = 0
-    consensus: str | None = None          # 达成的共识
+    consensus: str | None = None  # 达成的共识
     status: CollaborationStatus = CollaborationStatus.PENDING
 
-    def add_contribution(self, agent_id: str, viewpoint: str,
-                         reasoning: str = "", confidence: float = 0.5) -> DiscussionContribution:
+    def add_contribution(
+        self, agent_id: str, viewpoint: str, reasoning: str = "", confidence: float = 0.5
+    ) -> DiscussionContribution:
         """添加一个观点"""
         contribution = DiscussionContribution(
             agent_id=agent_id,
@@ -266,18 +284,19 @@ class DiscussionPlan:
 
 # === 协同端口 (Protocol) ===
 
+
 class CollaborationPort(Protocol):
     """协同模式的执行端口
-    
+
     由上层 Adapter 实现具体的执行逻辑
     """
 
     async def execute_leader_worker(self, plan: LeaderWorkerPlan) -> dict[str, Any]:
         """执行 Leader-Worker 协作
-        
+
         Args:
             plan: Leader-Worker 协作计划
-            
+
         Returns:
             dict: 执行结果，包含聚合后的结果
         """
@@ -285,10 +304,10 @@ class CollaborationPort(Protocol):
 
     async def execute_pipeline(self, plan: PipelinePlan) -> Any:
         """执行 Pipeline 协作
-        
+
         Args:
             plan: 管道协作计划
-            
+
         Returns:
             Any: 管道最终输出
         """
@@ -296,10 +315,10 @@ class CollaborationPort(Protocol):
 
     async def execute_discussion(self, plan: DiscussionPlan) -> str:
         """执行 Discussion 协作，返回共识内容
-        
+
         Args:
             plan: 讨论协作计划
-            
+
         Returns:
             str: 达成的共识内容
         """

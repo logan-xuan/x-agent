@@ -1,5 +1,18 @@
 """Next-generation runtime package for bounded turns and session orchestration."""
 
+from .context import (
+    CompressionContext,
+    CompressionProfile,
+    CompressionProfileProvider,
+    ContextBuildRequest,
+    ContextBuildResult,
+    DefaultCompressionPipeline,
+    DefaultCompressionVerifier,
+    DefaultContextBuilder,
+    DefaultHistoryViewBuilder,
+    InMemoryArtifactStore,
+    build_default_compression_profiles,
+)
 from .repositories import (
     ArtifactRepository,
     CompressionEventRecord,
@@ -24,19 +37,7 @@ from .repositories import (
     TranscriptEntry,
     TranscriptRepository,
 )
-from .context import (
-    CompressionContext,
-    CompressionProfile,
-    CompressionProfileProvider,
-    ContextBuildRequest,
-    ContextBuildResult,
-    DefaultCompressionPipeline,
-    DefaultCompressionVerifier,
-    DefaultContextBuilder,
-    DefaultHistoryViewBuilder,
-    InMemoryArtifactStore,
-    build_default_compression_profiles,
-)
+from .service import RuntimeServices, get_runtime_services, reset_runtime_services
 from .session import (
     AnnouncementManager,
     ChildSessionManager,
@@ -49,7 +50,6 @@ from .session import (
     SessionLifecycleManager,
     SpawnManager,
 )
-from .service import RuntimeServices, get_runtime_services, reset_runtime_services
 from .types import (
     ArtifactRef,
     BudgetDecision,

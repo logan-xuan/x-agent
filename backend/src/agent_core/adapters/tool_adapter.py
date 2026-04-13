@@ -31,19 +31,19 @@ if TYPE_CHECKING:
 
 class XAgentToolAdapter:
     """ToolPort 适配器，包装 X-Agent 的 ToolManager.
-    
+
     Example:
         from src.tools.manager import get_tool_manager
-        
+
         manager = get_tool_manager()
         adapter = XAgentToolAdapter(manager)
-        
+
         config = AgentCoreConfig(tools=adapter)
     """
 
     def __init__(self, manager: Any) -> None:
         """初始化适配器.
-        
+
         Args:
             manager: X-Agent ToolManager 实例
         """
@@ -57,13 +57,13 @@ class XAgentToolAdapter:
         on_progress: Callable[[Any], None] | None = None,
     ) -> ACToolResult:
         """执行工具.
-        
+
         Args:
             tool_name: 工具名称
             arguments: 工具参数
             abort_event: 中止事件
             on_progress: 进度回调
-        
+
         Returns:
             agent_core ToolResult
         """
@@ -78,7 +78,7 @@ class XAgentToolAdapter:
 
     def get_tools(self) -> list[AgentTool]:
         """获取所有可用工具.
-        
+
         Returns:
             agent_core AgentTool 列表
         """
@@ -88,66 +88,66 @@ class XAgentToolAdapter:
 
 def _convert_tool_result(result: Any) -> ACToolResult:
     """将 X-Agent ToolResult 转换为 agent_core ToolResult.
-    
+
     Args:
         result: X-Agent tools.base.ToolResult
-    
+
     Returns:
         agent_core ToolResult
     """
-    metadata = result.metadata if hasattr(result, 'metadata') else {}
+    metadata = result.metadata if hasattr(result, "metadata") else {}
 
-    if hasattr(result, 'success') and result.success:
-        output = result.output if hasattr(result, 'output') else ""
+    if hasattr(result, "success") and result.success:
+        output = result.output if hasattr(result, "output") else ""
         return ACToolResult.from_text(output, details=metadata)
     else:
         error = ""
-        if hasattr(result, 'error') and result.error:
+        if hasattr(result, "error") and result.error:
             error = result.error
-        elif hasattr(result, 'output'):
+        elif hasattr(result, "output"):
             error = result.output
         return ACToolResult.from_error(error, details=metadata)
 
 
 def _convert_base_tool(tool: Any) -> AgentTool:
     """将 X-Agent BaseTool 转换为 agent_core AgentTool.
-    
+
     Args:
         tool: X-Agent tools.base.BaseTool
-    
+
     Returns:
         agent_core AgentTool
     """
     parameters = []
-    if hasattr(tool, 'parameters'):
+    if hasattr(tool, "parameters"):
         for param in tool.parameters:
             parameters.append(_convert_tool_parameter(param))
 
     return AgentTool(
         name=tool.name,
         label=tool.name,  # 使用 name 作为 label
-        description=tool.description if hasattr(tool, 'description') else "",
+        description=tool.description if hasattr(tool, "description") else "",
         parameters=parameters,
     )
 
 
 def _convert_tool_parameter(param: Any) -> ACToolParameter:
     """将 X-Agent ToolParameter 转换为 agent_core ToolParameter.
-    
+
     Args:
         param: X-Agent tools.base.ToolParameter
-    
+
     Returns:
         agent_core ToolParameter
     """
     # ToolParameterType 是 str enum，.value 得到 "string" 等
-    param_type = param.type.value if hasattr(param.type, 'value') else str(param.type)
+    param_type = param.type.value if hasattr(param.type, "value") else str(param.type)
 
     return ACToolParameter(
         name=param.name,
         type=param_type,
-        description=param.description if hasattr(param, 'description') else "",
-        required=param.required if hasattr(param, 'required') else True,
-        default=param.default if hasattr(param, 'default') else None,
-        enum=param.enum if hasattr(param, 'enum') else None,
+        description=param.description if hasattr(param, "description") else "",
+        required=param.required if hasattr(param, "required") else True,
+        default=param.default if hasattr(param, "default") else None,
+        enum=param.enum if hasattr(param, "enum") else None,
     )

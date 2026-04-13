@@ -244,14 +244,13 @@ class NotifyTool(BaseTool):
                 extra={"error": str(exc), "channel": channel},
                 exc_info=True,
             )
-            return ToolResult.error_result(
-                f"Failed to send notification: {str(exc)}"
-            )
+            return ToolResult.error_result(f"Failed to send notification: {str(exc)}")
 
     def _get_current_session_id(self) -> str | None:
         """从当前 AgentContext 获取 session_id。"""
         try:
             from src.conversation.context import get_current_context
+
             context = get_current_context()
             if context and context.identity:
                 return context.identity.session_id
@@ -263,6 +262,7 @@ class NotifyTool(BaseTool):
         """从当前 AgentContext 获取 agent_id。"""
         try:
             from src.conversation.context import get_current_context
+
             context = get_current_context()
             if context and context.identity:
                 return context.identity.agent_id
@@ -271,6 +271,7 @@ class NotifyTool(BaseTool):
 
         try:
             from src.conversation.dao import DEFAULT_AGENT_ID
+
             return DEFAULT_AGENT_ID
         except Exception:
             return None
@@ -280,10 +281,7 @@ class NotifyTool(BaseTool):
         """根据通道发送结果构建 ToolResult。"""
         if result.delivered:
             status_text = "delivered in real-time"
-            output = (
-                f"Notification sent successfully via {channel}. "
-                f"Status: {status_text}."
-            )
+            output = f"Notification sent successfully via {channel}. Status: {status_text}."
             if result.session_id:
                 output += f" Session: {result.session_id}."
 

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 from ..logger import AgentLogger
@@ -24,19 +25,19 @@ if TYPE_CHECKING:
 
 class XAgentLoggerAdapter:
     """LoggerPort 适配器，双重输出到 AgentLogger 和 structlog.
-    
+
     Example:
         from agent_core.logger import AgentLogger
-        
+
         agent_logger = AgentLogger()
         adapter = XAgentLoggerAdapter(agent_logger)
-        
+
         config = AgentCoreConfig(logger=adapter)
     """
 
     def __init__(self, agent_logger: AgentLogger) -> None:
         """初始化适配器.
-        
+
         Args:
             agent_logger: AgentLogger 内存缓存实例
         """
@@ -138,12 +139,13 @@ _LEVEL_MAP = {
 
 def _get_structlog() -> Any:
     """获取 structlog logger (可选).
-    
+
     Returns:
         structlog logger 或 None
     """
     try:
         from src.utils.logger import get_logger
+
         return get_logger("agent_core")
     except (ImportError, Exception):
         return None
@@ -151,7 +153,7 @@ def _get_structlog() -> Any:
 
 def _forward_to_structlog(logger: Any, entry: LogEntry) -> None:
     """将 LogEntry 转发到 structlog.
-    
+
     Args:
         logger: structlog logger
         entry: 日志条目
@@ -171,7 +173,5 @@ def _forward_to_structlog(logger: Any, entry: LogEntry) -> None:
     if entry.error:
         extra["error"] = entry.error
 
-    try:
+    with contextlib.suppress(Exception):
         log_fn(entry.message, extra=extra)
-    except Exception:
-        pass

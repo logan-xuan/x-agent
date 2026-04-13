@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.message import Message
 from ..models.session import Session, SessionStatus
@@ -21,15 +20,15 @@ class SessionManager:
 
     # 类级别的去重集合，跨实例共享，防止同一个会话被重复总结
     _summarized_session_ids: set[str] = set()
-    
+
     def __init__(self, storage: StorageService | None = None) -> None:
         """Initialize session manager.
-        
+
         Args:
             storage: Storage service instance
         """
         self._storage = storage or StorageService()
-    
+
     async def create_session(
         self,
         title: str | None = None,
@@ -170,6 +169,7 @@ class SessionManager:
         """
         try:
             from ..memory.manager import get_memory_manager
+
             memory_manager = get_memory_manager()
             summary = await memory_manager.summarize_recent_history(
                 session_id=session_id,
@@ -193,39 +193,35 @@ class SessionManager:
                     "error": str(exc),
                 },
             )
-    
+
     async def get_session(self, session_id: str) -> Session | None:
         """Get session by ID.
-        
+
         Args:
             session_id: Session UUID
-            
+
         Returns:
             Session if found, None otherwise
         """
         async with self._storage.session() as db_session:
-            result = await db_session.execute(
-                select(Session).where(Session.id == session_id)
-            )
+            result = await db_session.execute(select(Session).where(Session.id == session_id))
             return result.scalar_one_or_none()
-    
+
     async def list_sessions(self, limit: int = 100) -> list[Session]:
         """List all sessions ordered by update time.
-        
+
         Args:
             limit: Maximum number of sessions to return
-            
+
         Returns:
             List of sessions
         """
         async with self._storage.session() as db_session:
             result = await db_session.execute(
-                select(Session)
-                .order_by(Session.updated_at.desc())
-                .limit(limit)
+                select(Session).order_by(Session.updated_at.desc()).limit(limit)
             )
             return list(result.scalars().all())
-    
+
     async def ensure_session(
         self,
         session_id: str,
@@ -233,12 +229,12 @@ class SessionManager:
         agent_id: str | None = None,
     ) -> Session:
         """Ensure a session exists, creating it if necessary.
-        
+
         Args:
             session_id: Session UUID
             title: Optional title for new session
             agent_id: Optional agent ID to associate with this session
-            
+
         Returns:
             Existing or newly created session
         """
@@ -246,7 +242,7 @@ class SessionManager:
             session = await db_session.get(Session, session_id)
             if session:
                 return session
-            
+
             session = Session(
                 id=session_id,
                 title=title or "Agent 对话",
@@ -259,7 +255,7 @@ class SessionManager:
             db_session.add(session)
             await db_session.commit()
             await db_session.refresh(session)
-        
+
         logger.info(
             "Auto-created session",
             extra={"session_id": session_id, "title": session.title},
@@ -267,28 +263,24 @@ class SessionManager:
         return session
 
     async def add_message(
-        self,
-        session_id: str,
-        role: str,
-        content: str,
-        metadata: dict[str, Any] | None = None
+        self, session_id: str, role: str, content: str, metadata: dict[str, Any] | None = None
     ) -> Message:
         """Add a message to a session.
-        
+
         If the session does not exist, it will be auto-created.
-        
+
         Args:
             session_id: Session UUID
             role: Message role (user, assistant, system)
             content: Message content
             metadata: Optional metadata
-            
+
         Returns:
             Created message
         """
         # Ensure session exists before adding message
         await self.ensure_session(session_id)
-        
+
         message = Message(
             id=str(uuid.uuid4()),
             session_id=session_id,
@@ -296,22 +288,22 @@ class SessionManager:
             content=content,
             created_at=datetime.utcnow(),
         )
-        
+
         if metadata:
             message.set_metadata(metadata)
-        
+
         async with self._storage.session() as db_session:
             db_session.add(message)
-            
+
             # Update session message count and timestamp
             session = await db_session.get(Session, session_id)
             if session:
                 session.message_count += 1
                 session.updated_at = datetime.utcnow()
-            
+
             await db_session.commit()
             await db_session.refresh(message)
-        
+
         logger.debug(
             "Added message to session",
             extra={
@@ -319,10 +311,36 @@ class SessionManager:
                 "message_id": message.id,
                 "role": role,
                 "content_length": len(content),
-            }
+            },
         )
         return message
-    
+
+    async def update_message_metadata(
+        self,
+        message_id: str,
+        metadata: dict[str, Any],
+    ) -> Message | None:
+        """Merge metadata into an existing message."""
+        async with self._storage.session() as db_session:
+            message = await db_session.get(Message, message_id)
+            if message is None:
+                return None
+
+            merged_metadata = message.get_metadata() or {}
+            merged_metadata.update(metadata)
+            message.set_metadata(merged_metadata)
+            await db_session.commit()
+            await db_session.refresh(message)
+
+        logger.debug(
+            "Updated message metadata",
+            extra={
+                "message_id": message_id,
+                "metadata_keys": list(metadata.keys()),
+            },
+        )
+        return message
+
     async def get_messages(
         self,
         session_id: str,
@@ -330,12 +348,12 @@ class SessionManager:
         offset: int = 0,
     ) -> list[Message]:
         """Get messages for a session (from earliest).
-        
+
         Args:
             session_id: Session UUID
             limit: Maximum number of messages
             offset: Pagination offset
-            
+
         Returns:
             List of messages ordered by created_at ascending
         """
@@ -348,7 +366,7 @@ class SessionManager:
                 .limit(limit)
             )
             messages = list(result.scalars().all())
-        
+
         logger.debug(
             "Retrieved messages for session",
             extra={
@@ -356,10 +374,10 @@ class SessionManager:
                 "message_count": len(messages),
                 "limit": limit,
                 "offset": offset,
-            }
+            },
         )
         return messages
-    
+
     async def get_latest_messages(
         self,
         session_id: str,
@@ -398,26 +416,19 @@ class SessionManager:
         )
         return messages
 
-    async def get_messages_as_dict(
-        self,
-        session_id: str,
-        limit: int = 100
-    ) -> list[dict[str, str]]:
+    async def get_messages_as_dict(self, session_id: str, limit: int = 100) -> list[dict[str, str]]:
         """Get messages formatted for LLM API.
-        
+
         Args:
             session_id: Session UUID
             limit: Maximum number of messages
-            
+
         Returns:
             List of messages in OpenAI format
         """
         messages = await self.get_messages(session_id, limit=limit)
-        return [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
-        ]
-    
+        return [{"role": msg.role, "content": msg.content} for msg in messages]
+
     async def reactivate_session(self, session_id: str) -> bool:
         """重新激活一个已关闭的 session。
 
@@ -506,10 +517,10 @@ class SessionManager:
 
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session and all its messages.
-        
+
         Args:
             session_id: Session UUID
-            
+
         Returns:
             True if deleted, False if not found
         """
@@ -517,14 +528,14 @@ class SessionManager:
             session = await db_session.get(Session, session_id)
             if not session:
                 return False
-            
+
             await db_session.delete(session)
             await db_session.commit()
-        
+
         logger.info(
             "Deleted session",
             extra={
                 "session_id": session_id,
-            }
+            },
         )
         return True

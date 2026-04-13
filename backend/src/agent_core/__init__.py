@@ -6,18 +6,18 @@ Usage:
     from agent_core import Agent, AgentCoreConfig
     from agent_core.types import UserMessage, TextContent
     from agent_core.ports import LLMPort
-    
+
     # 实现 LLMPort
     class MyLLMAdapter:
         async def stream(self, system_prompt, messages, tools=None):
             ...
-    
+
     # 创建配置
     config = AgentCoreConfig(llm=MyLLMAdapter())
-    
+
     # 创建 Agent
     agent = Agent(config)
-    
+
     # 发送消息
     async for event in agent.prompt("Hello"):
         print(event)

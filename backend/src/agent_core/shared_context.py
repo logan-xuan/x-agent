@@ -11,26 +11,26 @@
 Example:
     # 创建共享上下文
     ctx = SharedContext(creator_agent_id="leader-001")
-    
+
     # 添加参与者
     ctx.add_participant("worker-001")
     ctx.add_participant("worker-002")
-    
+
     # 设置共享数据
     await ctx.set("task_plan", {"steps": [...]}, agent_id="leader-001")
-    
+
     # 乐观锁更新
     entry = await ctx.get_entry("task_plan")
     success = await ctx.compare_and_set(
         "task_plan", entry.version, new_value, agent_id="worker-001"
     )
-    
+
     # 发布消息到消息板
     await ctx.post_message("leader-001", "开始执行阶段1", tags=["decision"])
-    
+
     # 获取消息
     messages = await ctx.get_messages(limit=10)
-    
+
     # 并发控制
     acquired = await ctx.acquire_lock("resource-1", agent_id="worker-001")
     if acquired:
@@ -53,19 +53,21 @@ from typing import Any
 @dataclass
 class SharedContextEntry:
     """共享上下文中的单条数据"""
+
     key: str
     value: Any
-    set_by: str              # 写入的 agent_id
+    set_by: str  # 写入的 agent_id
     timestamp: datetime
-    version: int = 1         # 版本号，用于冲突检测
+    version: int = 1  # 版本号，用于冲突检测
 
 
 @dataclass
 class MessageBoardPost:
     """消息板上的一条消息"""
+
     post_id: str
-    agent_id: str            # 发布者
-    content: str             # 消息内容
+    agent_id: str  # 发布者
+    content: str  # 消息内容
     timestamp: datetime
     tags: list[str] = field(default_factory=list)  # 标签（如 "finding", "decision", "question"）
     replies: list[MessageBoardPost] = field(default_factory=list)
@@ -73,7 +75,7 @@ class MessageBoardPost:
 
 class SharedContext:
     """多 Agent 共享的上下文空间
-    
+
     提供:
     - 共享键值存储（带版本控制和冲突检测）
     - 消息板（所有参与者可见的消息流）
@@ -131,8 +133,9 @@ class SharedContext:
         """获取完整的数据条目（包含版本信息）"""
         return self._shared_memory.get(key)
 
-    async def compare_and_set(self, key: str, expected_version: int,
-                               value: Any, agent_id: str) -> bool:
+    async def compare_and_set(
+        self, key: str, expected_version: int, value: Any, agent_id: str
+    ) -> bool:
         """乐观锁：仅当版本匹配时才设置（用于冲突检测）"""
         existing = self._shared_memory.get(key)
         current_version = existing.version if existing else 0
@@ -163,8 +166,9 @@ class SharedContext:
 
     # === 消息板 ===
 
-    async def post_message(self, agent_id: str, content: str,
-                           tags: list[str] | None = None) -> MessageBoardPost:
+    async def post_message(
+        self, agent_id: str, content: str, tags: list[str] | None = None
+    ) -> MessageBoardPost:
         """发布消息到消息板"""
         post = MessageBoardPost(
             post_id=str(uuid.uuid4()),
@@ -176,8 +180,9 @@ class SharedContext:
         self._message_board.append(post)
         return post
 
-    async def reply_to_post(self, post_id: str, agent_id: str,
-                            content: str) -> MessageBoardPost | None:
+    async def reply_to_post(
+        self, post_id: str, agent_id: str, content: str
+    ) -> MessageBoardPost | None:
         """回复某条消息"""
         # 查找父消息
         parent = None
@@ -205,8 +210,7 @@ class SharedContext:
         parent.replies.append(reply)
         return reply
 
-    async def get_messages(self, limit: int = 50,
-                          tag: str | None = None) -> list[MessageBoardPost]:
+    async def get_messages(self, limit: int = 50, tag: str | None = None) -> list[MessageBoardPost]:
         """获取消息板消息（可按标签过滤）"""
         messages = self._message_board
 
@@ -218,8 +222,7 @@ class SharedContext:
 
     # === 并发控制 ===
 
-    async def acquire_lock(self, lock_name: str, agent_id: str,
-                          timeout: float = 30.0) -> bool:
+    async def acquire_lock(self, lock_name: str, agent_id: str, timeout: float = 30.0) -> bool:
         """获取命名锁"""
         # 获取或创建锁
         if lock_name not in self._locks:
