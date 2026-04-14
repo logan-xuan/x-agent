@@ -537,7 +537,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                         render: (_value, row) => (
                           <span className="text-xs">
                             {row.voice?.enabled
-                              ? `${row.voice.asr_provider} / ${row.voice.tts_provider}${row.voice.reply_enabled ? ' / reply' : ''}`
+                              ? `${row.voice.asr_provider} / ${row.voice.tts.provider}${row.voice.reply_enabled ? ' / reply' : ''}`
                               : '-'}
                           </span>
                         ),

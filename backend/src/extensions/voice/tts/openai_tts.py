@@ -21,7 +21,8 @@ class OpenAITTSProvider(TTSProvider):
         self._asset_store = asset_store or get_audio_asset_store()
 
     async def synthesize(self, request: SpeechSynthesisRequest) -> SpeechSynthesisResult:
-        voice_config = get_config().voice.openai
+        config = get_config().voice
+        voice_config = config.openai
         api_key = voice_config.api_key.get_secret_value()
         if not api_key:
             raise RuntimeError("OpenAI voice provider requires an API key")
@@ -32,7 +33,7 @@ class OpenAITTSProvider(TTSProvider):
             timeout=voice_config.timeout,
         )
 
-        voice = request.voice or voice_config.tts_default_voice
+        voice = request.voice or config.tts.get_default_voice(self.provider_name)
 
         def _create_speech() -> bytes:
             kwargs: dict[str, object] = {

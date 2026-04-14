@@ -260,6 +260,15 @@ def _resolve_agent_voice_defaults(agent_id: str) -> dict[str, Any]:
     return agent_cfg.voice.model_dump()
 
 
+def _resolve_tts_defaults(source: dict[str, Any]) -> tuple[str | None, str | None]:
+    tts = dict(source.get("tts", {}) or {})
+    provider_raw = tts.get("provider")
+    voice_raw = tts.get("voice")
+    provider = str(provider_raw).strip() if provider_raw else None
+    voice = str(voice_raw).strip() if voice_raw else None
+    return provider, voice
+
+
 def _normalize_duration_ms(value: Any) -> int | None:
     """Normalize optional duration milliseconds from untyped payloads."""
     if isinstance(value, bool):
@@ -284,6 +293,11 @@ def _classify_voice_transcription_failure(exc: Exception, *, provider: str) -> t
         return (
             "语音格式暂不兼容，服务端转码失败，请尝试上传 mp3 或 wav",
             "voice_transcode_failed",
+        )
+    if "FILE_DOWNLOAD_FAILED" in normalized:
+        return (
+            "语音资源地址当前不可达，请检查对外访问地址配置",
+            "voice_audio_url_unreachable",
         )
     if provider == "funasr-bailian":
         return (
@@ -430,10 +444,11 @@ async def _prepare_voice_chat_payload(
     )
     if "voice_reply" in prepared:
         metadata["voice_reply"] = bool(prepared.get("voice_reply"))
-    if prepared.get("tts_provider"):
-        metadata["voice_reply_provider"] = str(prepared.get("tts_provider"))
-    if prepared.get("tts_voice"):
-        metadata["voice_reply_voice"] = str(prepared.get("tts_voice"))
+    prepared_tts = dict(prepared.get("tts", {}) or {})
+    if prepared_tts.get("provider"):
+        metadata["voice_reply_provider"] = str(prepared_tts.get("provider"))
+    if prepared_tts.get("voice"):
+        metadata["voice_reply_voice"] = str(prepared_tts.get("voice"))
     prepared["metadata"] = metadata
     prepared["content"] = transcription.text
     prepared.pop("audio", None)
@@ -465,20 +480,21 @@ async def _maybe_build_voice_reply_payload(
         return None
 
     service = voice_service or get_voice_service()
+    agent_tts_provider, agent_tts_voice = _resolve_tts_defaults(agent_defaults)
     result = await service.synthesize(
         SpeechSynthesisRequest(
             text=message_content,
             provider=str(
                 envelope.metadata.get("voice_reply_provider")
-                or agent_defaults.get("tts_provider")
+                or agent_tts_provider
                 or "edge"
             ),
             voice=(
                 str(envelope.metadata.get("voice_reply_voice"))
                 if envelope.metadata.get("voice_reply_voice")
                 else (
-                    str(agent_defaults.get("tts_voice"))
-                    if agent_defaults.get("tts_voice")
+                    agent_tts_voice
+                    if agent_tts_voice
                     else None
                 )
             ),

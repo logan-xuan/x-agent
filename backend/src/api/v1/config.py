@@ -4,10 +4,15 @@ from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ...config.manager import ConfigManager
 from ...config.validator import validate_config
+from ...config.voice_options import (
+    DEFAULT_TTS_PROVIDER,
+    build_default_tts_voice_catalog,
+    is_valid_edge_voice,
+)
 from ...services.llm.circuit_breaker import circuit_breaker_manager
 from ...utils.logger import get_logger
 
@@ -96,7 +101,6 @@ class EditableVoiceOpenAIConfig(BaseModel):
     api_key_masked: str
     timeout: int
     tts_model: str
-    tts_default_voice: str
     asr_model: str
 
 
@@ -131,13 +135,28 @@ class EditableVoiceGPTSoVITSConfig(BaseModel):
     prompt_lang: str
 
 
+class EditableVoiceTTSVoiceConfig(BaseModel):
+    default: str | None = None
+    options: list[str]
+
+
+class EditableVoiceTTSConfig(BaseModel):
+    default_provider: str
+    voices: dict[str, EditableVoiceTTSVoiceConfig]
+
+
+class EditableVoiceRewriteConfig(BaseModel):
+    mode: str
+
+
 class EditableVoiceConfig(BaseModel):
     enabled: bool
     assets_dir: str
     public_base_url: str
     playback_base_url: str
     upload_max_bytes: int
-    edge_default_voice: str
+    rewrite: EditableVoiceRewriteConfig
+    tts: EditableVoiceTTSConfig
     openai: EditableVoiceOpenAIConfig
     whisper_compatible: EditableVoiceWhisperCompatibleConfig
     funasr_bailian: EditableVoiceFunASRBailianConfig
@@ -145,16 +164,19 @@ class EditableVoiceConfig(BaseModel):
 
 
 class UpdateVoiceOpenAIRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     base_url: str | None = None
     api_key: str | None = None
     timeout: int | None = Field(default=None, ge=10, le=600)
     tts_model: str | None = None
-    tts_default_voice: str | None = None
     asr_model: str | None = None
 
 
 class UpdateVoiceWhisperCompatibleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     endpoint: str | None = None
     auth_token: str | None = None
@@ -164,6 +186,8 @@ class UpdateVoiceWhisperCompatibleRequest(BaseModel):
 
 
 class UpdateVoiceFunASRBailianRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     websocket_url: str | None = None
     api_key: str | None = None
@@ -176,6 +200,8 @@ class UpdateVoiceFunASRBailianRequest(BaseModel):
 
 
 class UpdateVoiceGPTSoVITSRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     endpoint: str | None = None
     timeout: int | None = Field(default=None, ge=10, le=600)
@@ -185,13 +211,56 @@ class UpdateVoiceGPTSoVITSRequest(BaseModel):
     prompt_lang: str | None = None
 
 
+class UpdateVoiceTTSVoiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    default: str | None = None
+
+
+class UpdateVoiceTTSRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    default_provider: str | None = None
+    voices: dict[str, UpdateVoiceTTSVoiceRequest] | None = None
+
+    @field_validator("voices")
+    @classmethod
+    def validate_edge_voice_entries(
+        cls, value: dict[str, UpdateVoiceTTSVoiceRequest] | None
+    ) -> dict[str, UpdateVoiceTTSVoiceRequest] | None:
+        if value is None:
+            return value
+        edge_entry = value.get("edge")
+        if edge_entry is not None and edge_entry.default and not is_valid_edge_voice(edge_entry.default):
+            raise ValueError("edge 默认音色必须是受支持的 Edge 音色")
+        return value
+
+
+class UpdateVoiceRewriteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str | None = None
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if value not in {"rules", "model"}:
+            raise ValueError("rewrite.mode 仅支持 rules 或 model")
+        return value
+
+
 class UpdateVoiceConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     assets_dir: str | None = None
     public_base_url: str | None = None
     playback_base_url: str | None = None
     upload_max_bytes: int | None = Field(default=None, ge=1)
-    edge_default_voice: str | None = None
+    rewrite: UpdateVoiceRewriteRequest | None = None
+    tts: UpdateVoiceTTSRequest | None = None
     openai: UpdateVoiceOpenAIRequest | None = None
     whisper_compatible: UpdateVoiceWhisperCompatibleRequest | None = None
     funasr_bailian: UpdateVoiceFunASRBailianRequest | None = None
@@ -233,14 +302,25 @@ def _editable_voice_config(config) -> EditableVoiceConfig:
         public_base_url=str(voice.public_base_url),
         playback_base_url=voice.playback_base_url,
         upload_max_bytes=voice.upload_max_bytes,
-        edge_default_voice=voice.edge_default_voice,
+        rewrite=EditableVoiceRewriteConfig(
+            mode=voice.rewrite.mode,
+        ),
+        tts=EditableVoiceTTSConfig(
+            default_provider=voice.tts.default_provider,
+            voices={
+                provider: EditableVoiceTTSVoiceConfig(
+                    default=entry.default,
+                    options=list(entry.options),
+                )
+                for provider, entry in voice.tts.voices.items()
+            },
+        ),
         openai=EditableVoiceOpenAIConfig(
             enabled=voice.openai.enabled,
             base_url=str(voice.openai.base_url),
             api_key_masked=_mask_secret(voice.openai.api_key.get_secret_value()),
             timeout=voice.openai.timeout,
             tts_model=voice.openai.tts_model,
-            tts_default_voice=voice.openai.tts_default_voice,
             asr_model=voice.openai.asr_model,
         ),
         whisper_compatible=EditableVoiceWhisperCompatibleConfig(
@@ -284,6 +364,23 @@ def _merge_voice_section(target: dict, updates: dict, *, secret_fields: set[str]
         target[key] = value
 
 
+def _normalize_tts_yaml(voice: dict[str, object]) -> None:
+    tts = dict(voice.get("tts", {}) or {})
+    voices = {
+        provider: dict(entry)
+        for provider, entry in build_default_tts_voice_catalog().items()
+    }
+    raw_voices = dict(tts.get("voices", {}) or {})
+    for provider, entry in raw_voices.items():
+        merged_entry = dict(voices.get(provider, {}) or {})
+        merged_entry.update(dict(entry or {}))
+        voices[provider] = merged_entry
+
+    tts["default_provider"] = str(tts.get("default_provider") or DEFAULT_TTS_PROVIDER)
+    tts["voices"] = voices
+    voice["tts"] = tts
+
+
 def _update_voice_yaml(yaml_data: dict, request: UpdateVoiceConfigRequest) -> None:
     voice = dict(yaml_data.get("voice", {}) or {})
     request_data = request.model_dump(exclude_unset=True)
@@ -294,10 +391,28 @@ def _update_voice_yaml(yaml_data: dict, request: UpdateVoiceConfigRequest) -> No
         "public_base_url",
         "playback_base_url",
         "upload_max_bytes",
-        "edge_default_voice",
     ):
         if key in request_data and request_data[key] is not None:
             voice[key] = request_data[key]
+
+    if request.rewrite is not None:
+        rewrite = dict(voice.get("rewrite", {}) or {})
+        _merge_voice_section(rewrite, request.rewrite.model_dump(exclude_unset=True))
+        voice["rewrite"] = rewrite
+
+    if request.tts is not None:
+        tts = dict(voice.get("tts", {}) or {})
+        tts_update = request.tts.model_dump(exclude_unset=True)
+        if "default_provider" in tts_update and tts_update["default_provider"] is not None:
+            tts["default_provider"] = tts_update["default_provider"]
+        if "voices" in tts_update and tts_update["voices"] is not None:
+            voices = dict(tts.get("voices", {}) or {})
+            for provider, voice_update in tts_update["voices"].items():
+                current_entry = dict(voices.get(provider, {}) or {})
+                current_entry.update({key: value for key, value in voice_update.items() if value is not None})
+                voices[provider] = current_entry
+            tts["voices"] = voices
+        voice["tts"] = tts
 
     if request.openai is not None:
         openai = dict(voice.get("openai", {}) or {})
@@ -331,6 +446,7 @@ def _update_voice_yaml(yaml_data: dict, request: UpdateVoiceConfigRequest) -> No
         )
         voice["funasr_bailian"] = funasr_bailian
 
+    _normalize_tts_yaml(voice)
     yaml_data["voice"] = voice
 
 

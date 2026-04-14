@@ -2,7 +2,13 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, model_validator
+
+from .voice_options import (
+    DEFAULT_TTS_PROVIDER,
+    build_default_tts_voice_catalog,
+    is_valid_edge_voice,
+)
 
 
 class ModelConfig(BaseModel):
@@ -750,17 +756,20 @@ class ImageGenerationConfig(BaseModel):
 class VoiceOpenAIConfig(BaseModel):
     """OpenAI-backed voice configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = Field(default=False)
     base_url: HttpUrl = Field(default="https://api.openai.com/v1")
     api_key: SecretStr = Field(default_factory=lambda: SecretStr(""))
     timeout: int = Field(default=120, ge=10, le=600)
     tts_model: str = Field(default="gpt-4o-mini-tts")
-    tts_default_voice: str = Field(default="alloy")
     asr_model: str = Field(default="gpt-4o-transcribe")
 
 
 class VoiceWhisperCompatibleConfig(BaseModel):
     """Whisper-compatible ASR endpoint configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = Field(default=False)
     endpoint: HttpUrl = Field(default="http://localhost:9000/v1/audio/transcriptions")
@@ -772,6 +781,8 @@ class VoiceWhisperCompatibleConfig(BaseModel):
 
 class VoiceFunASRBailianConfig(BaseModel):
     """Alibaba Bailian Fun-ASR configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = Field(default=False)
     websocket_url: str = Field(default="wss://dashscope.aliyuncs.com/api-ws/v1/inference")
@@ -787,6 +798,8 @@ class VoiceFunASRBailianConfig(BaseModel):
 class VoiceGPTSoVITSConfig(BaseModel):
     """GPT-SoVITS service configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = Field(default=False)
     endpoint: HttpUrl = Field(default="http://localhost:9880")
     timeout: int = Field(default=120, ge=10, le=600)
@@ -796,21 +809,94 @@ class VoiceGPTSoVITSConfig(BaseModel):
     prompt_lang: str = Field(default="zh")
 
 
+class VoiceTTSVoiceConfig(BaseModel):
+    """Per-provider TTS voice catalog entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default: str | None = Field(default=None)
+    options: list[str] = Field(default_factory=list)
+
+
+def _default_voice_tts_catalog() -> dict[str, VoiceTTSVoiceConfig]:
+    return {
+        provider: VoiceTTSVoiceConfig(**entry)
+        for provider, entry in build_default_tts_voice_catalog().items()
+    }
+
+
+class VoiceTTSConfig(BaseModel):
+    """Global TTS selection config split from provider runtime config."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_provider: str = Field(default=DEFAULT_TTS_PROVIDER)
+    voices: dict[str, VoiceTTSVoiceConfig] = Field(default_factory=_default_voice_tts_catalog)
+
+    def get_default_voice(self, provider: str) -> str | None:
+        entry = self.voices.get(provider)
+        return entry.default if entry is not None else None
+
+
+class VoiceRewriteConfig(BaseModel):
+    """Speech-text rewrite mode before TTS synthesis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["rules", "model"] = Field(default="rules")
+
+
 class VoiceConfig(BaseModel):
     """Voice extension configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = Field(default=True)
     assets_dir: str = Field(default="backend/assets/audio")
     public_base_url: HttpUrl = Field(default="http://localhost:8888/api/v1/assets/audio")
     playback_base_url: str = Field(default="/api/v1/assets/audio")
     upload_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
-    edge_default_voice: str = Field(default="zh-CN-YunxiNeural")
+    rewrite: VoiceRewriteConfig = Field(default_factory=VoiceRewriteConfig)
+    tts: VoiceTTSConfig = Field(default_factory=VoiceTTSConfig)
     openai: VoiceOpenAIConfig = Field(default_factory=VoiceOpenAIConfig)
     whisper_compatible: VoiceWhisperCompatibleConfig = Field(
         default_factory=VoiceWhisperCompatibleConfig
     )
     funasr_bailian: VoiceFunASRBailianConfig = Field(default_factory=VoiceFunASRBailianConfig)
     gpt_sovits: VoiceGPTSoVITSConfig = Field(default_factory=VoiceGPTSoVITSConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_tts_catalog(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        tts = dict(payload.get("tts", {}) or {})
+        voices = {
+            provider: dict(entry)
+            for provider, entry in build_default_tts_voice_catalog().items()
+        }
+        raw_voices = dict(tts.get("voices", {}) or {})
+        for provider, entry in raw_voices.items():
+            merged_entry = dict(voices.get(provider, {}) or {})
+            merged_entry.update(dict(entry or {}))
+            voices[provider] = merged_entry
+
+        tts["default_provider"] = str(tts.get("default_provider") or DEFAULT_TTS_PROVIDER)
+        tts["voices"] = voices
+        payload["tts"] = tts
+
+        return payload
+
+    @model_validator(mode="after")
+    def validate_tts_defaults(self) -> "VoiceConfig":
+        if self.tts.default_provider not in self.tts.voices:
+            raise ValueError("tts.default_provider 必须存在于 tts.voices 中")
+        edge_default_voice = self.tts.get_default_voice("edge")
+        if not edge_default_voice or not is_valid_edge_voice(edge_default_voice):
+            raise ValueError("tts.voices.edge.default 必须是受支持的 Edge 音色")
+        return self
 
 
 class AgentModelConfig(BaseModel):
@@ -852,17 +938,41 @@ class AgentConfig(BaseModel):
     )
 
 
+class AgentTTSConfig(BaseModel):
+    """Agent-level TTS selection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(default=DEFAULT_TTS_PROVIDER)
+    voice: str | None = Field(default=None)
+
+
+class AgentGPTSoVITSOverrides(BaseModel):
+    """Agent-level GPT-SoVITS overrides."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    endpoint: str | None = Field(default=None)
+    ref_audio_path: str | None = Field(default=None)
+    ref_text: str | None = Field(default=None)
+
+
 class AgentVoiceConfig(BaseModel):
     """Agent-level voice preferences."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = Field(default=False)
     reply_enabled: bool = Field(default=False)
-    tts_provider: str = Field(default="edge")
     asr_provider: str = Field(default="openai")
-    tts_voice: str | None = Field(default=None)
-    gpt_sovits_endpoint: str | None = Field(default=None)
-    gpt_sovits_ref_audio_path: str | None = Field(default=None)
-    gpt_sovits_ref_text: str | None = Field(default=None)
+    tts: AgentTTSConfig = Field(default_factory=AgentTTSConfig)
+    gpt_sovits: AgentGPTSoVITSOverrides = Field(default_factory=AgentGPTSoVITSOverrides)
+
+    @model_validator(mode="after")
+    def validate_edge_voice(self) -> "AgentVoiceConfig":
+        if self.tts.provider == "edge" and self.tts.voice and not is_valid_edge_voice(self.tts.voice):
+            raise ValueError("tts.voice 必须是受支持的 Edge 音色")
+        return self
 
 
 class PeerMatch(BaseModel):

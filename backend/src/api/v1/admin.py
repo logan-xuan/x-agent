@@ -10,10 +10,11 @@ from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ...config.loader import load_config
 from ...config.manager import ConfigManager
+from ...config.voice_options import is_valid_edge_voice
 from ...conversation.dao.dao import UserDAO
 from ...services.storage import get_storage_service
 from ...utils.logger import get_logger
@@ -146,26 +147,48 @@ class UpdateAgentRequest(BaseModel):
     voice: UpdateAgentVoiceRequest | None = None
 
 
+class AgentTTSResponse(BaseModel):
+    provider: str = "edge"
+    voice: str | None = None
+
+
+class AgentGPTSoVITSResponse(BaseModel):
+    endpoint: str | None = None
+    ref_audio_path: str | None = None
+    ref_text: str | None = None
+
+
 class AgentVoiceResponse(BaseModel):
     enabled: bool = False
     reply_enabled: bool = False
-    tts_provider: str = "edge"
     asr_provider: str = "openai"
-    tts_voice: str | None = None
-    gpt_sovits_endpoint: str | None = None
-    gpt_sovits_ref_audio_path: str | None = None
-    gpt_sovits_ref_text: str | None = None
+    tts: AgentTTSResponse = Field(default_factory=AgentTTSResponse)
+    gpt_sovits: AgentGPTSoVITSResponse = Field(default_factory=AgentGPTSoVITSResponse)
+
+
+class UpdateAgentTTSRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str | None = None
+    voice: str | None = None
+
+
+class UpdateAgentGPTSoVITSRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    endpoint: str | None = None
+    ref_audio_path: str | None = None
+    ref_text: str | None = None
 
 
 class UpdateAgentVoiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     reply_enabled: bool | None = None
-    tts_provider: str | None = None
     asr_provider: str | None = None
-    tts_voice: str | None = None
-    gpt_sovits_endpoint: str | None = None
-    gpt_sovits_ref_audio_path: str | None = None
-    gpt_sovits_ref_text: str | None = None
+    tts: UpdateAgentTTSRequest | None = None
+    gpt_sovits: UpdateAgentGPTSoVITSRequest | None = None
 
 
 def _agent_voice_response(agent) -> AgentVoiceResponse:
@@ -201,16 +224,45 @@ def _update_agent_yaml(
         if request.voice is not None:
             voice = dict(agent.get("voice", {}) or {})
             voice_update = request.voice.model_dump(exclude_unset=True)
-            voice.update({key: value for key, value in voice_update.items() if value is not None})
+            for key in ("enabled", "reply_enabled", "asr_provider"):
+                if key in voice_update and voice_update[key] is not None:
+                    voice[key] = voice_update[key]
+            if "tts" in voice_update and voice_update["tts"] is not None:
+                tts = dict(voice.get("tts", {}) or {})
+                tts.update({key: value for key, value in voice_update["tts"].items() if value is not None})
+                voice["tts"] = tts
+            if "gpt_sovits" in voice_update and voice_update["gpt_sovits"] is not None:
+                gpt_sovits = dict(voice.get("gpt_sovits", {}) or {})
+                gpt_sovits.update(
+                    {key: value for key, value in voice_update["gpt_sovits"].items() if value is not None}
+                )
+                voice["gpt_sovits"] = gpt_sovits
             agent["voice"] = voice
         return True
     return False
 
 
+def _resolve_agent_tts_settings(voice: dict[str, object]) -> tuple[str, str | None]:
+    tts = dict(voice.get("tts", {}) or {})
+    provider = str(tts.get("provider") or "").strip() or "edge"
+    resolved_voice = tts.get("voice")
+    return provider, str(resolved_voice) if resolved_voice is not None else None
+
+
+def _resolve_agent_gpt_sovits_settings(voice: dict[str, object]) -> dict[str, str]:
+    gpt_sovits = dict(voice.get("gpt_sovits", {}) or {})
+    return {
+        "endpoint": str(gpt_sovits.get("endpoint") or "").strip(),
+        "ref_audio_path": str(gpt_sovits.get("ref_audio_path") or "").strip(),
+        "ref_text": str(gpt_sovits.get("ref_text") or "").strip(),
+    }
+
+
 def _validate_agent_voice_settings(voice: dict[str, object]) -> None:
     enabled = bool(voice.get("enabled", False))
     reply_enabled = bool(voice.get("reply_enabled", False))
-    tts_provider = str(voice.get("tts_provider", "") or "").strip()
+    tts_provider, tts_voice = _resolve_agent_tts_settings(voice)
+    gpt_sovits = _resolve_agent_gpt_sovits_settings(voice)
     asr_provider = str(voice.get("asr_provider", "") or "").strip()
 
     if reply_enabled and not enabled:
@@ -219,17 +271,19 @@ def _validate_agent_voice_settings(voice: dict[str, object]) -> None:
         raise HTTPException(status_code=400, detail="启用语音能力时必须设置 ASR provider")
     if enabled and not tts_provider:
         raise HTTPException(status_code=400, detail="启用语音能力时必须设置 TTS provider")
+    if tts_provider == "edge" and tts_voice and not is_valid_edge_voice(tts_voice):
+        raise HTTPException(status_code=400, detail="Edge 音色不在受支持列表中")
 
     if tts_provider == "gpt-sovits":
         required_fields = {
-            "gpt_sovits_endpoint": "GPT-SoVITS Endpoint",
-            "gpt_sovits_ref_audio_path": "GPT-SoVITS 参考音频路径",
-            "gpt_sovits_ref_text": "GPT-SoVITS 参考文本",
+            "endpoint": "GPT-SoVITS Endpoint",
+            "ref_audio_path": "GPT-SoVITS 参考音频路径",
+            "ref_text": "GPT-SoVITS 参考文本",
         }
         missing = [
             label
             for field_name, label in required_fields.items()
-            if not str(voice.get(field_name, "") or "").strip()
+            if not gpt_sovits.get(field_name)
         ]
         if missing:
             raise HTTPException(

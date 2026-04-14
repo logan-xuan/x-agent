@@ -9,7 +9,6 @@ export interface EditableVoiceOpenAIConfig {
   api_key_masked: string;
   timeout: number;
   tts_model: string;
-  tts_default_voice: string;
   asr_model: string;
 }
 
@@ -44,13 +43,28 @@ export interface EditableVoiceGPTSoVITSConfig {
   prompt_lang: string;
 }
 
+export interface EditableVoiceTTSVoiceConfig {
+  default: string | null;
+  options: string[];
+}
+
+export interface EditableVoiceTTSConfig {
+  default_provider: string;
+  voices: Record<string, EditableVoiceTTSVoiceConfig>;
+}
+
+export interface EditableVoiceRewriteConfig {
+  mode: 'rules' | 'model';
+}
+
 export interface EditableVoiceConfig {
   enabled: boolean;
   assets_dir: string;
   public_base_url: string;
   playback_base_url: string;
   upload_max_bytes: number;
-  edge_default_voice: string;
+  rewrite: EditableVoiceRewriteConfig;
+  tts: EditableVoiceTTSConfig;
   openai: EditableVoiceOpenAIConfig;
   whisper_compatible: EditableVoiceWhisperCompatibleConfig;
   funasr_bailian: EditableVoiceFunASRBailianConfig;
@@ -63,25 +77,34 @@ interface VoiceConfigEditorProps {
   isUpdating: boolean;
 }
 
-export function VoiceConfigEditor({ voice, onUpdate, isUpdating }: VoiceConfigEditorProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
-  const [showWhisperToken, setShowWhisperToken] = useState(false);
-  const [showFunASRKey, setShowFunASRKey] = useState(false);
-  const [formData, setFormData] = useState({
+function buildFormData(voice: EditableVoiceConfig) {
+  return {
     enabled: voice.enabled,
     assets_dir: voice.assets_dir,
     public_base_url: voice.public_base_url,
     playback_base_url: voice.playback_base_url,
     upload_max_bytes: voice.upload_max_bytes,
-    edge_default_voice: voice.edge_default_voice,
+    rewrite: {
+      mode: voice.rewrite.mode,
+    },
+    tts: {
+      default_provider: voice.tts.default_provider,
+      voices: Object.fromEntries(
+        Object.entries(voice.tts.voices).map(([provider, entry]) => [
+          provider,
+          {
+            default: entry.default ?? '',
+            options: [...entry.options],
+          },
+        ]),
+      ),
+    },
     openai: {
       enabled: voice.openai.enabled,
       base_url: voice.openai.base_url,
       api_key: '',
       timeout: voice.openai.timeout,
       tts_model: voice.openai.tts_model,
-      tts_default_voice: voice.openai.tts_default_voice,
       asr_model: voice.openai.asr_model,
     },
     whisper_compatible: {
@@ -112,54 +135,22 @@ export function VoiceConfigEditor({ voice, onUpdate, isUpdating }: VoiceConfigEd
       text_lang: voice.gpt_sovits.text_lang,
       prompt_lang: voice.gpt_sovits.prompt_lang,
     },
-  });
+  }
+}
+
+export function VoiceConfigEditor({ voice, onUpdate, isUpdating }: VoiceConfigEditorProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
+  const [showWhisperToken, setShowWhisperToken] = useState(false);
+  const [showFunASRKey, setShowFunASRKey] = useState(false);
+  const [formData, setFormData] = useState(() => buildFormData(voice));
+  const ttsProviderOptions = Object.keys(formData.tts.voices).map((provider) => ({
+    value: provider,
+    label: formatTtsProviderLabel(provider),
+  }));
 
   const handleCancel = () => {
-    setFormData({
-      enabled: voice.enabled,
-      assets_dir: voice.assets_dir,
-      public_base_url: voice.public_base_url,
-      playback_base_url: voice.playback_base_url,
-      upload_max_bytes: voice.upload_max_bytes,
-      edge_default_voice: voice.edge_default_voice,
-      openai: {
-        enabled: voice.openai.enabled,
-        base_url: voice.openai.base_url,
-        api_key: '',
-        timeout: voice.openai.timeout,
-        tts_model: voice.openai.tts_model,
-        tts_default_voice: voice.openai.tts_default_voice,
-        asr_model: voice.openai.asr_model,
-      },
-      whisper_compatible: {
-        enabled: voice.whisper_compatible.enabled,
-        endpoint: voice.whisper_compatible.endpoint,
-        auth_token: '',
-        timeout: voice.whisper_compatible.timeout,
-        default_model: voice.whisper_compatible.default_model,
-        response_format: voice.whisper_compatible.response_format,
-      },
-      funasr_bailian: {
-        enabled: voice.funasr_bailian.enabled,
-        websocket_url: voice.funasr_bailian.websocket_url,
-        api_key: '',
-        timeout: voice.funasr_bailian.timeout,
-        model: voice.funasr_bailian.model,
-        sample_rate_hz: voice.funasr_bailian.sample_rate_hz,
-        chunk_interval_ms: voice.funasr_bailian.chunk_interval_ms,
-        chunk_size_bytes: voice.funasr_bailian.chunk_size_bytes,
-        language_hints: voice.funasr_bailian.language_hints.join(', '),
-      },
-      gpt_sovits: {
-        enabled: voice.gpt_sovits.enabled,
-        endpoint: voice.gpt_sovits.endpoint,
-        timeout: voice.gpt_sovits.timeout,
-        ref_audio_path: voice.gpt_sovits.ref_audio_path,
-        ref_text: voice.gpt_sovits.ref_text,
-        text_lang: voice.gpt_sovits.text_lang,
-        prompt_lang: voice.gpt_sovits.prompt_lang,
-      },
-    });
+    setFormData(buildFormData(voice));
     setIsEditing(false);
   };
 
@@ -214,7 +205,54 @@ export function VoiceConfigEditor({ voice, onUpdate, isUpdating }: VoiceConfigEd
                 <LabeledInput label="Provider 外网地址" value={formData.public_base_url} onChange={(value) => setFormData((prev) => ({ ...prev, public_base_url: value }))} />
                 <LabeledInput label="前端播放地址" value={formData.playback_base_url} onChange={(value) => setFormData((prev) => ({ ...prev, playback_base_url: value }))} />
                 <LabeledInput label="上传大小上限（字节）" type="number" value={String(formData.upload_max_bytes)} onChange={(value) => setFormData((prev) => ({ ...prev, upload_max_bytes: Number(value) || 0 }))} />
-                <LabeledInput label="默认 Edge 音色" value={formData.edge_default_voice} onChange={(value) => setFormData((prev) => ({ ...prev, edge_default_voice: value }))} />
+                <LabeledSelect
+                  label="文案改写模式"
+                  value={formData.rewrite.mode}
+                  options={[
+                    { value: 'rules', label: '规则改写' },
+                    { value: 'model', label: '模型改写' },
+                  ]}
+                  onChange={(value) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      rewrite: { mode: value as 'rules' | 'model' },
+                    }))
+                  }
+                />
+                <LabeledSelect
+                  label="默认 TTS Provider"
+                  value={formData.tts.default_provider}
+                  options={ttsProviderOptions}
+                  onChange={(value) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      tts: { ...prev.tts, default_provider: value },
+                    }))
+                  }
+                />
+                {Object.entries(formData.tts.voices).map(([provider, entry]) => (
+                  <LabeledSelect
+                    key={provider}
+                    label={`${formatTtsProviderLabel(provider)} 默认音色`}
+                    value={entry.default ?? ''}
+                    options={entry.options.map((item) => ({ value: item, label: item }))}
+                    onChange={(value) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        tts: {
+                          ...prev.tts,
+                          voices: {
+                            ...prev.tts.voices,
+                            [provider]: {
+                              ...prev.tts.voices[provider],
+                              default: value,
+                            },
+                          },
+                        },
+                      }))
+                    }
+                  />
+                ))}
               </div>
             </section>
 
@@ -242,7 +280,6 @@ export function VoiceConfigEditor({ voice, onUpdate, isUpdating }: VoiceConfigEd
                 />
                 <LabeledInput label="超时（秒）" type="number" value={String(formData.openai.timeout)} onChange={(value) => setFormData((prev) => ({ ...prev, openai: { ...prev.openai, timeout: Number(value) || 0 } }))} />
                 <LabeledInput label="TTS 模型" value={formData.openai.tts_model} onChange={(value) => setFormData((prev) => ({ ...prev, openai: { ...prev.openai, tts_model: value } }))} />
-                <LabeledInput label="TTS 默认音色" value={formData.openai.tts_default_voice} onChange={(value) => setFormData((prev) => ({ ...prev, openai: { ...prev.openai, tts_default_voice: value } }))} />
                 <LabeledInput label="ASR 模型" value={formData.openai.asr_model} onChange={(value) => setFormData((prev) => ({ ...prev, openai: { ...prev.openai, asr_model: value } }))} />
               </div>
             </section>
@@ -342,7 +379,14 @@ export function VoiceConfigEditor({ voice, onUpdate, isUpdating }: VoiceConfigEd
             <SummaryRow label="语音总开关" value={voice.enabled ? '已启用' : '已关闭'} />
             <SummaryRow label="Provider 外网地址" value={voice.public_base_url} />
             <SummaryRow label="前端播放地址" value={voice.playback_base_url} />
-            <SummaryRow label="Edge 默认音色" value={voice.edge_default_voice} />
+            <SummaryRow label="默认 TTS Provider" value={voice.tts.default_provider} />
+            {Object.entries(voice.tts.voices).map(([provider, entry]) => (
+              <SummaryRow
+                key={provider}
+                label={`${formatTtsProviderLabel(provider)} 默认音色`}
+                value={entry.default ?? '-'}
+              />
+            ))}
             <SummaryRow label="OpenAI Voice" value={`${voice.openai.enabled ? '已启用' : '已关闭'} · ${voice.openai.base_url}`} />
             <SummaryRow label="Whisper Compatible" value={`${voice.whisper_compatible.enabled ? '已启用' : '已关闭'} · ${voice.whisper_compatible.endpoint}`} />
             <SummaryRow label="FunASR Bailian" value={`${voice.funasr_bailian.enabled ? '已启用' : '已关闭'} · ${voice.funasr_bailian.websocket_url}`} />
@@ -352,6 +396,15 @@ export function VoiceConfigEditor({ voice, onUpdate, isUpdating }: VoiceConfigEd
       </CardContent>
     </Card>
   );
+}
+
+function formatTtsProviderLabel(provider: string): string {
+  const labels: Record<string, string> = {
+    edge: 'Edge',
+    openai: 'OpenAI',
+    'gpt-sovits': 'GPT-SoVITS',
+  }
+  return labels[provider] || provider
 }
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
@@ -384,6 +437,36 @@ function LabeledInput({
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
       />
+    </div>
+  );
+}
+
+function LabeledSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm text-gray-600 dark:text-gray-300">{label}</label>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

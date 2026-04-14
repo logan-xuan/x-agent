@@ -49,6 +49,7 @@ class FunASRBailianASRProvider(ASRProvider):
                 "task": "asr",
                 "function": "recognition",
                 "model": model_name,
+                "input": {},
                 "parameters": {
                     "format": audio_format,
                     "sample_rate": sample_rate_hz,
@@ -87,7 +88,7 @@ class FunASRBailianASRProvider(ASRProvider):
                             "task_id": task_id,
                             "streaming": "duplex",
                         },
-                        "payload": {},
+                        "payload": {"input": {}},
                     },
                     ensure_ascii=False,
                 )

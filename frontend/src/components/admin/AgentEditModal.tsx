@@ -1,17 +1,22 @@
 import { useMemo, useState } from 'react';
 
+import { EDGE_VOICE_OPTIONS } from '../../constants/edgeVoices';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 
 export interface AgentVoiceConfig {
   enabled: boolean;
   reply_enabled: boolean;
-  tts_provider: string;
   asr_provider: string;
-  tts_voice?: string | null;
-  gpt_sovits_endpoint?: string | null;
-  gpt_sovits_ref_audio_path?: string | null;
-  gpt_sovits_ref_text?: string | null;
+  tts: {
+    provider: string;
+    voice?: string | null;
+  };
+  gpt_sovits?: {
+    endpoint?: string | null;
+    ref_audio_path?: string | null;
+    ref_text?: string | null;
+  };
 }
 
 export interface EditableAgent {
@@ -49,21 +54,26 @@ export function AgentEditModal({ agent, onSave, onCancel }: AgentEditModalProps)
   const [agentPersona, setAgentPersona] = useState(agent.agent_persona);
   const [voiceEnabled, setVoiceEnabled] = useState(agent.voice.enabled);
   const [replyEnabled, setReplyEnabled] = useState(agent.voice.reply_enabled);
-  const initialTtsProvider = resolveProviderSelection(agent.voice.tts_provider || 'edge', COMMON_TTS_PROVIDERS);
+  const initialTtsProvider = resolveProviderSelection(agent.voice.tts.provider || 'edge', COMMON_TTS_PROVIDERS);
   const initialAsrProvider = resolveProviderSelection(agent.voice.asr_provider || 'openai', COMMON_ASR_PROVIDERS);
   const [ttsProviderPreset, setTtsProviderPreset] = useState(initialTtsProvider.preset);
   const [ttsProviderCustom, setTtsProviderCustom] = useState(initialTtsProvider.customValue);
   const [asrProviderPreset, setAsrProviderPreset] = useState(initialAsrProvider.preset);
   const [asrProviderCustom, setAsrProviderCustom] = useState(initialAsrProvider.customValue);
-  const [ttsVoice, setTtsVoice] = useState(agent.voice.tts_voice || '');
-  const [gptSoVitsEndpoint, setGptSoVitsEndpoint] = useState(agent.voice.gpt_sovits_endpoint || '');
-  const [gptSoVitsRefAudioPath, setGptSoVitsRefAudioPath] = useState(agent.voice.gpt_sovits_ref_audio_path || '');
-  const [gptSoVitsRefText, setGptSoVitsRefText] = useState(agent.voice.gpt_sovits_ref_text || '');
+  const [ttsVoice, setTtsVoice] = useState(agent.voice.tts.voice || '');
+  const [gptSoVitsEndpoint, setGptSoVitsEndpoint] = useState(agent.voice.gpt_sovits?.endpoint || '');
+  const [gptSoVitsRefAudioPath, setGptSoVitsRefAudioPath] = useState(agent.voice.gpt_sovits?.ref_audio_path || '');
+  const [gptSoVitsRefText, setGptSoVitsRefText] = useState(agent.voice.gpt_sovits?.ref_text || '');
   const [saving, setSaving] = useState(false);
 
   const ttsProvider = ttsProviderPreset === 'custom' ? ttsProviderCustom.trim() : ttsProviderPreset;
   const asrProvider = asrProviderPreset === 'custom' ? asrProviderCustom.trim() : asrProviderPreset;
   const showGptSoVitsFields = useMemo(() => ttsProvider === 'gpt-sovits', [ttsProvider]);
+  const showEdgeVoiceSelect = useMemo(() => ttsProvider === 'edge', [ttsProvider]);
+  const showVoiceIdentifierInput = useMemo(
+    () => ttsProvider !== 'edge' && ttsProvider !== 'gpt-sovits',
+    [ttsProvider],
+  );
   const validationErrors = useMemo(() => {
     const errors: string[] = [];
 
@@ -121,12 +131,16 @@ export function AgentEditModal({ agent, onSave, onCancel }: AgentEditModalProps)
         voice: {
           enabled: voiceEnabled,
           reply_enabled: replyEnabled,
-          tts_provider: ttsProvider,
           asr_provider: asrProvider,
-          tts_voice: ttsVoice || null,
-          gpt_sovits_endpoint: gptSoVitsEndpoint || null,
-          gpt_sovits_ref_audio_path: gptSoVitsRefAudioPath || null,
-          gpt_sovits_ref_text: gptSoVitsRefText || null,
+          tts: {
+            provider: ttsProvider,
+            voice: ttsVoice || null,
+          },
+          gpt_sovits: {
+            endpoint: gptSoVitsEndpoint || null,
+            ref_audio_path: gptSoVitsRefAudioPath || null,
+            ref_text: gptSoVitsRefText || null,
+          },
         },
       });
     } finally {
@@ -252,16 +266,37 @@ export function AgentEditModal({ agent, onSave, onCancel }: AgentEditModalProps)
 
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
-                  默认音色
+                  {showEdgeVoiceSelect ? 'Edge 音色' : '音色标识'}
                 </label>
-                <input
-                  aria-label="默认音色"
-                  id={fieldId('tts-voice')}
-                  type="text"
-                  value={ttsVoice}
-                  onChange={(event) => setTtsVoice(event.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-                />
+                {showEdgeVoiceSelect ? (
+                  <select
+                    aria-label="Edge 音色"
+                    id={fieldId('tts-voice')}
+                    value={ttsVoice}
+                    onChange={(event) => setTtsVoice(event.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                  >
+                    <option value="">跟随全局默认</option>
+                    {EDGE_VOICE_OPTIONS.map((voiceOption) => (
+                      <option key={voiceOption} value={voiceOption}>
+                        {voiceOption}
+                      </option>
+                    ))}
+                  </select>
+                ) : showVoiceIdentifierInput ? (
+                  <input
+                    aria-label="音色标识"
+                    id={fieldId('tts-voice')}
+                    type="text"
+                    value={ttsVoice}
+                    onChange={(event) => setTtsVoice(event.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                  />
+                ) : (
+                  <div className="rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-400 dark:border-gray-600">
+                    当前 Provider 不使用 Edge 音色枚举
+                  </div>
+                )}
               </div>
             </div>
 

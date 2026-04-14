@@ -15,14 +15,28 @@ describe('VoiceConfigEditor', () => {
           public_base_url: 'http://localhost:8888/api/v1/assets/audio',
           playback_base_url: '/api/v1/assets/audio',
           upload_max_bytes: 26214400,
-          edge_default_voice: 'zh-CN-YunxiNeural',
+          rewrite: {
+            mode: 'rules',
+          },
+          tts: {
+            default_provider: 'edge',
+            voices: {
+              edge: {
+                default: 'zh-CN-YunxiNeural',
+                options: ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural'],
+              },
+              openai: {
+                default: 'alloy',
+                options: ['alloy', 'echo'],
+              },
+            },
+          },
           openai: {
             enabled: true,
             base_url: 'https://api.openai.com/v1',
             api_key_masked: 'sk-t...7890',
             timeout: 120,
             tts_model: 'gpt-4o-mini-tts',
-            tts_default_voice: 'alloy',
             asr_model: 'gpt-4o-transcribe',
           },
           whisper_compatible: {
@@ -60,6 +74,10 @@ describe('VoiceConfigEditor', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    fireEvent.change(screen.getByLabelText('文案改写模式'), { target: { value: 'model' } })
+    fireEvent.change(screen.getByLabelText('默认 TTS Provider'), { target: { value: 'openai' } })
+    fireEvent.change(screen.getByLabelText('Edge 默认音色'), { target: { value: 'zh-CN-XiaoxiaoNeural' } })
+    fireEvent.change(screen.getByLabelText('OpenAI 默认音色'), { target: { value: 'echo' } })
     fireEvent.change(screen.getByLabelText('前端播放地址'), { target: { value: '/proxy/audio' } })
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://lxagent.fun/v1' } })
     fireEvent.change(screen.getByPlaceholderText('输入新的 OpenAI API Key，留空则保持不变'), { target: { value: 'sk-updated-voice-1234567890' } })
@@ -67,6 +85,20 @@ describe('VoiceConfigEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      rewrite: {
+        mode: 'model',
+      },
+      tts: expect.objectContaining({
+        default_provider: 'openai',
+        voices: expect.objectContaining({
+          edge: expect.objectContaining({
+            default: 'zh-CN-XiaoxiaoNeural',
+          }),
+          openai: expect.objectContaining({
+            default: 'echo',
+          }),
+        }),
+      }),
       playback_base_url: '/proxy/audio',
       openai: expect.objectContaining({
         base_url: 'https://lxagent.fun/v1',

@@ -17,8 +17,10 @@ describe('AgentEditModal', () => {
             enabled: true,
             reply_enabled: false,
             asr_provider: 'openai',
-            tts_provider: 'edge',
-            tts_voice: 'zh-CN-YunxiNeural',
+            tts: {
+              provider: 'edge',
+              voice: 'zh-CN-YunxiNeural',
+            },
           },
         }}
         onSave={onSave}
@@ -37,10 +39,54 @@ describe('AgentEditModal', () => {
       agent_name: '主 Agent',
       agent_persona: '默认人设',
       voice: expect.objectContaining({
-        tts_provider: 'gpt-sovits',
-        gpt_sovits_endpoint: 'http://localhost:9880',
-        gpt_sovits_ref_audio_path: '/tmp/ref.wav',
-        gpt_sovits_ref_text: '这是一段参考文本',
+        tts: expect.objectContaining({
+          provider: 'gpt-sovits',
+        }),
+        gpt_sovits: expect.objectContaining({
+          endpoint: 'http://localhost:9880',
+          ref_audio_path: '/tmp/ref.wav',
+          ref_text: '这是一段参考文本',
+        }),
+      }),
+    })
+  })
+
+  it('submits selected edge voice from enum options', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <AgentEditModal
+        agent={{
+          agent_id: 'main-agent',
+          agent_name: '主 Agent',
+          agent_persona: '默认人设',
+          voice: {
+            enabled: true,
+            reply_enabled: true,
+            asr_provider: 'openai',
+            tts: {
+              provider: 'edge',
+              voice: 'zh-CN-YunxiNeural',
+            },
+          },
+        }}
+        onSave={onSave}
+        onCancel={() => {}}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Edge 音色'), { target: { value: 'zh-CN-XiaoxiaoNeural' } })
+    const saveButtons = screen.getAllByRole('button', { name: '保存' })
+    fireEvent.click(saveButtons[saveButtons.length - 1])
+
+    expect(onSave).toHaveBeenCalledWith({
+      agent_name: '主 Agent',
+      agent_persona: '默认人设',
+      voice: expect.objectContaining({
+        tts: expect.objectContaining({
+          provider: 'edge',
+          voice: 'zh-CN-XiaoxiaoNeural',
+        }),
       }),
     })
   })
@@ -58,7 +104,9 @@ describe('AgentEditModal', () => {
             enabled: false,
             reply_enabled: true,
             asr_provider: 'openai',
-            tts_provider: 'edge',
+            tts: {
+              provider: 'edge',
+            },
           },
         }}
         onSave={onSave}

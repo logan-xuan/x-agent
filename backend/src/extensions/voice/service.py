@@ -9,6 +9,7 @@ from .schemas import (
     SpeechSynthesisRequest,
     SpeechSynthesisResult,
 )
+from .speech_rewriter import SpeechTextRewriter
 from .tts.registry import TTSProviderRegistry, create_default_tts_registry
 
 
@@ -20,13 +21,28 @@ class VoiceService:
         *,
         tts_registry: TTSProviderRegistry | None = None,
         asr_registry: ASRProviderRegistry | None = None,
+        speech_rewriter: SpeechTextRewriter | None = None,
     ) -> None:
         self._tts_registry = tts_registry or create_default_tts_registry()
         self._asr_registry = asr_registry or create_default_asr_registry()
+        self._speech_rewriter = speech_rewriter or SpeechTextRewriter()
 
     async def synthesize(self, request: SpeechSynthesisRequest) -> SpeechSynthesisResult:
         provider = self._tts_registry.get(request.provider)
-        return await provider.synthesize(request)
+        normalized_text = await self._speech_rewriter.rewrite(
+            request.text,
+            metadata=request.metadata,
+        ) or request.text.strip()
+        normalized_request = request.model_copy(
+            update={
+                "text": normalized_text,
+                "metadata": {
+                    **request.metadata,
+                    "tts_original_text": request.text,
+                },
+            }
+        )
+        return await provider.synthesize(normalized_request)
 
     async def transcribe(self, request: AudioTranscriptionRequest) -> AudioTranscriptionResult:
         provider = self._asr_registry.get(request.provider)
