@@ -49,26 +49,28 @@ class AgentInfo:
         """
         # 支持 dataclass（通过属性访问）和 dict（通过 get 方法）
         if isinstance(agent_orm, dict):
+            model_config = agent_orm.get("model_config", {}) or {}
             return cls(
                 agent_id=agent_orm.get("agent_id", ""),
                 agent_name=agent_orm.get("agent_name", ""),
                 agent_type=agent_orm.get("agent_type", "main"),
                 agent_persona=agent_orm.get("agent_persona", ""),
-                model_name=agent_orm.get("model_name", ""),
-                temperature=agent_orm.get("temperature"),
-                max_tokens=agent_orm.get("max_tokens"),
+                model_name=model_config.get("name", agent_orm.get("model_name", "")),
+                temperature=model_config.get("temperature", agent_orm.get("temperature")),
+                max_tokens=model_config.get("max_tokens", agent_orm.get("max_tokens")),
                 workspace=agent_orm.get("workspace", ""),
                 feature=agent_orm.get("feature", ""),
             )
         # 支持 dataclass 和 ORM 模型（通过属性访问）
+        model_config = getattr(agent_orm, "model_config", {}) or {}
         return cls(
             agent_id=getattr(agent_orm, "agent_id", ""),
             agent_name=getattr(agent_orm, "agent_name", ""),
             agent_type=getattr(agent_orm, "agent_type", "main"),
             agent_persona=getattr(agent_orm, "agent_persona", ""),
-            model_name=getattr(agent_orm, "model_name", ""),
-            temperature=getattr(agent_orm, "temperature", None),
-            max_tokens=getattr(agent_orm, "max_tokens", None),
+            model_name=model_config.get("name", getattr(agent_orm, "model_name", "")),
+            temperature=model_config.get("temperature", getattr(agent_orm, "temperature", None)),
+            max_tokens=model_config.get("max_tokens", getattr(agent_orm, "max_tokens", None)),
             workspace=getattr(agent_orm, "workspace", ""),
             feature=getattr(agent_orm, "feature", ""),
         )
@@ -103,4 +105,5 @@ class AgentInfo:
             "agent_type": self.agent_type,
             "workspace": self.workspace,
             "feature": self.feature,
+            "model_name": self.model_name,
         }

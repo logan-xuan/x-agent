@@ -14,6 +14,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from src.conversation.system_prompt_builder import SystemPromptBuilder
 from src.memory.context_builder import ContextBuilder
 from src.memory.models import (
     ContextBundle,
@@ -177,3 +178,63 @@ class TestContextBuilder:
         memory = builder._load_long_term_memory()
         
         assert "长期记忆" in memory or len(memory) > 0
+
+    def test_load_identity_supports_chinese_identity_fields(self, temp_workspace):
+        """Should parse Chinese IDENTITY.md metadata."""
+        identity_path = Path(temp_workspace) / "IDENTITY.md"
+        identity_path.write_text("""# 身份认知
+
+**姓名**: 虾铁蛋 🦐
+**存在形式**: 一只聪明的铁虾
+**气质风格**: 聪明机智，乐于助人
+**标志性emoji**: 🦐
+""", encoding="utf-8")
+
+        builder = ContextBuilder(workspace_path=temp_workspace)
+        identity = builder._load_identity()
+
+        assert identity is not None
+        assert identity.name == "虾铁蛋 🦐"
+        assert identity.form == "一只聪明的铁虾"
+        assert identity.style == "聪明机智，乐于助人"
+        assert identity.emoji == "🦐"
+
+
+class TestSystemPromptBuilderCompatibility:
+    """Tests for static-prefix prompt assembly compatibility."""
+
+    def test_build_system_prompt_excludes_memory_md_from_project_context(self, temp_workspace):
+        """MEMORY.md should not be injected into static project context anymore."""
+        workspace = Path(temp_workspace)
+        (workspace / "AGENTS.md").write_text("# AGENTS\n静态指导内容\n", encoding="utf-8")
+        (workspace / "IDENTITY.md").write_text(
+            "# IDENTITY\n\n**姓名**: 测试助手\n**存在形式**: AI\n",
+            encoding="utf-8",
+        )
+        (workspace / "OWNER.md").write_text("# OWNER\n\n## 称呼\n天尊\n", encoding="utf-8")
+        (workspace / "MEMORY.md").write_text(
+            "# MEMORY\n\nUNIQUE_MEMORY_MARKER_SHOULD_NOT_APPEAR\n",
+            encoding="utf-8",
+        )
+
+        builder = SystemPromptBuilder(workspace_path=str(workspace))
+        prompt = builder.build_system_prompt()
+
+        assert "静态指导内容" in prompt
+        assert "UNIQUE_MEMORY_MARKER_SHOULD_NOT_APPEAR" not in prompt
+
+    def test_system_prompt_builder_load_identity_supports_chinese_fields(self, temp_workspace):
+        """SystemPromptBuilder should parse Chinese IDENTITY.md fields."""
+        workspace = Path(temp_workspace)
+        (workspace / "IDENTITY.md").write_text(
+            "# 身份\n\n**姓名**: 虾铁蛋 🦐\n**存在形式**: 一只铁虾\n**气质风格**: 聪明机智\n**标志性emoji**: 🦐\n",
+            encoding="utf-8",
+        )
+
+        builder = SystemPromptBuilder(workspace_path=str(workspace))
+        identity = builder.load_identity()
+
+        assert identity.name == "虾铁蛋 🦐"
+        assert identity.form == "一只铁虾"
+        assert identity.style == "聪明机智"
+        assert identity.emoji == "🦐"

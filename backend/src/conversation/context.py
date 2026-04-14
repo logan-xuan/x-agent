@@ -87,14 +87,14 @@ class AgentContext:
     # --- 请求级字段 ------------------------------------------------
     request_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=datetime.now)
 
     # 计时追踪
     _start_time: float | None = field(default=None, repr=False)
     _end_time: float | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        self._start_time = datetime.utcnow().timestamp()
+        self._start_time = datetime.now().timestamp()
 
     # --- 向后兼容的 property 代理 -------------------------------
 
@@ -192,12 +192,12 @@ class AgentContext:
         """自上下文创建以来的耗时（毫秒）。"""
         if self._start_time is None:
             return None
-        end = self._end_time or datetime.utcnow().timestamp()
+        end = self._end_time or datetime.now().timestamp()
         return (end - self._start_time) * 1000
 
     def complete(self) -> None:
         """标记此上下文为已完成。"""
-        self._end_time = datetime.utcnow().timestamp()
+        self._end_time = datetime.now().timestamp()
 
     # --- 序列化 ------------------------------------------------------
 

@@ -95,6 +95,7 @@ class WebSearchTool(BaseTool):
                 formatted,
                 query=query,
                 results_count=len(results),
+                structured_results=results,
             )
 
         except Exception as e:

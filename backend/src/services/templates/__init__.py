@@ -135,6 +135,7 @@ TOOLS_TEMPLATE = """# TOOLS.md - 工具配置
 ### 文件操作
 - **read_file**: 读取文件内容
 - **write_file**: 写入文件
+- **append_file**: 向现有文件追加内容
 - **list_dir**: 列出目录内容
 
 ### 搜索功能

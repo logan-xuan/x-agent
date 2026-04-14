@@ -368,6 +368,7 @@ class AgentInvoker:
             session_id=session_id,
             agent_info=agent_info,
             persist_user_message=False,
+            allow_auto_resume=False,
         ):
             if event.type == GatewayEventType.TEXT_CHUNK:
                 chunk = event.data.get("content", "")

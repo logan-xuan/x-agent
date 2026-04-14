@@ -59,8 +59,8 @@ class OpenAIProvider(LLMProvider):
             self._client = AsyncOpenAI(
                 api_key=self._api_key,
                 base_url=self._base_url,
-                http_client=http_client,
                 max_retries=self.max_retries,
+                http_client=http_client,
             )
         return self._client
 

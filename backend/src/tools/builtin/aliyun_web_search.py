@@ -165,6 +165,7 @@ class AliyunWebSearchTool(BaseTool):
                 formatted,
                 query=query,
                 results_count=len(results),
+                structured_results=results,
                 usage=self.last_usage_info,
             )
 
