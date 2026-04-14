@@ -49,7 +49,6 @@ export function AgentChatWindow({
     onSendMessage,
     onSendVoiceMessage,
     onAbort,
-    onClearMessages: _onClearMessages,
     onOpenSettings,
     onNewSession,
     onAgentChange,

@@ -192,7 +192,7 @@ export async function testPromptStream(
   let buffer = '';
 
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -393,7 +393,7 @@ export interface NodeDetailsResponse {
   timestamp: string | null;
   source: string | null;
   operation_type: string | null;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export async function getNodeDetails(traceId: string, nodeId: string): Promise<NodeDetailsResponse> {

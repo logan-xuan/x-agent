@@ -174,13 +174,13 @@ export function SettingsWindow({ onClose }: SettingsWindowProps) {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   useEffect(() => {
     if (activeTab === 'stats') {
       fetchStats();
     }
-  }, [activeTab, statsTimeRange]);
+  }, [activeTab, fetchStats]);
 
   const handleReload = async () => {
     setIsReloading(true);

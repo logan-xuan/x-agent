@@ -14,12 +14,16 @@ interface AliyunWebSearchResponse {
   results: WebSearchResult[];
   output?: string | null;
   error?: string | null;
-  metadata?: Record<string, any> | null;
-  usage?: Record<string, any> | null;
+  metadata?: Record<string, unknown> | null;
+  usage?: Record<string, unknown> | null;
 }
 
 interface AliyunWebSearchDebuggerProps {
   onError?: (error: string) => void;
+}
+
+function renderMetric(value: unknown): string {
+  return typeof value === 'number' || typeof value === 'string' ? String(value) : '-';
 }
 
 export function AliyunWebSearchDebugger({ onError }: AliyunWebSearchDebuggerProps) {
@@ -214,7 +218,7 @@ export function AliyunWebSearchDebugger({ onError }: AliyunWebSearchDebuggerProp
                   <div>
                     <dt className="text-gray-600 dark:text-gray-400">搜索次数:</dt>
                     <dd className="font-medium text-gray-900 dark:text-gray-100">
-                      {searchResponse.usage.search_count}
+                      {renderMetric(searchResponse.usage.search_count)}
                     </dd>
                   </div>
                 )}
@@ -222,7 +226,7 @@ export function AliyunWebSearchDebugger({ onError }: AliyunWebSearchDebuggerProp
                   <div>
                     <dt className="text-gray-600 dark:text-gray-400">重写模型 Token:</dt>
                     <dd className="font-medium text-gray-900 dark:text-gray-100">
-                      {searchResponse.usage.rewrite_tokens}
+                      {renderMetric(searchResponse.usage.rewrite_tokens)}
                     </dd>
                   </div>
                 )}
@@ -230,7 +234,7 @@ export function AliyunWebSearchDebugger({ onError }: AliyunWebSearchDebuggerProp
                   <div>
                     <dt className="text-gray-600 dark:text-gray-400">过滤模型 Token:</dt>
                     <dd className="font-medium text-gray-900 dark:text-gray-100">
-                      {searchResponse.usage.filter_tokens}
+                      {renderMetric(searchResponse.usage.filter_tokens)}
                     </dd>
                   </div>
                 )}
@@ -238,7 +242,7 @@ export function AliyunWebSearchDebugger({ onError }: AliyunWebSearchDebuggerProp
                   <div>
                     <dt className="text-gray-600 dark:text-gray-400">总 Token:</dt>
                     <dd className="font-medium text-gray-900 dark:text-gray-100">
-                      {searchResponse.usage.total_tokens}
+                      {renderMetric(searchResponse.usage.total_tokens)}
                     </dd>
                   </div>
                 )}

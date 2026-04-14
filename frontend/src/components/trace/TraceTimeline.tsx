@@ -229,7 +229,7 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
   const eventMsg = event.event || '';
 
   switch (eventType) {
-    case 'tool':
+    case 'tool': {
       // For tool calls, extract relevant information
       const toolName = data.tool_name || module.includes('tool') ? module : 'Unknown Tool';
 
@@ -244,8 +244,9 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
           ...(data.error && { error: data.error })
         }
       };
+    }
 
-    case 'skill':
+    case 'skill': {
       // For skill calls, extract relevant information
       const skillName = data.skill_name || data.name || 'Unknown Skill';
 
@@ -260,8 +261,9 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
           ...(data.error && { error: data.error })
         }
       };
+    }
 
-    case 'command':
+    case 'command': {
       // For command execution, extract relevant information
       const command = data.command || data.cmd || message;
 
@@ -277,9 +279,10 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
           ...(data.exit_code && { exit_code: data.exit_code })
         }
       };
+    }
 
     case 'memory_store':
-    case 'memory_query':
+    case 'memory_query': {
       // For memory operations, extract relevant information
       const operation = eventType === 'memory_store' ? 'Storage' : 'Query';
       const content = data.content || data.query || data.entry || 'Memory operation';
@@ -296,8 +299,9 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
           ...(data.entries && { entries: data.entries })
         }
       };
+    }
 
-    case 'react_loop':
+    case 'react_loop': {
       // For ReAct loop steps, extract relevant information
       const stepType = data.step_type || data.react_step || data.type || 'Step';
       const thought = data.thought || data.reasoning || 'No reasoning provided';
@@ -315,8 +319,9 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
           ...(data.observation && { observation: data.observation })
         }
       };
+    }
 
-    case 'plan_mode':
+    case 'plan_mode': {
       // For plan mode steps, extract relevant information
       const planAction = data.action || data.plan_step || data.task || 'Planning';
       const planDetails = data.plan_details || data.details || 'Plan details';
@@ -333,6 +338,7 @@ function extractEventDetails(event: any, eventType: EventType): { title: string;
           ...(data.status && { status: data.status })
         }
       };
+    }
 
     case 'llm':
       // For LLM interactions, use the data from prompt logs

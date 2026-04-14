@@ -76,7 +76,7 @@ export function SkillMenu({ skills, onSelect, onClose, anchorPosition, searchQue
   // Reset selection when filter changes
   useEffect(() => {
     setSelectedIndex(0);
-  }, [searchQuery]);
+  }, [filteredSkills]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -99,7 +99,7 @@ export function SkillMenu({ skills, onSelect, onClose, anchorPosition, searchQue
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [filteredSkills.length, selectedIndex, onSelect, onClose]);
+  }, [filteredSkills, selectedIndex, onSelect, onClose]);
 
   // Close on outside click
   useEffect(() => {

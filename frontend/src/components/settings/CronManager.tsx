@@ -24,6 +24,10 @@ interface Schedule {
   metadata: Record<string, unknown>;
 }
 
+type TriggerType = 'interval' | 'cron' | 'date';
+type CoalescePolicy = 'latest' | 'earliest' | 'all';
+type ConflictPolicy = 'replace' | 'do_nothing' | 'exception';
+
 interface Job {
   id: string;
   task_id: string;
@@ -86,10 +90,10 @@ export function CronManager() {
   const [newSchedule, setNewSchedule] = useState({
     id: '',
     task_id: '',
-    trigger_type: 'interval',
+    trigger_type: 'interval' as TriggerType,
     trigger_args: JSON.stringify({ minutes: 5 }),
-    coalesce: 'latest',
-    conflict_policy: 'replace',
+    coalesce: 'latest' as CoalescePolicy,
+    conflict_policy: 'replace' as ConflictPolicy,
   });
 
   // Fetch data with useCallback to prevent re-creation on each render
@@ -641,7 +645,9 @@ export function CronManager() {
                 </label>
                 <select
                   value={newSchedule.trigger_type}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, trigger_type: e.target.value as any })}
+                  onChange={(e) =>
+                    setNewSchedule({ ...newSchedule, trigger_type: e.target.value as TriggerType })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                 >
                   <option value="interval">间隔触发 (interval)</option>
@@ -678,7 +684,9 @@ Cron触发: {hour: 3, minute: 0} | {day_of_week: 'mon', hour: 9}
                 </label>
                 <select
                   value={newSchedule.coalesce}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, coalesce: e.target.value as any })}
+                  onChange={(e) =>
+                    setNewSchedule({ ...newSchedule, coalesce: e.target.value as CoalescePolicy })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                 >
                   <option value="latest">latest - 只执行最新</option>
@@ -693,7 +701,12 @@ Cron触发: {hour: 3, minute: 0} | {day_of_week: 'mon', hour: 9}
                 </label>
                 <select
                   value={newSchedule.conflict_policy}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, conflict_policy: e.target.value as any })}
+                  onChange={(e) =>
+                    setNewSchedule({
+                      ...newSchedule,
+                      conflict_policy: e.target.value as ConflictPolicy,
+                    })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                 >
                   <option value="replace">replace - 替换现有</option>

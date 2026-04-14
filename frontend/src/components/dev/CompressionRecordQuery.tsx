@@ -1,6 +1,6 @@
 /** Compression Record Query - View compression history and details */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '../ui/Button';
 import { queryCompressionRecords } from '../../services/api';
 
@@ -40,12 +40,7 @@ export function CompressionRecordQuery({ onError }: CompressionRecordQueryProps)
     total: 0
   });
 
-  // Load compression records on mount
-  useEffect(() => {
-    loadCompressionRecords();
-  }, [pagination.page]);
-
-  const loadCompressionRecords = async () => {
+  const loadCompressionRecords = useCallback(async () => {
     try {
       setIsLoading(true);
       const response = await queryCompressionRecords({
@@ -64,7 +59,12 @@ export function CompressionRecordQuery({ onError }: CompressionRecordQueryProps)
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [onError, pagination.limit, pagination.page]);
+
+  // Load compression records on mount
+  useEffect(() => {
+    loadCompressionRecords();
+  }, [loadCompressionRecords]);
 
   const formatTimestamp = (timestamp: string) => {
     return new Date(timestamp).toLocaleString('zh-CN');

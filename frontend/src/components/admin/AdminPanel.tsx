@@ -1,6 +1,7 @@
 /** 管理后台面板 — 查看和管理 User / Agent / Channel / Session */
 
 import { useEffect, useState, useCallback } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { AgentEditModal, type AgentVoiceConfig } from './AgentEditModal';
 import { Button } from '../ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
@@ -78,7 +79,7 @@ function LoginForm({ onLogin }: { onLogin: (token: string) => void }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setLoading(true);
     setError('');
@@ -135,16 +136,20 @@ function LoginForm({ onLogin }: { onLogin: (token: string) => void }) {
 // 数据表格
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function DataTable<T extends { [key: string]: any }>({
+type TableColumn<T extends object> = {
+  key: Extract<keyof T, string>;
+  label: string;
+  render?: (value: T[keyof T], row: T) => ReactNode;
+};
+
+function DataTable<T extends object>({
   columns,
   data,
   actions,
 }: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  columns: { key: string; label: string; render?: (value: any, row: T) => React.ReactNode }[];
+  columns: TableColumn<T>[];
   data: T[];
-  actions?: (row: T) => React.ReactNode;
+  actions?: (row: T) => ReactNode;
 }) {
   if (data.length === 0) {
     return <p className="py-8 text-center text-sm text-gray-400">暂无数据</p>;
@@ -167,10 +172,11 @@ function DataTable<T extends { [key: string]: any }>({
           {data.map((row, index) => (
             <tr key={index} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
               {columns.map((col) => {
-                const rawValue = String(row[col.key] ?? '');
+                const cellValue = row[col.key as keyof T];
+                const rawValue = String(cellValue ?? '');
                 return (
                   <td key={col.key} className="max-w-[200px] truncate px-3 py-2 text-gray-700 dark:text-gray-300" title={rawValue}>
-                    {col.render ? col.render(row[col.key], row) : rawValue || '-'}
+                    {col.render ? col.render(cellValue, row) : rawValue || '-'}
                   </td>
                 );
               })}

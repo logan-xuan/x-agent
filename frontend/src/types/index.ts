@@ -278,7 +278,7 @@ export interface FlowNodeData {
   memory_content?: string;
   query?: string;
   results_count?: number;
-  query_results?: any[];
+  query_results?: unknown[];
   step_type?: string;
   thought?: string;
   action?: string;

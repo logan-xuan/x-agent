@@ -14,11 +14,15 @@ interface WebSearchResponse {
   results: WebSearchResult[];
   output?: string | null;
   error?: string | null;
-  metadata?: Record<string, any> | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface WebSearchDebuggerProps {
   onError?: (error: string) => void;
+}
+
+function renderMetadataValue(value: unknown, fallback: string): string {
+  return typeof value === 'number' || typeof value === 'string' ? String(value) : fallback;
 }
 
 export function WebSearchDebugger({ onError }: WebSearchDebuggerProps) {
@@ -167,7 +171,10 @@ export function WebSearchDebugger({ onError }: WebSearchDebuggerProps) {
                   )}
                   {searchResponse.metadata && (
                     <span className="ml-2">
-                      · 结果数：{searchResponse.metadata.results_count || searchResponse.results.length}
+                      · 结果数：{renderMetadataValue(
+                        searchResponse.metadata.results_count,
+                        String(searchResponse.results.length)
+                      )}
                     </span>
                   )}
                 </p>

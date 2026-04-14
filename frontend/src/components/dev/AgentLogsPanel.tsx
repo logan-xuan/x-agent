@@ -102,13 +102,6 @@ async function fetchTraceDetail(traceId: string): Promise<TraceDetail> {
     return res.json();
 }
 
-// @ts-expect-error - Reserved for future use
-async function fetchLLMCallDetail(callId: string): Promise<LLMCall> {
-    const res = await fetch(`${API_BASE}/llm-calls/${callId}`);
-    if (!res.ok) throw new Error(`Failed to fetch LLM call: ${res.statusText}`);
-    return res.json();
-}
-
 async function fetchStats(): Promise<{ log_count: number; llm_call_count: number; tool_call_count: number }> {
     const res = await fetch(`${API_BASE}/stats`);
     if (!res.ok) throw new Error(`Failed to fetch stats: ${res.statusText}`);

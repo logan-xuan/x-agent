@@ -1,6 +1,6 @@
 /** WebSocket connection management hook */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
 
@@ -59,15 +59,15 @@ export function useWebSocket({
   onErrorRef.current = onError;
 
   // Clear heartbeat timer
-  const clearHeartbeat = () => {
+  const clearHeartbeat = useCallback(() => {
     if (heartbeatTimerRef.current) {
       clearInterval(heartbeatTimerRef.current);
       heartbeatTimerRef.current = null;
     }
-  };
+  }, []);
 
   // Start heartbeat to detect dead connections
-  const startHeartbeat = () => {
+  const startHeartbeat = useCallback(() => {
     clearHeartbeat();
     missedHeartbeatsRef.current = 0;
 
@@ -107,7 +107,7 @@ export function useWebSocket({
         ws.close();
       }
     }, heartbeatInterval);
-  };
+  }, [clearHeartbeat, heartbeatInterval]);
 
   // Main connection effect
   useEffect(() => {
@@ -313,7 +313,8 @@ export function useWebSocket({
     // Cleanup
     return () => {
       // Mark this connection as stale
-      connectionIdRef.current++;
+      const nextConnectionId = connectionId + 1;
+      connectionIdRef.current = nextConnectionId;
       clearHeartbeat();
 
       // 停止自动重连
@@ -340,7 +341,15 @@ export function useWebSocket({
       cleanupTimeouts.set(url, timeoutId);
       wsRef.current = null;
     };
-  }, [url, heartbeatInterval]);
+  }, [
+    clearHeartbeat,
+    heartbeatInterval,
+    maxReconnectAttempts,
+    reconnect,
+    reconnectInterval,
+    startHeartbeat,
+    url,
+  ]);
 
   // Send message
   const send = (data: unknown) => {
