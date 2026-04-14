@@ -162,6 +162,14 @@ def test_turn_controller_injects_generate_image_markdown_into_final_output():
     controller = DefaultTurnController()
     state = TurnState.from_request(_request())
     state.metadata["final_output_text"] = "图片已经生成好了，点击链接查看。"
+    state.metadata["runtime_route_decision"] = {
+        "policy_id": "skill:imagegen",
+        "policy": {
+            "postconditions": {
+                "require_successful_tool": "generate_image",
+            }
+        },
+    }
     state.tool_results.append(
         ToolExecutionResult(
             tool_name="generate_image",
@@ -184,6 +192,34 @@ def test_turn_controller_injects_generate_image_markdown_into_final_output():
         "![生成图片](http://localhost:8888/api/v1/assets/generated-images/main-agent/2026-04-11/img_demo.png)"
     )
     assert "图片已经生成好了" in output
+
+
+def test_turn_controller_blocks_unverified_output_when_route_postcondition_fails():
+    controller = DefaultTurnController()
+    state = TurnState.from_request(_request())
+    state.metadata["final_output_text"] = "已生成 1 张图片，点击查看。"
+    state.metadata["runtime_route_decision"] = {
+        "policy_id": "skill:imagegen",
+        "policy": {
+            "postconditions": {
+                "require_successful_tool": "generate_image",
+            }
+        },
+    }
+    state.tool_results.append(
+        ToolExecutionResult(
+            tool_name="generate_image",
+            success=False,
+            error="provider timeout",
+        )
+    )
+
+    output = controller._resolve_output_text(state)
+
+    assert output == "未完成可验证的结果输出：deterministic route 要求工具 `generate_image` 成功执行。"
+    assert state.metadata["output_contract_violation"] == (
+        "deterministic route 要求工具 `generate_image` 成功执行。"
+    )
 
 
 

@@ -239,6 +239,8 @@ def _parse_ws_message_to_envelope(
         if isinstance(img, dict):
             images.append((img.get("data", ""), img.get("mime_type", "image/png")))
     metadata = dict(data.get("metadata", {}) or {})
+    if "input_modality" not in metadata and msg_type == "message":
+        metadata["input_modality"] = "text"
 
     return Envelope.create_chat(
         content=content,
@@ -429,6 +431,7 @@ async def _prepare_voice_chat_payload(
         "provider": transcription.provider,
         "language": transcription.language,
     }
+    metadata["input_modality"] = "audio"
     logger.info(
         "Voice transcription succeeded",
         extra={
@@ -470,12 +473,14 @@ async def _maybe_build_voice_reply_payload(
     voice_service=None,
 ) -> dict[str, Any] | None:
     """在用户请求语音回复时，为 assistant 文本生成音频回复元数据。"""
-    if not envelope.metadata.get("voice_reply"):
-        agent_defaults = _resolve_agent_voice_defaults(envelope.agent_id or "")
-        if not bool(agent_defaults.get("reply_enabled")):
+    agent_defaults = _resolve_agent_voice_defaults(envelope.agent_id or "")
+    if str(envelope.metadata.get("input_modality", "")).strip().lower() != "audio":
+        return None
+    if "voice_reply" in envelope.metadata:
+        if not bool(envelope.metadata.get("voice_reply")):
             return None
-    else:
-        agent_defaults = _resolve_agent_voice_defaults(envelope.agent_id or "")
+    elif not bool(agent_defaults.get("reply_enabled")):
+        return None
     if not message_content.strip():
         return None
 
@@ -513,6 +518,25 @@ async def _maybe_build_voice_reply_payload(
         "provider": result.provider,
         "voice": result.voice,
     }
+
+
+def _extract_audio_reply_from_tool_result(ws_message: dict[str, Any]) -> dict[str, Any] | None:
+    """Read synthesized audio metadata from a tool_result WebSocket message."""
+    if ws_message.get("type") != "tool_result":
+        return None
+    if ws_message.get("name") != "synthesize_speech":
+        return None
+    if bool(ws_message.get("is_error")):
+        return None
+    details = ws_message.get("details")
+    if not isinstance(details, dict):
+        return None
+    audio_reply = details.get("audio_reply")
+    if not isinstance(audio_reply, dict):
+        return None
+    if not audio_reply.get("asset_id"):
+        return None
+    return dict(audio_reply)
 
 
 # ============================================================================
@@ -731,6 +755,7 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
         Args:
             envelope: 要分发的消息信封。
         """
+        pending_tool_audio_reply: dict[str, Any] | None = None
         try:
             async for gateway_event in dispatcher.dispatch(
                 envelope,
@@ -739,13 +764,19 @@ async def agent_websocket(websocket: WebSocket, session_id: str) -> None:
             ):
                 ws_message = convert_gateway_event_to_ws(gateway_event)
                 if ws_message is not None:
+                    tool_audio_reply = _extract_audio_reply_from_tool_result(ws_message)
+                    if tool_audio_reply is not None:
+                        pending_tool_audio_reply = tool_audio_reply
                     deferred_error_message: dict[str, Any] | None = None
                     if gateway_event.type == GatewayEventType.MESSAGE_END:
                         try:
-                            audio_reply = await _maybe_build_voice_reply_payload(
-                                envelope,
-                                str(gateway_event.data.get("content", "")),
-                            )
+                            audio_reply = pending_tool_audio_reply
+                            if audio_reply is None:
+                                audio_reply = await _maybe_build_voice_reply_payload(
+                                    envelope,
+                                    str(gateway_event.data.get("content", "")),
+                                )
+                            pending_tool_audio_reply = None
                             if audio_reply is not None:
                                 ws_message["audio_reply"] = audio_reply
                                 message_id = gateway_event.data.get("message_id")

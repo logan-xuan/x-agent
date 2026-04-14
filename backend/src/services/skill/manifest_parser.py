@@ -266,6 +266,7 @@ class ManifestParser:
             "examples",
             "keywords",
             "priority",
+            "routing",
             "emoji",
             "homepage",
             "license",

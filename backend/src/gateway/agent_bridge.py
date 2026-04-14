@@ -21,7 +21,6 @@ AgentBridge 是 Gateway 与 Agent Core 之间的唯一连接点。
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -59,6 +58,7 @@ from ..agent_core.types import (
 from ..conversation.dao.models import Agent as AgentORM
 from ..runtime.model_budget import derive_model_aware_turn_budget_profile
 from ..runtime.repositories import StateSnapshotRecord, SummaryRecord, TranscriptEntry
+from ..runtime.routing import IntentRouter
 from ..runtime.service import get_runtime_services
 from ..runtime.turn import DefaultToolGovernor, DefaultTurnController
 from ..runtime.types import (
@@ -298,6 +298,11 @@ class AgentBridge:
         self._runtime_context_builder = DefaultContextBuilder()
         self._runtime_compression_pipeline = DefaultCompressionPipeline()
         self._runtime_tool_result_normalizer = RuntimeToolResultNormalizer()
+        skill_adapter = _get_skill_adapter()
+        self._intent_router = IntentRouter(
+            skill_registry=getattr(skill_adapter, "_registry", None),
+            agent_catalog_provider=AgentORM.list_all,
+        )
         self.runtime_turn_controller = self._create_runtime_turn_controller()
 
     def create_config(
@@ -630,9 +635,9 @@ class AgentBridge:
             )
 
         await self._ensure_runtime_turn_bootstrap(state)
-        forced_delegate_plan = self._runtime_maybe_force_delegate_plan(state)
-        if forced_delegate_plan is not None:
-            return forced_delegate_plan
+        routed_plan = self._runtime_maybe_route_intent_plan(state)
+        if routed_plan is not None:
+            return routed_plan
         self._runtime_log_entry(
             state,
             event="runtime_turn_plan",
@@ -696,109 +701,38 @@ class AgentBridge:
             allow_parallel=len(tool_calls) > 1,
         )
 
-    def _runtime_maybe_force_delegate_plan(self, state) -> ToolExecutionPlan | None:
-        """Convert explicit delegation requests into a deterministic delegate_task plan."""
-        if state.turn_index != 0:
-            return None
-        if state.request.metadata.get("runtime_resume_from_child"):
-            return None
-
-        available_tool_names = {tool.name for tool in self._runtime_available_tools(state)}
-        if "delegate_task" not in available_tool_names:
-            return None
-
-        current_agent_id = ""
+    def _runtime_maybe_route_intent_plan(self, state) -> ToolExecutionPlan | None:
+        """Resolve deterministic routing decisions before the free-form LLM planner."""
         runtime_agent_info = state.metadata.get("runtime_agent_info")
-        if runtime_agent_info is not None:
-            current_agent_id = getattr(runtime_agent_info, "agent_id", "") or ""
-
-        parsed = self._runtime_parse_delegate_intent(
-            state.request.user_input,
-            current_agent_id=current_agent_id,
-        )
-        if parsed is None:
-            return None
-
-        target_agent_id, delegated_task = parsed
-        self._runtime_log_entry(
-            state,
-            event="runtime_forced_delegate_plan",
-            message=f"Forced delegate_task plan for {target_agent_id}",
-            category=LogCategory.AGENT_LOOP,
-            data={
-                "target_agent_id": target_agent_id,
-                "task_preview": delegated_task[:200],
+        current_agent_id = getattr(runtime_agent_info, "agent_id", "") if runtime_agent_info else ""
+        decision = self._intent_router.decide(
+            user_input=state.request.user_input,
+            available_tool_names={tool.name for tool in self._runtime_available_tools(state)},
+            turn_index=state.turn_index,
+            metadata={
+                **dict(state.request.metadata),
+                "current_agent_id": current_agent_id,
             },
         )
-        return ToolExecutionPlan(
-            calls=[
-                ToolCallSpec(
-                    tool_name="delegate_task",
-                    arguments={
-                        "agent_id": target_agent_id,
-                        "task": delegated_task,
-                    },
-                )
-            ]
+        if decision is None or decision.tool_plan is None:
+            return None
+        state.metadata["runtime_route_decision"] = {
+            "policy_id": decision.policy_id,
+            "reason": decision.reason,
+            **dict(decision.metadata or {}),
+        }
+        self._runtime_log_entry(
+            state,
+            event="runtime_route_decision",
+            message=f"Intent router selected {decision.policy_id}",
+            category=LogCategory.AGENT_LOOP,
+            data={
+                "policy_id": decision.policy_id,
+                "reason": decision.reason,
+                "tool_names": [call.tool_name for call in decision.tool_plan.calls],
+            },
         )
-
-    def _runtime_parse_delegate_intent(
-        self,
-        user_input: str,
-        *,
-        current_agent_id: str = "",
-    ) -> tuple[str, str] | None:
-        """Parse explicit '让某个 agent 去做事' requests before they hit the model."""
-        text = (user_input or "").strip()
-        if not text:
-            return None
-
-        agents = AgentORM.list_all()
-        if not agents:
-            return None
-
-        alias_to_agent_id: dict[str, str] = {}
-        for agent in agents:
-            agent_id = getattr(agent, "agent_id", "") or ""
-            agent_name = getattr(agent, "agent_name", "") or ""
-            if not agent_id or agent_id == current_agent_id:
-                continue
-
-            aliases = {
-                agent_id,
-                agent_name,
-                agent_name.replace("助手", "").strip(),
-                agent_name.replace("分析员", "").strip(),
-                agent_name.replace("评估员", "").strip(),
-            }
-            for alias in aliases:
-                normalized = alias.strip()
-                if normalized:
-                    alias_to_agent_id[normalized] = agent_id
-
-        if not alias_to_agent_id:
-            return None
-
-        alias_pattern = "|".join(
-            sorted((re.escape(alias) for alias in alias_to_agent_id), key=len, reverse=True)
-        )
-        pattern = re.compile(
-            rf"^\s*(?:请|麻烦|请你|帮我)?\s*(?:委托|让|叫)?\s*(?P<agent>{alias_pattern})\s*(?P<task>.+)$"
-        )
-        match = pattern.match(text)
-        if match is None:
-            return None
-
-        target_agent_id = alias_to_agent_id.get(match.group("agent"), "")
-        delegated_task = match.group("task").lstrip(" ，,:：")
-        for prefix in ("帮我", "帮忙", "给我", "为我", "去", "来", "帮我去", "帮忙去"):
-            if delegated_task.startswith(prefix) and len(delegated_task) > len(prefix):
-                delegated_task = delegated_task[len(prefix) :].lstrip(" ，,:：")
-                break
-        delegated_task = delegated_task.strip()
-        if not target_agent_id or not delegated_task:
-            return None
-        return target_agent_id, delegated_task
+        return decision.tool_plan
 
     async def _runtime_controller_executor(
         self,

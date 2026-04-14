@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from sqlalchemy import select
+
 from ....config.manager import get_config
 from ....models.audio_asset import AudioAsset
 from ....services.storage import StorageService, get_storage_service
@@ -165,6 +167,50 @@ class AudioAssetStore:
             audio_format=str(audio_format),
             duration_ms=duration_ms,
             original_filename=original_filename,
+            metadata=metadata,
+        )
+
+    async def get_asset_ref(self, asset_id: str) -> AudioAssetRef | None:
+        """Resolve a stored audio asset into the shared reference schema."""
+        config = self._current_config()
+        async with self._storage.session() as db:
+            result = await db.execute(
+                select(AudioAsset).where(AudioAsset.asset_id == asset_id).limit(1)
+            )
+            record = result.scalar_one_or_none()
+
+        if record is None:
+            return None
+
+        relative_path = str(record.relative_path)
+        file_path = (self._root / relative_path).resolve()
+        playback_base_url = str(
+            getattr(config, "playback_base_url", "") or str(config.public_base_url)
+        )
+        playback_url = self._build_asset_url(playback_base_url, relative_path)
+        purpose = str(record.purpose or "upload")
+        source = "generated" if purpose == "generated" else "upload"
+        metadata: dict[str, object] = {}
+        if record.metadata_json:
+            try:
+                decoded = json.loads(record.metadata_json)
+                if isinstance(decoded, dict):
+                    metadata.update(decoded)
+            except json.JSONDecodeError:
+                metadata["raw_metadata_json"] = record.metadata_json
+        if record.original_filename:
+            metadata.setdefault("original_filename", record.original_filename)
+
+        return AudioAssetRef(
+            asset_id=str(record.asset_id),
+            storage_path=file_path,
+            mime_type=str(record.mime_type),
+            format=str(record.format),
+            source=source,
+            public_url=str(record.public_url),
+            playback_url=playback_url,
+            size_bytes=int(record.size_bytes) if record.size_bytes is not None else None,
+            duration_ms=int(record.duration_ms) if record.duration_ms is not None else None,
             metadata=metadata,
         )
 

@@ -13,6 +13,21 @@ priority: 1
 allowed_tools:
   - generate_image
   - read_file
+routing:
+  mode: deterministic
+  priority: 100
+  matcher: text_to_image_request
+  required_tools:
+    - generate_image
+  first_turn_only: true
+  disallow_resume: true
+  action:
+    type: force_tool_plan
+    tool_name: generate_image
+    args:
+      prompt: $user_input
+  postconditions:
+    require_successful_tool: generate_image
 ---
 
 # 文生图指南

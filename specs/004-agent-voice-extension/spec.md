@@ -1,210 +1,171 @@
-# Spec: Agent 语音扩展能力
+# Spec: Agent 语音扩展双路径能力
 
 **Feature Branch**: `004-agent-voice-extension`  
-**Date**: 2026-04-11  
-**Status**: Draft
+**Date**: 2026-04-14  
+**Status**: Approved
 
 ## 1. 背景
 
-当前项目的 Web Chat 链路是纯文本消息模型：
+当前 `extensions/voice` 已经承担了聊天协议层的自动语音处理：
 
-- 前端 chatbox 只支持文本输入
-- WebSocket 协议只支持文本消息和工具事件
-- 后端没有通用语音扩展层
-- 现有 `backend/src/extensions/video_pipeline/tts_voice.py` 仅服务视频脚本配音场景，不能直接承担聊天语音能力
+- 用户上传语音时，网关会自动执行 ASR，把结果转成文本进入主对话链路
+- assistant 文本回复可以自动生成 TTS 音频并挂回消息
+- 前端已经具备语音消息、转写文本、语音回复播放器等渲染能力
 
-本特性需要为 Agent 聊天补齐回合式语音消息能力，并把 TTS / ASR 能力收敛为可扩展 provider 架构。
+但这套能力仍然只有“协议层自动调用”这一条路径，Agent 本身无法把 TTS / ASR 当成可主动调用的能力边界来使用。同时，自动语音回复的触发条件过宽，文本输入在某些配置下也会自动生成音频，不符合当前产品要求。
 
 ## 2. 目标
 
-构建一套面向 chatbox 的通用语音能力，支持：
+本次改造需要同时满足三件事：
 
-- 用户发送语音给 agent
-- 后端执行 ASR 语音转文字并进入现有聊天流程
-- agent 输出文本后可继续生成语音回复
-- chatbox 能展示音频消息、转写结果、语音回复播放器
-- TTS 和 ASR 都采用可扩展 provider 架构
-- GPT-SoVITS 声音克隆能力按 Agent 维度配置
-- 管理后台可配置 Agent 的语音策略
+1. **保留协议层自动语音链路**
+   - 用户发语音时自动 ASR
+   - 仅当“本轮用户输入是语音”时，才允许自动 TTS 回复
+
+2. **把 TTS / ASR 暴露给 Agent**
+   - Agent 可以把文字转语音当成内置工具主动调用
+   - Agent 可以把音频转文字当成内置工具主动调用
+
+3. **收敛默认交互规则**
+   - 用户文本输入默认只返回文本
+   - 只有用户明确要求音频版时，Agent 才通过工具主动生成音频回复
 
 ## 3. 已确认范围
 
-### 3.1 交互模式
+### 3.1 自动链路
 
-- 采用“微信语音消息式”的**回合式**交互
-- 不做全双工实时通话
-- 不做持续收音、实时打断、流式语音回放
+- 保留现有网关层自动语音处理
+- 自动 ASR 仍然只在用户发送音频消息时触发
+- 自动 TTS 仅在用户本轮输入为音频时触发
+- 自动 TTS 仍然受 Agent 级 `reply_enabled` 控制
 
-### 3.2 Chatbox 模式
+### 3.2 Agent 主动调用链路
 
-- 前端采用**双模可切换**
-- 支持 `文本模式 / 语音模式`
-- 同一会话协议同时支持文字、音频、转写文本、语音回复
+- 新增两个内置工具：
+  - `synthesize_speech`
+  - `transcribe_audio`
+- 工具直接复用 `VoiceService`
+- 不再为这两项能力额外设计单独 skill 协议
 
-### 3.3 TTS 范围
+### 3.3 消息表现
 
-- TTS 需要支持 provider 扩展
-- 首批 provider：
-  - Edge TTS（默认）
-  - OpenAI TTS API
-  - GPT-SoVITS
-
-### 3.4 ASR 范围
-
-- ASR 需要支持 provider 扩展
-- 首批 provider：
-  - OpenAI ASR
-  - Whisper 本地或兼容接口
-  - 第三方 provider 预留
-
-### 3.5 音色配置归属
-
-- GPT-SoVITS 声音克隆配置按 **Agent** 维度绑定
-- 不按系统全局，不按单个 session 临时切换作为首版主路径
-
-### 3.6 配置入口
-
-- Agent 语音配置通过**管理后台**维护
-- 凭证和服务地址仍由后端安全配置承载
+- 自动链路生成的语音回复继续挂载到 assistant 消息的 `audio_reply`
+- Agent 通过 `synthesize_speech` 主动生成的音频，也要挂回当前 assistant 消息的 `audio_reply`
+- `transcribe_audio` 工具默认返回文本结果和结构化元数据，不强制新增独立消息卡片
 
 ## 4. 非目标
 
-本期明确不做：
+本次明确不做：
 
-- 全双工实时语音通话
-- 用户边说边上传分片并边转写边推理
+- 全双工实时通话
 - 语音通话级别的打断、抢占、回声消除
-- 前端本地离线 ASR / TTS
-- 多段音频混音、背景音、语音特效
-- 在首版内重构整个聊天存储系统
+- 新增一套独立于工具系统的“语音 skill 协议”
+- 在本次改造中重做前端消息卡片样式
+- 为所有 provider 设计统一音色枚举协议
 
 ## 5. 用户故事
 
-### US1: 用户发送语音消息
+### US1: 语音输入自动处理
 
-作为 chatbox 用户，我可以录制一段语音并发送给 agent，系统会保留原始音频并把语音转写为文本供后续推理使用。
+作为用户，我发送语音消息后，系统会自动完成转写，并把转写文本交给 Agent 继续处理。
 
-### US2: Agent 返回语音回复
+### US2: 语音输入才自动语音回复
 
-作为 chatbox 用户，我在收到 agent 文本回复时，如果当前 Agent 开启语音回复，可以直接播放对应语音。
+作为用户，我用语音发起本轮对话时，如果 Agent 开启自动语音回复，就能收到文本 + 音频；如果我是文本输入，默认只收到文本。
 
-### US3: 管理员配置 Agent 语音能力
+### US3: Agent 主动生成音频
 
-作为管理员，我可以为每个 Agent 配置 ASR/TTS provider、默认音色、GPT-SoVITS 参考音频和语音回复策略。
+作为用户，当我明确要求“给我语音版/生成音频回复”时，Agent 可以自行调用 TTS 工具并返回可播放音频。
 
-### US4: 开发者扩展 provider
+### US4: Agent 主动转写音频
 
-作为后端开发者，我可以按统一接口增加新的 TTS 或 ASR provider，而不需要修改 chat 协议或业务层主流程。
+作为用户，当我让 Agent 处理某段音频资产时，Agent 可以主动调用 ASR 工具完成转写，再基于转写结果继续回答。
 
 ## 6. 功能需求
 
-### 6.1 后端语音扩展层
+### 6.1 自动链路
 
-- **FR-001**: 系统 MUST 在 `backend/src/extensions/` 下新增通用语音扩展目录，而不是继续把聊天语音逻辑放在视频流水线内。
-- **FR-002**: 系统 MUST 为 TTS 定义统一 provider 抽象和 provider 注册机制。
-- **FR-003**: 系统 MUST 为 ASR 定义统一 provider 抽象和 provider 注册机制。
-- **FR-004**: 系统 MUST 提供默认 TTS provider 解析逻辑，默认使用 Edge TTS。
-- **FR-005**: 系统 MUST 支持 OpenAI TTS provider。
-- **FR-006**: 系统 MUST 支持 GPT-SoVITS TTS provider。
-- **FR-007**: 系统 MUST 支持 OpenAI ASR provider。
-- **FR-008**: 系统 MUST 支持 Whisper 兼容接口 provider。
-- **FR-009**: 系统 MUST 为第三方 TTS / ASR provider 预留扩展入口。
+- **FR-001**: 系统 MUST 保留 `extensions/voice` 作为网关协议层自动语音中间层。
+- **FR-002**: 系统 MUST 在用户输入音频消息时自动执行 ASR，并把结果注入后续文本聊天主流程。
+- **FR-003**: 系统 MUST 为自动 ASR 产物在消息 metadata 中保留音频资产和转写结果。
+- **FR-004**: 系统 MUST 只在 `input_modality=audio` 的回合内考虑自动 TTS 回复。
+- **FR-005**: 系统 MUST 在 `input_modality=text` 的回合内默认不做自动 TTS 回复，即使 Agent 开启了默认语音回复。
+- **FR-006**: 系统 MUST 在自动 TTS 失败时保底返回文本消息，并向客户端返回结构化错误事件。
 
-### 6.2 聊天协议与消息模型
+### 6.2 Agent 工具链路
 
-- **FR-010**: 系统 MUST 在现有 WebSocket 聊天协议上扩展语音消息事件，而不破坏现有文本消息能力。
-- **FR-011**: 系统 MUST 支持用户消息携带音频附件元数据。
-- **FR-012**: 系统 MUST 支持服务端返回转写结果事件。
-- **FR-013**: 系统 MUST 支持 assistant 消息附带语音回复元数据。
-- **FR-014**: 系统 MUST 在历史消息模型中保存文本、原始音频、转写文本、语音回复之间的关系。
+- **FR-007**: 系统 MUST 暴露 `synthesize_speech` 作为内置工具给 Agent 调用。
+- **FR-008**: `synthesize_speech` MUST 复用 `VoiceService.synthesize()`，并支持可选 `provider`、`voice` 参数。
+- **FR-009**: `synthesize_speech` MUST 返回结构化音频资产元数据，并允许协议层把该结果挂载到当前 assistant 消息的 `audio_reply`。
+- **FR-010**: 系统 MUST 暴露 `transcribe_audio` 作为内置工具给 Agent 调用。
+- **FR-011**: `transcribe_audio` MUST 复用 `VoiceService.transcribe()`，并支持转写当前请求音频、历史音频资产或显式文件路径。
+- **FR-012**: `transcribe_audio` MUST 返回转写文本、语言和输入音频元数据，供后续 LLM 继续推理。
 
-### 6.3 Chatbox 交互
+### 6.3 工具与协议协同
 
-- **FR-015**: 前端 MUST 支持文本模式和语音模式切换。
-- **FR-016**: 前端 MUST 支持录音、停止录音、发送录音、发送前预览。
-- **FR-017**: 前端 MUST 在用户语音消息卡片中展示音频播放器和转写文本。
-- **FR-018**: 前端 MUST 在 assistant 回复卡片中展示语音播放器。
-- **FR-019**: 如果当前消息没有音频，则前端 MUST 保持现有文本显示行为不变。
-
-### 6.4 Agent 配置管理
-
-- **FR-020**: 系统 MUST 允许在管理后台为 Agent 配置默认 TTS provider。
-- **FR-021**: 系统 MUST 允许在管理后台为 Agent 配置默认 ASR provider。
-- **FR-022**: 系统 MUST 允许在管理后台为 Agent 配置默认音色或 voice id。
-- **FR-023**: 系统 MUST 允许在管理后台为 Agent 配置 GPT-SoVITS 参考音频和参考文本。
-- **FR-024**: 系统 MUST 允许在管理后台控制该 Agent 是否默认启用语音回复。
-
-### 6.5 资产与安全
-
-- **FR-025**: 系统 MUST 对上传音频做格式、大小和 MIME 基础校验。
-- **FR-026**: 系统 MUST 为生成音频提供可访问但受控的资源 URL。
-- **FR-027**: 系统 MUST 记录音频资产的基本元数据，如时长、格式、大小、来源 provider。
-- **FR-028**: 系统 MUST 对 provider 调用失败提供可观测错误，并允许降级到“只返回文本”。
+- **FR-013**: 网关 MUST 能识别 `synthesize_speech` 的工具结果，并把音频资产元数据提升为最终 assistant 消息的 `audio_reply`。
+- **FR-014**: 若同一回合中同时存在“工具主动生成音频”和“自动语音回复”候选，系统 MUST 优先采用工具生成的音频结果，避免重复合成。
+- **FR-015**: 当前请求上下文 MUST 向工具暴露本轮输入音频的可解析引用，以便 `transcribe_audio` 在无显式参数时处理当前语音输入。
 
 ## 7. 架构要求
 
-### 7.1 后端分层
+### 7.1 责任边界
 
-建议新增如下边界：
+- `extensions/voice/`
+  - 继续只承载能力层：provider、资产、编排、文本重写
+- `tools/builtin/`
+  - 新增语音工具入口，直接复用 `VoiceService`
+- `gateway/endpoints/websocket.py`
+  - 负责自动链路触发条件
+  - 负责把语音工具结果合并进最终消息协议
+- `gateway/dispatcher.py`
+  - 请求上下文中透传本轮语音输入 metadata，供工具默认解析
 
-```text
-backend/src/extensions/voice/
-├── asr/
-├── tts/
-├── profiles/
-├── assets/
-└── service.py
-```
+### 7.2 不做的边界
 
-职责约束：
+- 不把 TTS / ASR 逻辑写进 Agent prompt 模板
+- 不在工具层重复实现 provider 逻辑
+- 不为自动链路和工具链路维护两套音频资产格式
 
-- `tts/` 只负责文本转语音
-- `asr/` 只负责语音转文字
-- `profiles/` 只负责 Agent 级语音配置解析
-- `assets/` 只负责音频文件持久化与 URL 暴露
-- `service.py` 只负责对聊天链路暴露统一编排接口
+## 8. 数据与协议约束
 
-### 7.2 现有 TTS 代码复用
+### 8.1 请求级 metadata
 
-- `backend/src/extensions/video_pipeline/tts_voice.py` 不应继续作为聊天语音主入口
-- 可以在后续改造为复用新通用 TTS 层，避免重复 provider 实现
+语音输入进入主链路后，metadata 至少需要保留：
 
-## 8. 数据与协议建议
+- `input_modality=audio`
+- `audio.asset_id`
+- `audio.public_url`
+- `audio.playback_url`
+- `transcript.text`
+- `transcript.provider`
 
-### 8.1 用户语音消息
+### 8.2 工具结果 metadata
 
-用户发送语音消息后，系统需要保留：
+`synthesize_speech` 成功后，其工具结果 metadata 至少需要保留：
 
-- 原始音频文件引用
-- 原始文件元数据
-- ASR 结果文本
-- 使用的 ASR provider
-
-### 8.2 Assistant 语音回复
-
-assistant 回复需要保留：
-
-- 标准文本内容
-- 语音回复文件引用
-- 语音文件元数据
-- 使用的 TTS provider 和 voice
+- `audio_reply.asset_id`
+- `audio_reply.public_url`
+- `audio_reply.playback_url`
+- `audio_reply.provider`
+- `audio_reply.voice`
 
 ## 9. 成功标准
 
-- **SC-001**: 用户可以在 chatbox 中录制语音并成功发送，后端能完成 ASR 并进入现有对话流程。
-- **SC-002**: assistant 文本回复可在开启语音回复的 Agent 上生成可播放音频。
-- **SC-003**: 前端消息列表可正确展示用户语音、转写结果和 assistant 语音播放器。
-- **SC-004**: TTS provider 至少支持 Edge、OpenAI、GPT-SoVITS，ASR provider 至少支持 OpenAI、Whisper 兼容接口。
-- **SC-005**: 管理后台可以按 Agent 配置语音 provider 和 GPT-SoVITS 克隆素材。
-- **SC-006**: 任一语音 provider 调用失败时，系统仍能保底返回文本回复，不使主聊天链路不可用。
+- **SC-001**: 语音输入仍可走通“上传语音 -> 自动 ASR -> 聊天 -> 自动语音回复”闭环。
+- **SC-002**: 文本输入默认只返回文本，不再因 `reply_enabled` 自动生成音频。
+- **SC-003**: 用户明确要求音频版时，Agent 可以通过 `synthesize_speech` 主动生成并返回可播放音频。
+- **SC-004**: `transcribe_audio` 工具可以处理当前请求音频或显式音频资产，并把转写结果返回给 Agent。
+- **SC-005**: 自动链路和工具链路共用同一套 provider / asset / metadata 结构，不产生重复实现。
 
 ## 10. 验证范围
 
 必须覆盖：
 
-- 后端 provider 抽象和 provider 路由单测
-- 音频上传 / 资产持久化单测
-- 网关语音消息协议单测
-- chatbox 双模交互和语音消息渲染测试
-- Agent 配置读写测试
-- 至少一条从“上传语音 -> ASR -> 聊天 -> TTS -> 返回语音”的集成验证链路
+- 自动语音回复只在音频输入下触发的单测
+- `synthesize_speech` 工具注册、执行、结果元数据单测
+- `transcribe_audio` 工具注册、执行、默认上下文解析单测
+- 网关将工具生成的音频挂回最终 assistant 消息的单测
+- 至少一条真实链路验证：
+  - 语音输入自动闭环
+  - 文本输入通过工具生成音频回复

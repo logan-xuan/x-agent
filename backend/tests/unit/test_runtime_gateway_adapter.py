@@ -29,6 +29,7 @@ from src.runtime.repositories import (
     SummaryRecord,
     TranscriptEntry,
 )
+from src.runtime.routing import RouteDecision
 from src.runtime.turn.state import TurnState
 from src.runtime.types import (
     CompactResult,
@@ -37,6 +38,7 @@ from src.runtime.types import (
     SessionDescriptor,
     TaskFrame,
     ToolCallSpec,
+    ToolExecutionPlan,
     TurnRequest,
     TurnResult,
 )
@@ -283,6 +285,188 @@ async def test_runtime_controller_planner_forces_delegate_task_for_explicit_dele
     assert plan.calls[0].tool_name == "delegate_task"
     assert plan.calls[0].arguments["agent_id"] == "research-agent"
     assert plan.calls[0].arguments["task"] == "查询今天上海的天气，只需一句话回复。"
+
+
+@pytest.mark.asyncio
+async def test_runtime_controller_planner_consumes_intent_router_decision_before_llm(monkeypatch):
+    bridge = AgentBridge()
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-router", session_id="sess-router"),
+        user_input="生成一只戴眼镜的白色猫咪",
+        task_frame=TaskFrame(objective="generate image"),
+        route=RouteMeta(channel="web_chat"),
+        metadata={},
+    )
+    state = TurnState.from_request(request)
+
+    async def fake_bootstrap(state):
+        state.metadata["runtime_agent_info"] = SimpleNamespace(agent_id="main-agent")
+        state.metadata["runtime_config"] = SimpleNamespace(
+            tools=SimpleNamespace(
+                get_tools=lambda: [
+                    SimpleNamespace(name="generate_image"),
+                    SimpleNamespace(name="web_search"),
+                ]
+            )
+        )
+
+    monkeypatch.setattr(bridge, "_ensure_runtime_turn_bootstrap", fake_bootstrap)
+    bridge._intent_router = SimpleNamespace(
+        decide=lambda **kwargs: RouteDecision(
+            policy_id="skill:imagegen",
+            tool_plan=ToolExecutionPlan(
+                calls=[ToolCallSpec(tool_name="generate_image", arguments={"prompt": kwargs["user_input"]})]
+            ),
+        )
+    )
+
+    async def fail_if_called(state):
+        _ = state
+        raise AssertionError("LLM should not be called when IntentRouter returns a decision")
+
+    monkeypatch.setattr(bridge, "_runtime_invoke_model_once", fail_if_called)
+
+    plan = await bridge._runtime_controller_planner(state)
+
+    assert plan is not None
+    assert len(plan.calls) == 1
+    assert plan.calls[0].tool_name == "generate_image"
+    assert plan.calls[0].arguments == {"prompt": "生成一只戴眼镜的白色猫咪"}
+
+
+@pytest.mark.asyncio
+async def test_runtime_controller_planner_forces_generate_image_for_explicit_image_intent(
+    monkeypatch,
+):
+    bridge = AgentBridge()
+    user_input = "生成一个图片，这是在沙滩，美女穿着比基尼在沙滩日光浴。"
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-image", session_id="sess-image"),
+        user_input=user_input,
+        task_frame=TaskFrame(objective="generate beach image"),
+        route=RouteMeta(channel="web_chat"),
+        metadata={},
+    )
+    state = TurnState.from_request(request)
+
+    async def fake_bootstrap(state):
+        state.metadata["runtime_agent_info"] = SimpleNamespace(agent_id="main-agent")
+        state.metadata["runtime_config"] = SimpleNamespace(
+            tools=SimpleNamespace(
+                get_tools=lambda: [
+                    SimpleNamespace(name="generate_image"),
+                    SimpleNamespace(name="web_search"),
+                ]
+            )
+        )
+
+    monkeypatch.setattr(bridge, "_ensure_runtime_turn_bootstrap", fake_bootstrap)
+
+    async def fail_if_called(state):
+        _ = state
+        raise AssertionError("LLM should not be called for explicit image intent")
+
+    monkeypatch.setattr(bridge, "_runtime_invoke_model_once", fail_if_called)
+
+    plan = await bridge._runtime_controller_planner(state)
+
+    assert plan is not None
+    assert len(plan.calls) == 1
+    assert plan.calls[0].tool_name == "generate_image"
+    assert plan.calls[0].arguments == {"prompt": user_input}
+
+
+@pytest.mark.asyncio
+async def test_runtime_controller_planner_forces_generate_image_for_implicit_image_intent(
+    monkeypatch,
+):
+    bridge = AgentBridge()
+    user_input = "生成一只戴眼镜的白色猫咪"
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-image-implicit", session_id="sess-image-implicit"),
+        user_input=user_input,
+        task_frame=TaskFrame(objective="generate cat image"),
+        route=RouteMeta(channel="web_chat"),
+        metadata={},
+    )
+    state = TurnState.from_request(request)
+
+    async def fake_bootstrap(state):
+        state.metadata["runtime_agent_info"] = SimpleNamespace(agent_id="main-agent")
+        state.metadata["runtime_config"] = SimpleNamespace(
+            tools=SimpleNamespace(
+                get_tools=lambda: [
+                    SimpleNamespace(name="generate_image"),
+                    SimpleNamespace(name="web_search"),
+                ]
+            )
+        )
+
+    monkeypatch.setattr(bridge, "_ensure_runtime_turn_bootstrap", fake_bootstrap)
+
+    async def fail_if_called(state):
+        _ = state
+        raise AssertionError("LLM should not be called for implicit image intent")
+
+    monkeypatch.setattr(bridge, "_runtime_invoke_model_once", fail_if_called)
+
+    plan = await bridge._runtime_controller_planner(state)
+
+    assert plan is not None
+    assert len(plan.calls) == 1
+    assert plan.calls[0].tool_name == "generate_image"
+    assert plan.calls[0].arguments == {"prompt": user_input}
+
+
+@pytest.mark.asyncio
+async def test_runtime_controller_planner_does_not_force_generate_image_for_non_image_generation(
+    monkeypatch,
+):
+    bridge = AgentBridge()
+    user_input = "生成一个 cron 表达式，每5分钟执行一次"
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-non-image", session_id="sess-non-image"),
+        user_input=user_input,
+        task_frame=TaskFrame(objective="generate cron expression"),
+        route=RouteMeta(channel="web_chat"),
+        metadata={},
+    )
+    state = TurnState.from_request(request)
+
+    async def fake_bootstrap(state):
+        state.metadata["runtime_agent_info"] = SimpleNamespace(agent_id="main-agent")
+        state.metadata["runtime_config"] = SimpleNamespace(
+            tools=SimpleNamespace(
+                get_tools=lambda: [
+                    SimpleNamespace(name="generate_image"),
+                    SimpleNamespace(name="run_in_terminal"),
+                ]
+            )
+        )
+
+    monkeypatch.setattr(bridge, "_ensure_runtime_turn_bootstrap", fake_bootstrap)
+    llm_called = False
+
+    async def fake_runtime_invoke_model_once(state):
+        nonlocal llm_called
+        _ = state
+        llm_called = True
+        return AssistantMessage(
+            content=[TextContent(text="*/5 * * * *")],
+            model="test-model",
+            provider="test-provider",
+            stop_reason="end_turn",
+        )
+
+    monkeypatch.setattr(bridge, "_runtime_invoke_model_once", fake_runtime_invoke_model_once)
+
+    plan = await bridge._runtime_controller_planner(state)
+
+    assert llm_called is True
+    assert plan is not None
+    assert plan.calls == []
+    assert state.metadata["final_candidate_ready"] is True
+    assert state.metadata["final_output_text"] == "*/5 * * * *"
 
 
 @pytest.mark.asyncio

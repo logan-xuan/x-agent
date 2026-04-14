@@ -172,6 +172,7 @@ class SkillManifest:
     context: str | None = None
     license: str | None = None
     priority: int = 999
+    routing: dict[str, Any] | None = None
 
     # 扩展字段
     extra: dict[str, Any] = field(default_factory=dict)
@@ -285,6 +286,8 @@ class SkillManifest:
             result["emoji"] = self.emoji
         if self.homepage:
             result["homepage"] = self.homepage
+        if self.routing:
+            result["routing"] = self.routing
 
         return result
 
@@ -362,6 +365,7 @@ class SkillManifest:
             context=data.get("context"),
             license=data.get("license"),
             priority=data.get("priority", 999),
+            routing=data.get("routing"),
         )
 
 

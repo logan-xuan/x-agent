@@ -79,6 +79,10 @@
                 "type": "string"
             }
         },
+        "routing": {
+            "type": "object",
+            "description": "可选的 deterministic intent routing 策略"
+        },
         "input_schema": {
             "type": "object",
             "description": "输入参数 JSON Schema"

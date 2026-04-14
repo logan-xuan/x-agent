@@ -24,6 +24,7 @@ from .get_current_time import GetCurrentTimeTool
 from .memory_search import MemorySearchTool
 from .notify_tool import NotifyTool
 from .terminal import GetTerminalOutputTool, KillProcessTool, RunInTerminalTool
+from .voice_tools import SynthesizeSpeechTool, TranscribeAudioTool
 
 __all__ = [
     "ReadFileTool",
@@ -41,6 +42,8 @@ __all__ = [
     "RunInTerminalTool",
     "GetTerminalOutputTool",
     "KillProcessTool",
+    "SynthesizeSpeechTool",
+    "TranscribeAudioTool",
     "get_builtin_tools",
 ]
 
@@ -64,6 +67,8 @@ def get_builtin_tools() -> list:
         GetCurrentTimeTool(),
         FetchWebContentTool(),
         GenerateImageTool(),
+        SynthesizeSpeechTool(),
+        TranscribeAudioTool(),
         MemorySearchTool(),
         NotifyTool(),
         DelegateTaskTool(),

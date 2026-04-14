@@ -194,12 +194,45 @@ class DefaultTurnController:
     def _resolve_output_text(self, state: TurnState) -> str | None:
         final_output = state.metadata.get("final_output_text")
         if isinstance(final_output, str) and final_output:
-            return self._inject_generate_image_markdown(state, final_output)
+            return self._apply_output_contract_guard(
+                state,
+                self._inject_generate_image_markdown(state, final_output),
+            )
 
         for result in reversed(state.tool_results):
             if result.success and result.output:
-                return self._inject_generate_image_markdown(state, result.output)
+                return self._apply_output_contract_guard(
+                    state,
+                    self._inject_generate_image_markdown(state, result.output),
+                )
         return None
+
+    def _apply_output_contract_guard(self, state: TurnState, text: str) -> str:
+        """Block unverified success text when deterministic routing requires concrete tool evidence."""
+        route_decision = state.metadata.get("runtime_route_decision")
+        if not isinstance(route_decision, dict):
+            return text
+
+        policy = route_decision.get("policy")
+        if not isinstance(policy, dict):
+            return text
+        postconditions = policy.get("postconditions")
+        if not isinstance(postconditions, dict):
+            return text
+
+        required_tool = postconditions.get("require_successful_tool")
+        if not isinstance(required_tool, str) or not required_tool.strip():
+            return text
+
+        has_success = any(
+            result.tool_name == required_tool and result.success for result in state.tool_results
+        )
+        if has_success:
+            return text
+
+        violation = f"deterministic route 要求工具 `{required_tool}` 成功执行。"
+        state.metadata["output_contract_violation"] = violation
+        return f"未完成可验证的结果输出：{violation}"
 
     def _inject_generate_image_markdown(self, state: TurnState, text: str) -> str:
         """Inject first generated image markdown into final output when missing."""

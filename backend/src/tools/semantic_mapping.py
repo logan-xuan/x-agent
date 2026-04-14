@@ -56,6 +56,18 @@ class ToolSemanticMap:
             "description": "根据自然语言描述生成图片并返回公开资产地址",
             "can_call_directly": True,
         },
+        "synthesize_speech": {
+            "type": "builtin_tool",
+            "module": "src.tools.builtin.voice_tools",
+            "description": "把文本合成为可播放音频，并可挂到最终 assistant 消息",
+            "can_call_directly": True,
+        },
+        "transcribe_audio": {
+            "type": "builtin_tool",
+            "module": "src.tools.builtin.voice_tools",
+            "description": "把当前请求音频、已保存音频资产或本地音频文件转写为文本",
+            "can_call_directly": True,
+        },
         "memory": {
             "type": "builtin_tool",
             "module": "src.memory.manager",

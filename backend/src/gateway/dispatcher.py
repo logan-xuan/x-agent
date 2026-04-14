@@ -424,7 +424,7 @@ class GatewayDispatcher:
             channel_protocol=envelope.channel_protocol,
         )
 
-        context = AgentContext(identity=identity)
+        context = AgentContext(identity=identity, metadata=dict(envelope.metadata or {}))
         identity_manager.activate(identity)
 
         logger.debug(
