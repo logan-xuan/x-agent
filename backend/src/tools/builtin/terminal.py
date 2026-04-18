@@ -18,7 +18,9 @@ import asyncio
 import os
 import shlex
 import signal
+import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,21 @@ from src.utils.logger import get_logger
 from ..base import BaseTool, ToolParameter, ToolParameterType, ToolResult
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class BackgroundProcessHandle:
+    """Tracked metadata for one background terminal process."""
+
+    process: asyncio.subprocess.Process
+    command: str
+    cwd: str
+    stdout_path: Path
+    stderr_path: Path
+    stdout_file: Any
+    stderr_file: Any
+    task_kind: str | None = None
+    task_title: str | None = None
 
 
 def _get_tools_config():
@@ -221,7 +238,7 @@ class RunInTerminalTool(BaseTool):
         # Register for config changes
         self._register_config_callback()
 
-        self._background_processes: dict[str, asyncio.subprocess.Process] = {}
+        self._background_processes: dict[str, BackgroundProcessHandle] = {}
         self._last_background_process_id: str | None = None
 
     def _resolve_process_id_alias(self, process_id: str) -> str:
@@ -230,6 +247,90 @@ class RunInTerminalTool(BaseTool):
         if normalized.upper() == "$LAST":
             return self._last_background_process_id or normalized
         return normalized
+
+    def _background_log_dir(self) -> Path:
+        """Return the directory used to persist background process logs."""
+        path = Path(tempfile.gettempdir()) / "x-agent-terminal"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _classify_background_media_task(
+        self,
+        *,
+        command: str,
+        cwd: Path,
+    ) -> dict[str, str] | None:
+        """Identify long-running media pipeline commands that should auto-run in background."""
+        normalized_command = " ".join(command.strip().split()).lower()
+        normalized_cwd = str(cwd).lower()
+        workspace_video_pipeline = "workspace/video-pipeline" in normalized_cwd or (
+            "workspace/video-pipeline" in normalized_command
+        )
+        if not workspace_video_pipeline:
+            return None
+
+        is_video_pipeline_main = (
+            ("python main.py" in normalized_command or "python3 main.py" in normalized_command)
+            and "--no-api" in normalized_command
+        )
+        is_long_ffmpeg_render = (
+            "ffmpeg" in normalized_command
+            and "ffprobe" not in normalized_command
+            and "-frames:v 1" not in normalized_command
+        )
+        if is_video_pipeline_main or is_long_ffmpeg_render:
+            return {
+                "background_task_kind": "video_pipeline",
+                "background_task_title": "视频生成任务",
+            }
+        return None
+
+    def _read_output_tail(self, path: Path, max_chars: int) -> str:
+        """Read the tail of one output file without loading the full file into memory."""
+        if not path.exists():
+            return ""
+        max_bytes = max_chars * 4
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(size - max_bytes, 0))
+            return handle.read().decode("utf-8", errors="replace")[-max_chars:]
+
+    def _format_background_output(
+        self,
+        *,
+        handle: BackgroundProcessHandle,
+        process_id: str,
+        completed: bool,
+        returncode: int | None,
+    ) -> str:
+        """Build a human-readable output summary for one background process."""
+        stdout_tail = self._read_output_tail(handle.stdout_path, 3000).strip()
+        stderr_tail = self._read_output_tail(handle.stderr_path, 2000).strip()
+        lines = []
+        if handle.task_title:
+            lines.append(handle.task_title)
+        lines.append(
+            f"Process {process_id} "
+            + (
+                f"completed (exit code: {returncode})"
+                if completed
+                else f"is still running (PID: {handle.process.pid})"
+            )
+        )
+        lines.append(f"Command: {handle.command}")
+        if stdout_tail:
+            lines.append("")
+            lines.append("STDOUT:")
+            lines.append(stdout_tail)
+        if stderr_tail:
+            lines.append("")
+            lines.append("STDERR:")
+            lines.append(stderr_tail)
+        if not stdout_tail and not stderr_tail and completed:
+            lines.append("")
+            lines.append("Process completed with no output")
+        return "\n".join(lines).strip()
 
     def _load_config(self) -> None:
         """Load configuration from ConfigManager."""
@@ -663,13 +764,16 @@ class RunInTerminalTool(BaseTool):
         except Exception as e:
             return ToolResult.error_result(f"Invalid working directory: {str(e)}")
 
+        background_task_info = self._classify_background_media_task(command=command, cwd=cwd)
+        effective_is_background = is_background or background_task_info is not None
+
         # Log command execution (audit trail)
         logger.info(
             "Executing terminal command",
             extra={
                 "command": command,
                 "working_dir": str(cwd),
-                "is_background": is_background,
+                "is_background": effective_is_background,
                 "timeout": timeout,
                 "status": status,
             },
@@ -695,8 +799,15 @@ class RunInTerminalTool(BaseTool):
         # =======================================================================
 
         try:
-            if is_background:
-                return await self._execute_background(command, cwd)
+            if effective_is_background:
+                return await self._execute_background(
+                    command,
+                    cwd,
+                    task_metadata={
+                        **(background_task_info or {}),
+                        "background_auto_started": bool(background_task_info and not is_background),
+                    },
+                )
             else:
                 # Pass is_install_command to foreground execution for logging
                 return await self._execute_foreground(command, cwd, timeout, is_install_command)
@@ -910,6 +1021,8 @@ class RunInTerminalTool(BaseTool):
         self,
         command: str,
         cwd: Path,
+        *,
+        task_metadata: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Execute command in background (non-blocking).
 
@@ -920,19 +1033,37 @@ class RunInTerminalTool(BaseTool):
         Returns:
             ToolResult with process ID
         """
-        # Create subprocess
-        process = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-        )
-
-        # Generate process ID
-        import uuid
-
+        task_metadata = dict(task_metadata or {})
         process_id = f"proc_{uuid.uuid4().hex[:8]}"
-        self._background_processes[process_id] = process
+        log_dir = self._background_log_dir()
+        stdout_path = log_dir / f"{process_id}.stdout.log"
+        stderr_path = log_dir / f"{process_id}.stderr.log"
+        stdout_file = stdout_path.open("ab")
+        stderr_file = stderr_path.open("ab")
+
+        try:
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                cwd=cwd,
+            )
+        except Exception:
+            stdout_file.close()
+            stderr_file.close()
+            raise
+
+        self._background_processes[process_id] = BackgroundProcessHandle(
+            process=process,
+            command=command,
+            cwd=str(cwd),
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stdout_file=stdout_file,
+            stderr_file=stderr_file,
+            task_kind=task_metadata.get("background_task_kind"),
+            task_title=task_metadata.get("background_task_title"),
+        )
         self._last_background_process_id = process_id
 
         logger.info(
@@ -941,13 +1072,23 @@ class RunInTerminalTool(BaseTool):
                 "process_id": process_id,
                 "pid": process.pid,
                 "command": command,
+                "task_kind": task_metadata.get("background_task_kind"),
             },
         )
 
         return ToolResult.ok(
-            f"Background process started with ID: {process_id}\nPID: {process.pid}",
+            (
+                f"{task_metadata.get('background_task_title', '后台任务')}已启动\n"
+                f"Process ID: {process_id}\n"
+                f"PID: {process.pid}"
+            ),
             process_id=process_id,
             pid=process.pid,
+            command=command,
+            working_dir=str(cwd),
+            completed=False,
+            is_background=True,
+            **task_metadata,
         )
 
 
@@ -1001,51 +1142,68 @@ class GetTerminalOutputTool(BaseTool):
             return ToolResult.error_result("Terminal tool not available")
 
         resolved_process_id = self._terminal_tool._resolve_process_id_alias(process_id)
-        process = self._terminal_tool._background_processes.get(resolved_process_id)
-        if process is None:
+        handle = self._terminal_tool._background_processes.get(resolved_process_id)
+        if handle is None:
             return ToolResult.error_result(f"Process not found: {process_id}")
 
         # Check if process has completed
-        if process.returncode is not None:
-            # Process completed, get final output
-            stdout, stderr = await process.communicate()
-
-            stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
-            stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
-
-            # Build result
-            output_parts = []
-            if stdout_str:
-                output_parts.append(f"STDOUT:\n{stdout_str}")
-            if stderr_str:
-                output_parts.append(f"STDERR:\n{stderr_str}")
-
-            output = (
-                "\n\n".join(output_parts) if output_parts else "Process completed with no output"
+        if handle.process.returncode is not None:
+            handle.stdout_file.close()
+            handle.stderr_file.close()
+            output = self._terminal_tool._format_background_output(
+                handle=handle,
+                process_id=resolved_process_id,
+                completed=True,
+                returncode=handle.process.returncode,
             )
-
-            # Clean up
             del self._terminal_tool._background_processes[resolved_process_id]
 
-            if process.returncode == 0:
+            metadata = {
+                "process_id": resolved_process_id,
+                "pid": handle.process.pid,
+                "command": handle.command,
+                "working_dir": handle.cwd,
+                "stdout_log_path": str(handle.stdout_path),
+                "stderr_log_path": str(handle.stderr_path),
+                "completed": True,
+            }
+            if handle.task_kind:
+                metadata["background_task_kind"] = handle.task_kind
+            if handle.task_title:
+                metadata["background_task_title"] = handle.task_title
+
+            if handle.process.returncode == 0:
                 return ToolResult.ok(
-                    f"Process completed (exit code: {process.returncode})\n\n{output}",
-                    returncode=process.returncode,
-                    completed=True,
+                    output,
+                    returncode=handle.process.returncode,
+                    **metadata,
                 )
             else:
                 return ToolResult.error_result(
-                    f"Process failed (exit code: {process.returncode})\n\n{output}",
-                    returncode=process.returncode,
-                    completed=True,
+                    output,
+                    returncode=handle.process.returncode,
+                    **metadata,
                 )
 
         else:
             # Process still running
-            return ToolResult.ok(
-                f"Process {resolved_process_id} is still running (PID: {process.pid})",
-                pid=process.pid,
+            output = self._terminal_tool._format_background_output(
+                handle=handle,
+                process_id=resolved_process_id,
                 completed=False,
+                returncode=None,
+            )
+            return ToolResult.ok(
+                output,
+                process_id=resolved_process_id,
+                pid=handle.process.pid,
+                command=handle.command,
+                working_dir=handle.cwd,
+                stdout_log_path=str(handle.stdout_path),
+                stderr_log_path=str(handle.stderr_path),
+                completed=False,
+                background_task_kind=handle.task_kind,
+                background_task_title=handle.task_title,
             )
 
 
@@ -1098,23 +1256,30 @@ class KillProcessTool(BaseTool):
             return ToolResult.error_result("Terminal tool not available")
 
         resolved_process_id = self._terminal_tool._resolve_process_id_alias(process_id)
-        process = self._terminal_tool._background_processes.get(resolved_process_id)
-        if process is None:
+        handle = self._terminal_tool._background_processes.get(resolved_process_id)
+        if handle is None:
             return ToolResult.error_result(f"Process not found: {process_id}")
 
         try:
-            process.kill()
-            await process.wait()
+            handle.process.kill()
+            await handle.process.wait()
+            handle.stdout_file.close()
+            handle.stderr_file.close()
 
             # Clean up
             del self._terminal_tool._background_processes[resolved_process_id]
 
-            logger.info("Process killed", extra={"process_id": resolved_process_id, "pid": process.pid})
+            logger.info(
+                "Process killed",
+                extra={"process_id": resolved_process_id, "pid": handle.process.pid},
+            )
 
             return ToolResult.ok(
-                f"Process {resolved_process_id} (PID: {process.pid}) killed successfully",
+                f"Process {resolved_process_id} (PID: {handle.process.pid}) killed successfully",
                 process_id=resolved_process_id,
-                pid=process.pid,
+                pid=handle.process.pid,
+                command=handle.command,
+                working_dir=handle.cwd,
             )
 
         except Exception as e:

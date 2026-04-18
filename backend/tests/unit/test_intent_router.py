@@ -81,6 +81,42 @@ def test_intent_router_builds_generate_image_decision_from_skill_policy():
     assert decision.tool_plan.calls[0].arguments == {"prompt": "生成一只戴眼镜的白色猫咪"}
 
 
+def test_intent_router_resolves_skill_registry_from_request_metadata():
+    from src.runtime.routing.intent_router import IntentRouter
+
+    skill_manifest = SimpleNamespace(
+        skill_id="imagegen",
+        routing={
+            "mode": "deterministic",
+            "priority": 100,
+            "matcher": "text_to_image_request",
+            "action": {
+                "type": "force_tool_plan",
+                "tool_name": "generate_image",
+                "args": {"prompt": "$user_input"},
+            },
+        },
+    )
+    seen_agent_ids: list[str] = []
+
+    def skill_registry_provider(metadata):
+        seen_agent_ids.append(str(metadata.get("current_agent_id", "")))
+        return SimpleNamespace(list_skills=lambda source=None: [skill_manifest])
+
+    router = IntentRouter(skill_registry=None, skill_registry_provider=skill_registry_provider)
+
+    decision = router.decide(
+        user_input="生成一只戴眼镜的白色猫咪",
+        available_tool_names={"generate_image"},
+        turn_index=0,
+        metadata={"current_agent_id": "main-agent"},
+    )
+
+    assert decision is not None
+    assert decision.policy_id == "skill:imagegen"
+    assert seen_agent_ids == ["main-agent"]
+
+
 def test_intent_router_builds_delegate_decision_from_builtin_policy():
     from src.runtime.routing.intent_router import IntentRouter
 
@@ -155,6 +191,7 @@ def test_intent_router_allows_registering_custom_matcher():
     [
         ("生成一个 cron 表达式，每5分钟执行一次", {"generate_image", "run_in_terminal"}),
         ("帮我写个总结", {"generate_image"}),
+        ("生成一个关于 Hermes Agent 的讲解视频", {"generate_image", "run_in_terminal"}),
     ],
 )
 def test_intent_router_returns_none_for_non_deterministic_requests(

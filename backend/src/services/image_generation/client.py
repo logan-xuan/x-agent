@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 
 import httpx
 
 from ...config.models import ImageGenerationConfig
+
+
+@dataclass(slots=True)
+class ImageGenerationSubmission:
+    """一次文生图任务的提交结果。"""
+
+    task_id: str = ""
+    provider_urls: list[str] = field(default_factory=list)
 
 
 class ModelScopeImageClient:
@@ -48,20 +57,35 @@ class ModelScopeImageClient:
                 urls.append(item)
         return urls
 
-    async def generate(self, *, prompt: str, size: str, count: int) -> list[str]:
-        """调用 ModelScope 文生图接口。"""
+    async def submit_generation(
+        self,
+        *,
+        prompt: str,
+        size: str,
+        count: int,
+    ) -> ImageGenerationSubmission:
+        """提交文生图任务，返回即时 URL 或 provider 任务 ID。"""
 
         request = self._build_request(prompt=prompt, size=size, count=count)
         response = await self._http.send(request)
         response.raise_for_status()
         payload = response.json()
         urls = self._extract_image_urls(payload)
-        if not urls:
-            task_id = str(payload.get("task_id") or "").strip()
-            if not task_id:
-                raise ValueError("ModelScope returned no image URLs")
-            urls = await self._fetch_task_result(task_id)
-        return urls
+        if urls:
+            return ImageGenerationSubmission(provider_urls=urls)
+
+        task_id = str(payload.get("task_id") or "").strip()
+        if not task_id:
+            raise ValueError("ModelScope returned neither image URLs nor task_id")
+        return ImageGenerationSubmission(task_id=task_id)
+
+    async def generate(self, *, prompt: str, size: str, count: int) -> list[str]:
+        """调用文生图接口并同步等待最终图片 URL。"""
+
+        submission = await self.submit_generation(prompt=prompt, size=size, count=count)
+        if submission.provider_urls:
+            return submission.provider_urls
+        return await self.wait_for_task_result(submission.task_id)
 
     async def download_image(self, url: str) -> tuple[bytes, str]:
         """下载生成后的图片内容。"""
@@ -70,7 +94,7 @@ class ModelScopeImageClient:
         response.raise_for_status()
         return response.content, response.headers.get("content-type", "image/png")
 
-    async def _fetch_task_result(self, task_id: str) -> list[str]:
+    async def wait_for_task_result(self, task_id: str) -> list[str]:
         """查询异步任务结果，直到拿到图片 URL。"""
 
         for _ in range(30):
@@ -93,3 +117,8 @@ class ModelScopeImageClient:
             await asyncio.sleep(1)
 
         raise TimeoutError(f"Timed out waiting for ModelScope task {task_id}")
+
+    async def aclose(self) -> None:
+        """关闭底层 HTTP 客户端。"""
+
+        await self._http.aclose()

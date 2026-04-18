@@ -8,6 +8,7 @@ import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 
 import { AgentMessage } from "../../hooks/useAgent";
+import { normalizeAssetUrl } from "../../utils/assetUrl";
 import { AgentToolCallCard } from "./AgentToolCallCard";
 import { ImageLightbox } from "./ImageLightbox";
 
@@ -214,7 +215,7 @@ export function AgentMessageItem({
   const parsedSegments = !isUser
     ? parseAssistantMessage(message.content)
     : null;
-  const audioUrl = message.audio?.publicUrl;
+  const audioUrl = normalizeAssetUrl(message.audio?.publicUrl);
 
   return (
     <div
@@ -336,13 +337,13 @@ export function AgentMessageItem({
                 return (
                   <img
                     key={`image-${index}`}
-                    src={segment.url}
+                    src={normalizeAssetUrl(segment.url)}
                     alt={segment.alt || "生成图片"}
                     className="mt-3 max-h-[28rem] w-full cursor-zoom-in rounded-xl border border-gray-200 object-contain shadow-sm dark:border-gray-700"
                     onClick={() =>
                       setSelectedImage({
                         alt: segment.alt || "生成图片",
-                        url: segment.url,
+                        url: normalizeAssetUrl(segment.url) || segment.url,
                       })
                     }
                   />

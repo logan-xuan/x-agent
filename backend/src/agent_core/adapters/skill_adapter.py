@@ -611,7 +611,7 @@ class XAgentSkillAdapter:
         self._registry.clear_cache()
 
 
-def create_skill_adapter() -> XAgentSkillAdapter | None:
+def create_skill_adapter(workspace_path: str | Path | None = None) -> XAgentSkillAdapter | None:
     """创建技能适配器的便捷方法.
 
     自动初始化 SkillRegistry 和 SkillAdapter。
@@ -629,10 +629,14 @@ def create_skill_adapter() -> XAgentSkillAdapter | None:
 
         # 获取配置路径
         config = ConfigManager().config
-        workspace_path = Path(config.workspace.path).expanduser()
+        resolved_workspace_path = (
+            Path(workspace_path).expanduser()
+            if workspace_path is not None
+            else Path(config.workspace.path).expanduser()
+        )
 
         # 技能目录
-        user_skills_dir = workspace_path / "skills"
+        user_skills_dir = resolved_workspace_path / "skills"
         # 修复: 正确的路径是 src/skills，而不是 backend/skills
         # skill_adapter.py 在 src/agent_core/adapters/
         # parent -> adapters, parent.parent -> agent_core, parent.parent.parent -> src
@@ -641,6 +645,7 @@ def create_skill_adapter() -> XAgentSkillAdapter | None:
         logger.debug(
             "Initializing skill adapter",
             extra={
+                "workspace_path": str(resolved_workspace_path),
                 "user_skills_dir": str(user_skills_dir),
                 "system_skills_dir": str(system_skills_dir),
             },

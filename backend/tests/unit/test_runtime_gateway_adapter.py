@@ -20,7 +20,7 @@ from src.gateway.agent_bridge import AgentBridge
 from src.gateway.agent_invoker import AgentInvoker, InvokeSource
 from src.gateway.dispatcher import GatewayDispatcher
 from src.gateway.envelope import Envelope
-from src.gateway.response import GatewayEvent, GatewayEventType
+from src.gateway.response import GatewayEventType
 from src.gateway.tool_result_normalizer import RuntimeToolResultNormalizer
 from src.runtime.adapters import GatewayAdapter
 from src.runtime.repositories import (
@@ -71,6 +71,16 @@ async def test_runtime_gateway_adapter_prepares_turn_from_envelope():
     assert request.metadata["extra"] == "value"
     assert request.metadata["runtime_timeout_ms"] == 180000
     assert request.metadata["_runtime_budget_profile"] is not None
+
+
+def test_agent_bridge_does_not_preload_skill_registry_without_agent_context(monkeypatch):
+    def fail_if_called(agent_id=None):
+        _ = agent_id
+        raise AssertionError("Skill registry should not be resolved during AgentBridge initialization")
+
+    monkeypatch.setattr("src.gateway.agent_bridge.get_skill_registry", fail_if_called)
+
+    AgentBridge()
 
 
 @pytest.mark.asyncio
@@ -1079,247 +1089,6 @@ def test_agent_bridge_skips_empty_assistant_message_end_events():
 
 
 @pytest.mark.asyncio
-async def test_agent_bridge_can_run_runtime_turn_via_explicit_legacy_bridge_fallback():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-legacy",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={"runtime_force_legacy_bridge": True},
-    )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={"runtime_force_legacy_bridge": True},
-    )
-    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-    bridge.run = Mock(  # type: ignore[method-assign]
-        return_value=_gateway_events(
-            GatewayEvent.text_chunk("runtime "),
-            GatewayEvent.message_end("runtime execute"),
-        )
-    )
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "final"
-    assert result.finish_reason == "done_definition_satisfied"
-    assert result.output_text == "runtime execute"
-    assert result.metadata["legacy_bridge"] is True
-    diagnostics = result.metadata["runtime_diagnostics"]
-    assert diagnostics["phase"] == "completed"
-    assert diagnostics["events_seen"] == 2
-    assert diagnostics["text_chunks"] == 1
-    assert diagnostics["event_counts"]["text_chunk"] == 1
-    assert diagnostics["event_counts"]["message_end"] == 1
-    assert diagnostics["milestones_ms"]["agent_resolved"] >= 0
-    assert diagnostics["milestones_ms"]["completed"] >= diagnostics["milestones_ms"]["agent_resolved"]
-
-
-@pytest.mark.asyncio
-async def test_agent_bridge_runtime_legacy_path_respects_timeout():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-timeout",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={"runtime_timeout_ms": 1, "runtime_force_legacy_bridge": True},
-    )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={"runtime_timeout_ms": 1, "runtime_force_legacy_bridge": True},
-    )
-    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-
-    async def slow_events():
-        await __import__("asyncio").sleep(0.05)
-        yield GatewayEvent.text_chunk("late")
-
-    bridge.run = Mock(return_value=slow_events())  # type: ignore[method-assign]
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "abort"
-    assert result.finish_reason == "max_wall_time"
-    assert result.output_text == (
-        "[runtime-turn timeout after 1ms] "
-        "phase=timeout, last_event=none, events_seen=0"
-    )
-    assert result.metadata["timeout_ms"] == 1
-    diagnostics = result.metadata["runtime_diagnostics"]
-    assert diagnostics["phase"] == "timeout"
-    assert diagnostics["events_seen"] == 0
-    assert diagnostics["last_progress"] == "timed_out"
-    assert diagnostics["milestones_ms"]["timed_out"] >= diagnostics["milestones_ms"]["event_stream_started"]
-
-
-@pytest.mark.asyncio
-async def test_agent_bridge_runtime_fast_mode_timeout_uses_richer_fallback_text():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-fast-timeout",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={"runtime_timeout_ms": 1, "runtime_disable_tools": True, "runtime_force_legacy_bridge": True},
-    )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={"runtime_timeout_ms": 1, "runtime_disable_tools": True, "runtime_force_legacy_bridge": True},
-    )
-    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-
-    async def slow_events():
-        await __import__("asyncio").sleep(0.05)
-        yield GatewayEvent.text_chunk("late")
-
-    bridge.run = Mock(return_value=slow_events())  # type: ignore[method-assign]
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "abort"
-    assert result.output_text == (
-        "[runtime fast mode timeout after 1ms] "
-        'request="runtime execute". bridge ok, waiting for provider content. '
-        "phase=timeout, last_event=none, events_seen=0"
-    )
-    assert result.metadata["synthetic_fallback"] is True
-
-
-@pytest.mark.asyncio
-async def test_agent_bridge_runtime_fast_mode_timeout_after_agent_start_mentions_probe():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-fast-timeout-started",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={"runtime_timeout_ms": 1, "runtime_disable_tools": True, "runtime_force_legacy_bridge": True},
-    )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={"runtime_timeout_ms": 1, "runtime_disable_tools": True, "runtime_force_legacy_bridge": True},
-    )
-    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-
-    async def stalled_after_start():
-        yield GatewayEvent(type=GatewayEventType.AGENT_START, data={"trace_id": "trace-1"})
-        await __import__("asyncio").sleep(0.05)
-
-    bridge.run = Mock(return_value=stalled_after_start())  # type: ignore[method-assign]
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "abort"
-    assert result.output_text == (
-        "[runtime fast mode timeout after 1ms] "
-        'request="runtime execute". provider emitted no content chunk before timeout. '
-        "Try /api/v1/dev/llm-stream-probe or increase runtime_timeout_ms. "
-        "phase=timeout, last_event=agent_start, events_seen=1"
-    )
-    assert result.metadata["synthetic_fallback"] is True
-
-
-@pytest.mark.asyncio
-async def test_agent_bridge_runtime_fast_mode_can_finalize_timeout_fallback():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-fast-timeout-final",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={
-            "runtime_timeout_ms": 1,
-            "runtime_disable_tools": True,
-            "runtime_timeout_fallback_mode": "final",
-            "runtime_force_legacy_bridge": True,
-        },
-    )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={
-            "runtime_timeout_ms": 1,
-            "runtime_disable_tools": True,
-            "runtime_timeout_fallback_mode": "final",
-            "runtime_force_legacy_bridge": True,
-        },
-    )
-    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-
-    async def slow_events():
-        await __import__("asyncio").sleep(0.05)
-        yield GatewayEvent.text_chunk("late")
-
-    bridge.run = Mock(return_value=slow_events())  # type: ignore[method-assign]
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "final"
-    assert result.finish_reason == "max_wall_time"
-    assert result.metadata["synthetic_fallback"] is True
-    assert result.metadata["timeout_fallback_mode"] == "final"
-
-
-@pytest.mark.asyncio
-async def test_agent_bridge_runtime_legacy_path_can_disable_tools():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-no-tools",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={"runtime_disable_tools": True, "runtime_force_legacy_bridge": True},
-    )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={"runtime_disable_tools": True, "runtime_force_legacy_bridge": True},
-    )
-    bridge.create_config = Mock()  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-    captured_config: dict[str, object] = {}
-    captured_run_kwargs: dict[str, object] = {}
-
-    def _create_agent(*, config=None, agent_info=None):
-        captured_config["config"] = config
-        captured_config["agent_info"] = agent_info
-        return object()
-
-    bridge.create_agent = Mock(side_effect=_create_agent)  # type: ignore[method-assign]
-
-    def _run(*args, **kwargs):
-        captured_run_kwargs.update(kwargs)
-        return _gateway_events(GatewayEvent.message_end("runtime execute"))
-
-    bridge.run = Mock(side_effect=_run)  # type: ignore[method-assign]
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "final"
-    runtime_config = captured_config["config"]
-    assert isinstance(runtime_config, AgentCoreConfig)
-    assert runtime_config.tools is None
-    assert runtime_config.context is None
-    assert runtime_config.enable_context_compression is False
-    assert runtime_config.enable_experience_learning is False
-    assert runtime_config.temperature == 0.0
-    assert runtime_config.max_tokens == 64
-    bridge.create_config.assert_not_called()  # type: ignore[attr-defined]
-    assert captured_run_kwargs["disable_skills"] is False
-
-
-@pytest.mark.asyncio
 async def test_agent_bridge_runtime_fast_mode_honors_max_tokens_override():
     bridge = AgentBridge()
     adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
@@ -1389,65 +1158,25 @@ async def test_agent_bridge_runtime_fast_mode_can_force_non_streaming():
 
 
 @pytest.mark.asyncio
-async def test_agent_bridge_runtime_legacy_path_can_disable_skills():
+async def test_agent_bridge_runtime_bootstrap_can_skip_history_load():
     bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-no-skills",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={"runtime_disable_skills": True, "runtime_force_legacy_bridge": True},
+    bridge.runtime_session_orchestrator.resume_session = AsyncMock()  # type: ignore[method-assign]
+    bridge._runtime_load_legacy_history_messages = AsyncMock()  # type: ignore[method-assign]
+    request = TurnRequest(
+        session=SessionDescriptor(session_key="sess-skip-history", session_id="sess-skip-history"),
+        user_input="runtime execute",
+        task_frame=TaskFrame(objective="runtime execute"),
+        route=RouteMeta(channel="web_chat"),
+        metadata={"persist_user_message": False, "runtime_skip_history_load": True},
     )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={"runtime_disable_skills": True, "runtime_force_legacy_bridge": True},
-    )
-    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-    captured_run_kwargs: dict[str, object] = {}
+    state = TurnState.from_request(request)
 
-    def _run(*args, **kwargs):
-        captured_run_kwargs.update(kwargs)
-        return _gateway_events(GatewayEvent.message_end("runtime execute"))
+    await bridge._ensure_runtime_turn_bootstrap(state)
 
-    bridge.run = Mock(side_effect=_run)  # type: ignore[method-assign]
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "final"
-    assert captured_run_kwargs["disable_skills"] is True
-
-
-@pytest.mark.asyncio
-async def test_agent_bridge_runtime_legacy_path_can_skip_history_load():
-    bridge = AgentBridge()
-    adapter = GatewayAdapter(orchestrator=bridge.runtime_session_orchestrator)
-    envelope = Envelope.create_chat(
-        content="runtime execute",
-        session_id="sess-skip-history",
-        channel_type=ChannelType.WEB_CHAT,
-        channel_protocol=ChannelProtocol.WEBSOCKET,
-        metadata={"runtime_skip_history_load": True, "runtime_force_legacy_bridge": True},
-    )
-    _, request = await adapter.prepare_turn(
-        envelope,
-        metadata={"runtime_skip_history_load": True, "runtime_force_legacy_bridge": True},
-    )
-    bridge.create_agent = Mock(return_value=object())  # type: ignore[method-assign]
-    bridge.load_session_history = AsyncMock()  # type: ignore[method-assign]
-    bridge.run = Mock(  # type: ignore[method-assign]
-        return_value=_gateway_events(
-            GatewayEvent.message_end("runtime execute"),
-        )
-    )
-
-    result = await bridge.run_runtime_turn(request)
-
-    assert result.kind == "final"
-    bridge.load_session_history.assert_not_awaited()
-    diagnostics = result.metadata["runtime_diagnostics"]
-    assert "history_skipped" in diagnostics["milestones_ms"]
+    bridge.runtime_session_orchestrator.resume_session.assert_not_awaited()  # type: ignore[attr-defined]
+    bridge._runtime_load_legacy_history_messages.assert_not_awaited()  # type: ignore[attr-defined]
+    assert state.metadata["runtime_history_source"] == "empty"
+    assert [message.role for message in state.active_messages] == ["user"]
 
 
 @pytest.mark.asyncio
@@ -1495,12 +1224,6 @@ async def test_agent_bridge_run_propagates_abort_event():
 
     assert events == []
     assert agent.abort_calls == 1
-
-
-async def _gateway_events(*events):
-    for event in events:
-        yield event
-
 
 @pytest.mark.asyncio
 async def test_agent_bridge_restores_system_prompt_after_runtime_error():

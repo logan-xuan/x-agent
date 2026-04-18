@@ -18,6 +18,7 @@ import { useCallback, useState, useRef, useEffect } from 'react';
 import { useWebSocket, ConnectionStatus } from './useWebSocket';
 import { getSession, createSession as createSessionApi } from '../services/api';
 import type { Message } from '../types';
+import { normalizeAssetUrl } from '../utils/assetUrl';
 
 /** Agent 工具调用状态 */
 export type AgentToolCallStatus = 'executing' | 'completed' | 'error';
@@ -194,7 +195,7 @@ function normalizeAudioAttachment(raw: unknown): AgentAudioAttachment | undefine
             : typeof candidate.asset_id === 'string'
                 ? candidate.asset_id
                 : undefined,
-        publicUrl,
+        publicUrl: normalizeAssetUrl(publicUrl),
         mimeType: typeof candidate.mimeType === 'string'
             ? candidate.mimeType
             : typeof candidate.mime_type === 'string'

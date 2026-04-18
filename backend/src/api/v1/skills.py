@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from ...config.manager import ConfigManager
+from ...conversation.dao.models import Agent as AgentORM
 from ...models.skill import SkillSource
 from ...services.skill.registry import (
     SkillRegistry,
@@ -23,26 +24,32 @@ from ...utils.logger import get_logger
 router = APIRouter()
 logger = get_logger(__name__)
 
-# Module-level registry instance
-_registry: SkillRegistry | None = None
+# Module-level registry cache keyed by workspace path
+_registry_cache: dict[str, SkillRegistry] = {}
 
 
-def _get_registry() -> SkillRegistry:
+def _resolve_workspace_path(agent_id: str | None = None) -> Path:
+    config_manager = ConfigManager()
+    if agent_id:
+        agent = AgentORM.from_config(agent_id)
+        workspace = getattr(agent, "workspace", "") if agent is not None else ""
+        if workspace:
+            return Path(workspace).expanduser().resolve()
+    return Path(config_manager.config.workspace.path).expanduser().resolve()
+
+
+def _get_registry(agent_id: str | None = None) -> SkillRegistry:
     """Get or initialize the skill registry."""
-    global _registry
+    config_manager = ConfigManager()
+    workspace_path = _resolve_workspace_path(agent_id)
+    cache_key = str(workspace_path)
 
-    if _registry is None:
-        config_manager = ConfigManager()
-        workspace_path = Path(config_manager.config.workspace.path)
-
-        # User skills directory from config
+    if cache_key not in _registry_cache:
         user_skills_dir = workspace_path / config_manager.config.workspace.skills_dir
-
-        # System skills directory
         backend_dir = Path(__file__).parent.parent.parent.parent
         system_skills_dir = backend_dir / "src" / "skills"
 
-        _registry = init_skill_registry(
+        _registry_cache[cache_key] = init_skill_registry(
             user_skills_dir=user_skills_dir,
             system_skills_dir=system_skills_dir,
         )
@@ -50,17 +57,20 @@ def _get_registry() -> SkillRegistry:
         logger.info(
             "Skill registry initialized",
             extra={
+                "agent_id": agent_id,
+                "workspace_path": str(workspace_path),
                 "user_skills_dir": str(user_skills_dir),
                 "system_skills_dir": str(system_skills_dir),
             },
         )
 
-    return _registry
+    return _registry_cache[cache_key]
 
 
 @router.get("/skills")
 async def list_skills(
     source: str | None = Query(None, description="Filter by source: 'user' or 'system'"),
+    agent_id: str | None = Query(None, description="Resolve user skills from this agent workspace"),
 ) -> list[dict[str, Any]]:
     """List all available skills.
 
@@ -78,7 +88,7 @@ async def list_skills(
         GET /api/v1/skills?source=user
     """
     try:
-        registry = _get_registry()
+        registry = _get_registry(agent_id)
 
         # Parse source filter
         source_filter: SkillSource | None = None
@@ -100,6 +110,7 @@ async def list_skills(
             extra={
                 "skill_count": len(skills),
                 "source_filter": source,
+                "agent_id": agent_id,
             },
         )
 
@@ -150,8 +161,8 @@ async def clear_cache() -> dict[str, Any]:
         Success message
     """
     try:
-        registry = _get_registry()
-        registry.clear_cache()
+        for registry in _registry_cache.values():
+            registry.clear_cache()
 
         logger.info("Skill cache cleared via API")
 

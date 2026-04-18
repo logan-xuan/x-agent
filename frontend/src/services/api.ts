@@ -499,8 +499,13 @@ export interface Skill {
 }
 
 /** List all available skills */
-export async function listSkills(): Promise<Skill[]> {
-  const response = await fetch(`${API_BASE_URL}/skills`, {
+export async function listSkills(agentId?: string | null): Promise<Skill[]> {
+  const params = new URLSearchParams();
+  if (agentId) {
+    params.set('agent_id', agentId);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/skills${params.toString() ? `?${params}` : ''}`, {
     headers: {
       'Content-Type': 'application/json',
     },

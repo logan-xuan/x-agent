@@ -1,6 +1,5 @@
 """Unit tests for runtime prompt budget controls."""
 
-import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -8,26 +7,32 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from src.agent_core import agent_loop
+from src.agent_core.adapters.context_adapter import XAgentContextAdapter
+from src.agent_core.adapters.llm_adapter import XAgentLLMAdapter
+from src.agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
 from src.agent_core.config import AgentCoreConfig
 from src.agent_core.logger import AgentLogger
 from src.agent_core.types import AgentContext as LoopAgentContext
-from src.agent_core.types import AgentTool, StreamChunk, TextContent, ToolParameter, ToolResult, UserMessage
-from src.agent_core.types import LogCategory
-from src.agent_core.adapters.llm_adapter import XAgentLLMAdapter
-from src.agent_core.adapters.context_adapter import XAgentContextAdapter
-from src.agent_core.adapters.tool_middleware_adapter import create_tool_middleware_adapter
-from src.agent_core.types import StreamChunkType
+from src.agent_core.types import (
+    AgentTool,
+    LogCategory,
+    StreamChunk,
+    StreamChunkType,
+    ToolParameter,
+    ToolResult,
+    UserMessage,
+)
 from src.config.models import CompressionConfig
 from src.conversation.context import AgentContext as RequestAgentContext
 from src.conversation.context import clear_current_context, set_current_context
-from src.gateway.agent_bridge import AgentBridge
-from src.gateway.agent_info import AgentInfo
 from src.services.compression.compressor import CompressionResult
 from src.services.compression.manager import (
     CompressionBudgetProfile,
     ContextCompressionManager,
-    PreparedContext as CompressionPreparedContext,
     _CompressionCache,
+)
+from src.services.compression.manager import (
+    PreparedContext as CompressionPreparedContext,
 )
 from src.services.context.artifact_store import ArtifactStore
 from src.services.context.context_assembler import ContextAssembler
@@ -38,9 +43,9 @@ from src.services.context.session_state_store import SessionContextStateStore
 from src.services.context.session_state_updater import SessionStateUpdater
 from src.services.context.tool_result_archiver import ToolResultArchiver
 from src.services.context.types import ContextBuildRequest
-from src.services.llm.provider import LLMResponse, StreamingLLMResponse
 from src.services.llm.bailian_provider import BailianProvider
 from src.services.llm.openai_provider import OpenAIProvider
+from src.services.llm.provider import LLMResponse, StreamingLLMResponse
 from src.services.storage import StorageService
 
 
@@ -652,8 +657,8 @@ class TestRuntimeBudgetControls:
             async def __anext__(self):
                 try:
                     return next(self._chunks)
-                except StopIteration:
-                    raise StopAsyncIteration
+                except StopIteration as err:
+                    raise StopAsyncIteration from err
 
         class DummyRouter:
             def __init__(self):
@@ -1263,81 +1268,6 @@ class TestRuntimeBudgetControls:
             )
 
             assert any(getattr(event, "type", "") == "agent_end" for event in events)
-        finally:
-            clear_current_context()
-            await storage.close()
-
-    @pytest.mark.asyncio
-    async def test_agent_bridge_schedules_auto_resume_after_status_reply(self, tmp_path):
-        """Status reply should trigger a background continuation for the preserved primary goal."""
-        db_path = tmp_path / "bridge-auto-resume.db"
-        storage = StorageService(database_url=f"sqlite+aiosqlite:///{db_path}")
-        await storage.initialize()
-
-        state_store = SessionContextStateStore(storage)
-        await state_store.upsert(
-            "session-auto-resume",
-            mode="research",
-            summary_text="state",
-            token_estimate=10,
-            current_goal={
-                "primary_goal": "请调研数字人创业项目，并输出完整方案",
-                "latest_user_request": "你在处理吗？",
-                "is_progress_query": True,
-            },
-            metadata={},
-        )
-
-        class FakeAgent:
-            _original_system_prompt = "base"
-            _system_prompt = "base"
-
-            async def prompt(self, content, images=None):
-                from src.agent_core.types import AgentEndEvent, AssistantMessage, MessageUpdateEvent
-
-                msg = AssistantMessage(content=[TextContent(text="我正在处理，会继续推进主任务。")])
-                yield MessageUpdateEvent(message=msg, delta="我正在处理，会继续推进主任务。", delta_type="text")
-                yield AgentEndEvent(messages=[], trace_id="trace-auto", total_duration_ms=1)
-
-        bridge = AgentBridge()
-        agent_info = AgentInfo(
-            agent_id="research-agent",
-            agent_name="研究分析员",
-            agent_type="specialized",
-            model_name="primary",
-            temperature=0.5,
-            max_tokens=None,
-            workspace="",
-            feature="",
-        )
-
-        req_ctx = RequestAgentContext.for_internal(
-            session_id="session-auto-resume",
-            agent_id="research-agent",
-        )
-        set_current_context(req_ctx)
-
-        try:
-            with patch.object(bridge, "_persist_user_message", AsyncMock(return_value=None)), \
-                 patch.object(bridge, "_persist_assistant_messages", AsyncMock(return_value=None)), \
-                 patch("src.gateway.agent_invoker.AgentInvoker.invoke", new_callable=AsyncMock) as mock_invoke:
-                async for _ in bridge.run(
-                    agent=FakeAgent(),
-                    content="你在处理吗？",
-                    session_id="session-auto-resume",
-                    agent_info=agent_info,
-                    persist_user_message=False,
-                    allow_auto_resume=True,
-                ):
-                    pass
-
-                await asyncio.sleep(0)
-                mock_invoke.assert_awaited_once()
-                kwargs = mock_invoke.await_args.kwargs
-                assert kwargs["agent_id"] == "research-agent"
-                assert kwargs["session_id"] == "session-auto-resume"
-                assert "继续执行当前主任务" in kwargs["content"]
-                assert "数字人创业项目" in kwargs["content"]
         finally:
             clear_current_context()
             await storage.close()

@@ -26,10 +26,12 @@ class IntentRouter:
         self,
         *,
         skill_registry: Any,
+        skill_registry_provider: Any | None = None,
         agent_catalog_provider: Any | None = None,
         builtin_policies: list[dict[str, Any]] | None = None,
     ) -> None:
         self._skill_registry = skill_registry
+        self._skill_registry_provider = skill_registry_provider
         self._agent_catalog_provider = agent_catalog_provider or (lambda: [])
         self._builtin_policies = builtin_policies or self._default_builtin_policies()
         self._matchers: dict[str, Any] = {
@@ -55,23 +57,29 @@ class IntentRouter:
         metadata: dict[str, Any],
     ) -> RouteDecision | None:
         """Return a deterministic route when one policy clearly applies."""
-        policies = [*self._builtin_policies, *self._skill_policies()]
-        policies.sort(key=lambda policy: int(policy.get("priority", 999)))
-
         context = {
             "user_input": (user_input or "").strip(),
             "available_tool_names": set(available_tool_names),
             "turn_index": turn_index,
             "metadata": dict(metadata),
         }
+        policies = [*self._builtin_policies, *self._skill_policies(context["metadata"])]
+        policies.sort(key=lambda policy: int(policy.get("priority", 999)))
         for policy in policies:
             decision = self._evaluate_policy(policy, context)
             if decision is not None:
                 return decision
         return None
 
-    def _skill_policies(self) -> list[dict[str, Any]]:
-        skills = self._skill_registry.list_skills() if self._skill_registry is not None else []
+    def _skill_policies(self, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+        skill_registry = self._skill_registry
+        if self._skill_registry_provider is not None:
+            try:
+                skill_registry = self._skill_registry_provider(dict(metadata))
+            except Exception:
+                skill_registry = None
+
+        skills = skill_registry.list_skills() if skill_registry is not None else []
         policies: list[dict[str, Any]] = []
         for manifest in skills:
             routing = getattr(manifest, "routing", None)
@@ -263,6 +271,15 @@ class IntentRouter:
             "id",
             "接口",
             "回复",
+            "视频",
+            "短视频",
+            "讲解视频",
+            "字幕",
+            "配音",
+            "tts",
+            "镜头",
+            "storyboard",
+            "scene",
         )
         if (
             leading_generation_pattern.search(normalized)

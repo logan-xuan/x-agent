@@ -57,6 +57,15 @@ x-agent agent create --name "CodeReviewer" \
 
 安装即用，热插拔扩展。
 
+**当前技能加载规则：**
+- 系统技能来自 `backend/src/skills/`
+- 用户技能不再只看单一全局 workspace
+- 运行时会根据**当前会话绑定的 agent_id**
+- 解析该 agent 在 `backend/x-agent.yaml` 中配置的 `workspace`
+- 再从 `agent.workspace/<skills_dir>/` 发现用户技能
+
+这意味着不同 Agent 可以挂载不同的本地技能目录，技能隔离和覆盖关系都更清晰。
+
 ### 4. 企业级定时任务引擎（Cron）
 **业界首创 CLI + Agent 双模调用** — 既可通过命令行管理，也可让 AI Agent 直接调用，自动化能力前所未有。
 
@@ -132,7 +141,7 @@ Agent：x-agent cron list
 
 **🌐 Web 界面** — 最直观的体验
 ```bash
-./start.sh  # 一键启动，自动打开浏览器
+./pm2.sh restart  # 标准重启方式，前后端一起拉起
 ```
 - Markdown 实时渲染、代码高亮、图片上传
 - Trace 可视化追踪，查看每个请求的执行流程
@@ -162,35 +171,55 @@ x-agent status                  # 查看系统状态
 ## 🏗️ 架构概览
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         用户交互层（五端统一）                           │
-├───────────┬───────────┬──────────────┬──────────────────────────────────┤
-│  Web 界面  │ CLI 命令行 │ WebSocket    │      IM 通道（飞书/钉钉/企微）     │
-│ (React+TS) │ (Python)  │  实时通信    │      (Channel Adapter)           │
-└─────┬─────┴─────┬─────┴──────┬───────┴──────────────────────────────────┘
-      │           │            │
-      └───────────┴────────────┘
-                 │
-┌────────────────▼────────────────────────────────────────────────────────┐
-│                    Gateway 网关层（智能路由）                            │
-│         统一入口、负载均衡、会话管理、Agent 调度、消息协议转换            │
-└─────────────────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-┌───────▼───────┐    ┌────────▼────────┐   ┌───────▼───────┐
-│   Agent 核心   │    │    记忆系统      │   │   工具系统     │
-│  - 多轮对话    │    │  - 向量化存储    │   │  - Skills     │
-│  - 上下文压缩  │    │  - 语义检索      │   │  - 代码执行    │
-│  - 人设管理    │    │  - 自动摘要      │   │  - 外部 API   │
-└───────────────┘    └─────────────────┘   └───────────────┘
-        │
-┌───────▼───────┐
-│   LLM 路由    │
-│  - 多模型支持  │
-│  - 故障转移    │
-└───────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                       用户入口层                               │
+├──────────────┬──────────────┬─────────────────────────────────┤
+│ Web 前端      │ CLI          │ IM / Channel Adapter           │
+│ React + TS    │ Python       │ 飞书 / 钉钉 / 其他外部渠道       │
+└──────┬────────┴──────┬───────┴─────────────────────────────────┘
+       │               │
+       └───────────────┴──────────────┐
+                                      ▼
+┌───────────────────────────────────────────────────────────────┐
+│                     Gateway / Session 层                      │
+│  FastAPI / REST / WebSocket / SSE / Dispatcher / Session      │
+└───────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌───────────────────────────────────────────────────────────────┐
+│                  AgentBridge（Facade / Orchestrator）         │
+│  统一承接 Gateway 请求，分发到 legacy stream 或 runtime turn   │
+└───────────────────────────────────────────────────────────────┘
+                                      │
+            ┌─────────────────────────┼─────────────────────────┐
+            ▼                         ▼                         ▼
+┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
+│ Legacy Stream Bridge │  │ Runtime Turn Chain   │  │ Shared Collaborators │
+│ 老流式兼容路径        │  │ 新 runtime 控制路径   │  │ bootstrap / resume / │
+│ agent_loop / 事件桥接 │  │ planner / executor   │  │ telemetry / model    │
+└──────────────────────┘  │ compact / persist    │  │ input / persistence  │
+                          └──────────────────────┘  └──────────────────────┘
+                                      │
+                                      ▼
+┌───────────────────────────────────────────────────────────────┐
+│         Agent Core / Runtime / Memory / Tools / LLM          │
+│   模型调用、工具执行、上下文压缩、记忆检索、技能提示注入      │
+└───────────────────────────────────────────────────────────────┘
 ```
+
+### 当前实现要点
+
+- `backend/src/gateway/agent_bridge.py` 已收敛为薄门面，主要负责路由和编排
+- legacy 流式桥接逻辑拆到 `backend/src/gateway/legacy_stream_bridge.py`
+- runtime 横切逻辑拆到：
+  - `runtime_bootstrap.py`
+  - `runtime_resume.py`
+  - `runtime_telemetry.py`
+  - `runtime_model_input.py`
+  - `runtime_persistence.py`
+- 技能依赖与 prompt 注入辅助逻辑集中在 `backend/src/gateway/bridge_dependencies.py`
+
+当前这套结构的目标是：让 Gateway 负责入口和编排，让 runtime 和 legacy 两条执行链路边界清楚，便于继续扩展和排障。
 
 ### IM 通道能力（Channel）
 
@@ -270,13 +299,13 @@ channels:
 
 **技术亮点：**
 - **模块化设计** — 核心、记忆、工具、网关、通道独立演进
-- **热更新配置** — 修改 x-agent.yaml 无需重启，即时生效
+- **统一服务入口** — 使用 `./pm2.sh start|restart|status|logs` 管理前后端
 - **上下文压缩** — 超长对话自动摘要，保留关键信息
 - **多模型路由** — 支持 OpenAI、Claude、本地模型，自动故障转移
 
 ### 技术亮点
 - **模块化设计** — 核心、记忆、工具、网关独立演进
-- **热更新配置** — 修改 x-agent.yaml 无需重启，即时生效
+- **统一服务入口** — 使用 `./pm2.sh start|restart|status|logs` 管理前后端
 - **上下文压缩** — 超长对话自动摘要，保留关键信息
 - **多模型路由** — 支持 OpenAI、Claude、本地模型，自动故障转移
 
@@ -284,24 +313,27 @@ channels:
 
 ## 🚀 5 分钟快速开始
 
-### 第一步：一键启动
+### 第一步：标准启动 / 重启
 
 ```bash
 git clone <your-repo>
 cd x-agent
 
-# 启动所有服务（前后端 + 自动打开浏览器）
-./start.sh
-
-# 或重启（自动清理端口、更新依赖）
-./restart.sh
-
-# 或使用 PM2 守护启动（推荐长期运行）
+# 首次拉起服务
 ./pm2.sh start
 
-# PM2 开发模式（前端走 Vite dev server）
-./pm2.sh start development
+# 日常开发 / 修改配置 / 更新代码后的标准动作
+./pm2.sh restart
+
+# 需要前端走 Vite dev server 时
+./pm2.sh restart development
 ```
+
+**推荐约定：**
+- `./pm2.sh start`：第一次启动或 PM2 中还没有进程时使用
+- `./pm2.sh restart`：日常默认命令。修改 `backend/x-agent.yaml`、更新技能、调整网关/前端代码后，都优先执行这个命令
+- `./pm2.sh status`：检查前后端是否都处于 `online`
+- `./pm2.sh logs x-agent-backend` / `./pm2.sh logs x-agent-frontend`：查看实时日志
 
 ### 第二步：配置 LLM
 
@@ -327,13 +359,13 @@ models:
 ### 可选：使用 PM2 托管
 
 ```bash
-# 生产模式：后端前台运行，前端自动 build 后用 preview 提供静态服务
+# 生产模式：后端由 PM2 拉起，前端 build 后用 preview 提供静态服务
 ./pm2.sh start
 
 # 开发模式：前端使用 Vite dev server，便于调试
 ./pm2.sh start development
 
-# 重载配置并重启服务
+# 标准重启方式（推荐）
 ./pm2.sh restart
 
 # 停止并移除 PM2 中的服务
@@ -345,7 +377,9 @@ models:
 ./pm2.sh logs x-agent-frontend
 ```
 
-统一 PM2 入口是 `./pm2.sh`。它固定使用仓库内 `.pm2` 作为 `PM2_HOME`，避免和系统其他 PM2 实例互相干扰。`ecosystem.config.cjs` 仍然是 PM2 配置文件；后端由 `scripts/pm2-backend.sh` 启动 Python 进程，前端由 `scripts/pm2-frontend.sh` 启动，默认会先 `build` 再 `preview`。
+统一 PM2 入口是 `./pm2.sh`。它固定使用仓库内 `.pm2` 作为 `PM2_HOME`，避免和系统其他 PM2 实例互相干扰。`ecosystem.config.cjs` 是 PM2 配置文件；后端由 `scripts/pm2-backend.sh` 启动 Python 进程，前端由 `scripts/pm2-frontend.sh` 启动。
+
+当前推荐把 `./pm2.sh restart` 作为标准服务管理入口，而不是零散地分别执行 `start-backend.sh` / `start-frontend.sh`。
 
 ---
 
@@ -411,7 +445,19 @@ export XAGENT_TIMEOUT=300                          # 请求超时（秒）
 
 ### 热更新配置示例
 
-修改 `backend/x-agent.yaml` 后自动生效，无需重启：
+修改 `backend/x-agent.yaml` 后，建议执行：
+
+```bash
+./pm2.sh restart
+```
+
+尤其是下面这些配置变更，应该显式重启：
+- 模型与 provider 配置
+- agent 的 `workspace`
+- 技能目录与技能文件
+- 前后端端口或 PM2 运行模式
+
+示例：
 
 ```yaml
 # 切换模型
@@ -451,7 +497,37 @@ tools:
 
 ### 添加新 Skill
 
-在 `backend/skills/` 创建新模块，实现标准接口即可被 Agent 调用。详见 [架构文档](arch/)。
+系统支持两类技能：
+
+- **系统技能**：位于 `backend/src/skills/`
+- **用户技能**：位于 `当前 agent.workspace/<skills_dir>/`
+
+当前推荐规则：
+
+1. 在 `backend/x-agent.yaml` 中给每个 agent 显式配置自己的 `workspace`
+2. 在该 workspace 下放置 `skills/your-skill/SKILL.md`
+3. 执行 `./pm2.sh restart`
+4. 前端技能菜单和运行时 skill prompt 都会按当前会话所属的 `agent_id`，从该 agent 的 workspace 中发现用户技能
+
+示例：
+
+```yaml
+workspace:
+  skills_dir: skills
+
+multi_agent:
+  agents:
+    - id: main-agent
+      workspace: /Users/you/project/workspace
+```
+
+对应技能目录：
+
+```text
+/Users/you/project/workspace/skills/video-pipeline/SKILL.md
+```
+
+这样 `main-agent` 会优先看到自己 workspace 下的用户技能，再叠加系统技能。
 
 ---
 
@@ -468,7 +544,7 @@ tools:
 1. **为不同场景创建专用 Agent** — 代码审查、写作、翻译各一个
 2. **定期查看 MEMORY.md** — 了解 AI 记住了什么
 3. **使用 Trace 调试** — 遇到问题时查看执行流程
-4. **热更新配置** — 修改配置无需重启，即时生效
+4. **修改配置后重启服务** — 改完 `backend/x-agent.yaml`、技能目录或前端代理后，优先执行 `./pm2.sh restart`
 
 ---
 

@@ -71,7 +71,7 @@ export function AgentChatWindow({
         async function loadSkills() {
             try {
                 setIsLoadingSkills(true);
-                const loadedSkills = await listSkills();
+                const loadedSkills = await listSkills(currentAgentId);
                 setSkills(loadedSkills);
             } catch (error) {
                 console.error('Failed to load skills:', error);
@@ -81,7 +81,7 @@ export function AgentChatWindow({
         }
 
         loadSkills();
-    }, []);
+    }, [currentAgentId]);
 
     // Handle skill selection
     const handleSkillSelect = useCallback((skillName: string) => {
@@ -352,6 +352,8 @@ export function AgentChatWindow({
                         <div className="flex gap-2">
                             <div className="flex-1 relative">
                                 <textarea
+                                    id="agent-chat-input"
+                                    name="agent_chat_input"
                                     ref={textareaRef}
                                     value={inputValue}
                                     onChange={(e) => {
@@ -432,6 +434,8 @@ export function AgentChatWindow({
                                         onSendVoiceMessage={onSendVoiceMessage}
                                     />
                                     <input
+                                        id="agent-voice-file-input"
+                                        name="agent_voice_file_input"
                                         ref={fileInputRef}
                                         type="file"
                                         accept="audio/*"

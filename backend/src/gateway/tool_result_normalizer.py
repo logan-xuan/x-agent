@@ -158,6 +158,9 @@ class RuntimeToolResultNormalizer:
         return "\n".join(lines).strip()
 
     def _normalize_terminal(self, output_text: str, details: dict[str, Any]) -> str:
+        if details.get("is_background") or details.get("process_id"):
+            return self._normalize_background_terminal(output_text, details)
+
         returncode = details.get("returncode")
         stdout = ""
         stderr = ""
@@ -179,6 +182,38 @@ class RuntimeToolResultNormalizer:
         if stderr:
             lines.append("STDERR:")
             lines.append(self._head_tail(stderr, self.terminal_head_chars // 2, self.terminal_tail_chars // 2))
+        return "\n".join(lines).strip()
+
+    def _normalize_background_terminal(self, output_text: str, details: dict[str, Any]) -> str:
+        process_id = str(details.get("process_id") or "").strip()
+        command = str(details.get("command") or "").strip()
+        working_dir = str(details.get("working_dir") or "").strip()
+        title = str(details.get("background_task_title") or "").strip()
+        completed = details.get("completed")
+        returncode = details.get("returncode")
+
+        lines = ["[run_in_terminal]"]
+        if title:
+            lines.append(f"Task: {title}")
+        if process_id:
+            lines.append(f"Process ID: {process_id}")
+        if completed is False:
+            lines.append("Status: running in background")
+        elif completed is True:
+            lines.append(
+                "Status: completed"
+                if returncode in {None, 0}
+                else f"Status: failed (exit code: {returncode})"
+            )
+        if command:
+            lines.append(f"Command: {command}")
+        if working_dir:
+            lines.append(f"Working dir: {working_dir}")
+        if completed is False and process_id:
+            lines.append(f'Progress: call get_terminal_output(process_id="{process_id}")')
+        if output_text.strip():
+            lines.append("")
+            lines.append(self._head_tail(output_text.strip(), self.terminal_head_chars, self.terminal_tail_chars))
         return "\n".join(lines).strip()
 
     def _normalize_read_file(self, output_text: str, details: dict[str, Any]) -> str:

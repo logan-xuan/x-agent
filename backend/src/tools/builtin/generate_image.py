@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ...config.manager import get_config
 from ...conversation.context import get_current_context
 from ...services.image_generation.asset_store import ImageAssetStore
@@ -71,14 +73,95 @@ class GenerateImageTool(BaseTool):
             return "main-agent", ""
         return context.agent_id or "main-agent", context.session_id or ""
 
+    async def _persist_assets(
+        self,
+        *,
+        provider_urls: list[str],
+        agent_id: str,
+        session_id: str,
+        prompt: str,
+        size: str,
+    ) -> list[dict[str, str]]:
+        """将 provider 图片下载并落盘到项目资产空间。"""
+
+        assets: list[dict[str, str]] = []
+        for provider_url in provider_urls:
+            image_bytes, mime_type = await self._client.download_image(provider_url)
+            stored = await self._store.save_generated_image(
+                agent_id=agent_id,
+                session_id=session_id,
+                prompt=prompt,
+                model=self._config.model,
+                size=size,
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+            )
+            assets.append(
+                {
+                    "file_path": str(stored.file_path),
+                    "relative_path": stored.relative_path,
+                    "public_url": stored.public_url,
+                    "mime_type": stored.mime_type,
+                    "provider_asset_url": provider_url,
+                }
+            )
+        return assets
+
+    def _background_receipt(
+        self,
+        *,
+        task_id: str,
+        agent_id: str,
+        session_id: str,
+        prompt: str,
+        size: str,
+        count: int,
+    ) -> ToolResult:
+        """返回后台图片任务收据，由 runtime 在后续完成通知。"""
+
+        lines = [
+            "图片生成任务已提交，正在后台处理。",
+            f"Task ID: {task_id}",
+            f"Model: {self._config.model}",
+            f"Size: {size}",
+            f"Count: {count}",
+            "完成后系统会自动把结果推送到当前会话。",
+        ]
+        return ToolResult.ok(
+            "\n".join(lines),
+            model=self._config.model,
+            final_prompt=prompt,
+            prompt=prompt,
+            size=size,
+            count=count,
+            agent_id=agent_id,
+            session_id=session_id,
+            assets=[],
+            is_background=True,
+            background_task_kind="image_generation",
+            background_task_title="图片生成任务",
+            modelscope_task_id=task_id,
+        )
+
     async def execute(
         self,
-        prompt: str,
-        size: str | None = None,
-        count: int | None = None,
-        style_hint: str | None = None,
+        **params: Any,
     ) -> ToolResult:
         """执行文生图。"""
+
+        prompt = params.get("prompt")
+        size = params.get("size")
+        count = params.get("count")
+        style_hint = params.get("style_hint")
+
+        if not isinstance(prompt, str) or not prompt.strip():
+            return ToolResult.error_result("prompt is required")
+        if size is not None and not isinstance(size, str):
+            return ToolResult.error_result("size must be a string")
+        if count is not None and not isinstance(count, int):
+            return ToolResult.error_result("count must be an integer")
+        if style_hint is not None and not isinstance(style_hint, str):
+            return ToolResult.error_result("style_hint must be a string")
 
         if not self._config.enabled:
             return ToolResult.error_result("Image generation is disabled in configuration")
@@ -92,32 +175,28 @@ class GenerateImageTool(BaseTool):
         agent_id, session_id = self._resolve_agent_context()
 
         try:
-            provider_urls = await self._client.generate(
+            submission = await self._client.submit_generation(
                 prompt=final_prompt,
                 size=final_size,
                 count=final_count,
             )
-            assets: list[dict[str, str]] = []
-            for provider_url in provider_urls:
-                image_bytes, mime_type = await self._client.download_image(provider_url)
-                stored = await self._store.save_generated_image(
+            if submission.task_id and not submission.provider_urls:
+                return self._background_receipt(
+                    task_id=submission.task_id,
                     agent_id=agent_id,
                     session_id=session_id,
                     prompt=final_prompt,
-                    model=self._config.model,
                     size=final_size,
-                    image_bytes=image_bytes,
-                    mime_type=mime_type,
+                    count=final_count,
                 )
-                assets.append(
-                    {
-                        "file_path": str(stored.file_path),
-                        "relative_path": stored.relative_path,
-                        "public_url": stored.public_url,
-                        "mime_type": stored.mime_type,
-                        "provider_asset_url": provider_url,
-                    }
-                )
+
+            assets = await self._persist_assets(
+                provider_urls=list(submission.provider_urls),
+                agent_id=agent_id,
+                session_id=session_id,
+                prompt=final_prompt,
+                size=final_size,
+            )
         except Exception as exc:
             return ToolResult.error_result(f"Image generation failed: {exc}")
 
