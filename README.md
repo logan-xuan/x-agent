@@ -96,6 +96,7 @@ x-agent cron info 每日备份
 
 # 立即执行任务（不等待定时触发）
 x-agent cron run 每日备份
+x-agent cron run --task 每日备份  # 兼容写法
 
 # 暂停/恢复任务
 x-agent cron pause 每日备份
@@ -103,7 +104,9 @@ x-agent cron resume 每日备份
 
 # 查看执行历史（执行时间、状态、耗时）
 x-agent cron history
+x-agent cron history 每日备份     # 兼容写法
 x-agent cron history -t 每日备份  # 只看指定任务
+x-agent cron logs                 # history 的兼容别名
 
 # 删除任务
 x-agent cron delete 每日备份 -f  # -f 跳过确认

@@ -179,6 +179,7 @@ x-agent cron create -n "每日备份" \
 
 # 立即执行任务
 x-agent cron run <task_id>
+x-agent cron run --task <task_id>  # 兼容写法
 
 # 暂停任务
 x-agent cron pause <task_id>
@@ -192,7 +193,9 @@ x-agent cron delete <task_id> -f  # 强制删除，跳过确认
 
 # 查看执行历史
 x-agent cron history
+x-agent cron history <task_id>     # 兼容写法
 x-agent cron history -t <task_id>  # 查看指定任务历史
+x-agent cron logs                  # history 的兼容别名
 
 # 查看任务详情
 x-agent cron info <task_id>

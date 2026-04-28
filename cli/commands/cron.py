@@ -8,10 +8,13 @@
     -f "workspace:backup.py:run" \
     -d "每天凌晨2点执行备份" -y             → 非交互式创建（-y 跳过所有确认）
 - x-agent cron run <task_id>                → 立即执行任务
+- x-agent cron run --task <task_id>         → 立即执行任务（兼容写法）
 - x-agent cron pause <task_id>              → 暂停任务
 - x-agent cron resume <task_id>             → 恢复任务
 - x-agent cron delete <task_id>             → 删除任务
 - x-agent cron history                      → 查看执行历史
+- x-agent cron history <task_id>            → 查看执行历史（兼容写法）
+- x-agent cron logs                         → 查看执行历史（history 别名）
 - x-agent cron info <task_id>               → 查看任务详情
 
 create 参数说明：
@@ -39,6 +42,26 @@ from ..config import CLIConfig
 
 cron_app = typer.Typer()
 console = Console()
+
+
+def _resolve_task_selector(
+    task_id_arg: str | None,
+    task_id_option: str | None,
+    *,
+    command_name: str,
+) -> str:
+    """统一解析任务选择参数，兼容位置参数和 --task 选项。"""
+    if task_id_arg and task_id_option and task_id_arg != task_id_option:
+        raise typer.BadParameter(
+            f"{command_name} 同时收到了位置参数和 --task，但两者不一致："
+            f" '{task_id_arg}' != '{task_id_option}'"
+        )
+
+    resolved = task_id_arg or task_id_option
+    if resolved:
+        return resolved
+
+    raise typer.BadParameter(f"{command_name} 需要提供任务ID，可使用位置参数或 --task/-t")
 
 
 def _derive_task_id(name: str) -> str:
@@ -365,10 +388,11 @@ async def _create_task_impl(
 
 @cron_app.command("run")
 def cron_run(
-    task_id: str = typer.Argument(help="任务ID"),
+    task_id_arg: str | None = typer.Argument(None, help="任务ID"),
+    task_id: str | None = typer.Option(None, "--task", "-t", help="任务ID（兼容写法）"),
 ) -> None:
     """立即执行指定的定时任务（无视定时规则）。"""
-    asyncio.run(_run_task(task_id))
+    asyncio.run(_run_task(_resolve_task_selector(task_id_arg, task_id, command_name="run")))
 
 
 async def _run_task(task_id: str) -> None:
@@ -511,11 +535,40 @@ async def _delete_task(task_id: str, force: bool) -> None:
 
 @cron_app.command("history")
 def cron_history(
-    task_id: str = typer.Option(None, "--task", "-t", help="指定任务ID"),
+    task_id_arg: str | None = typer.Argument(None, help="任务ID（兼容写法）"),
+    task_id: str | None = typer.Option(None, "--task", "-t", help="指定任务ID"),
     limit: int = typer.Option(50, "--limit", "-l", help="最大返回数量", min=1, max=500),
 ) -> None:
     """查看定时任务的执行历史。"""
-    asyncio.run(_get_history(task_id=task_id, limit=limit))
+    asyncio.run(
+        _get_history(
+            task_id=(
+                _resolve_task_selector(task_id_arg, task_id, command_name="history")
+                if task_id_arg or task_id
+                else None
+            ),
+            limit=limit,
+        )
+    )
+
+
+@cron_app.command("logs")
+def cron_logs(
+    task_id_arg: str | None = typer.Argument(None, help="任务ID（兼容写法）"),
+    task_id: str | None = typer.Option(None, "--task", "-t", help="指定任务ID"),
+    limit: int = typer.Option(50, "--limit", "-l", help="最大返回数量", min=1, max=500),
+) -> None:
+    """查看定时任务的执行历史（兼容别名：logs）。"""
+    asyncio.run(
+        _get_history(
+            task_id=(
+                _resolve_task_selector(task_id_arg, task_id, command_name="logs")
+                if task_id_arg or task_id
+                else None
+            ),
+            limit=limit,
+        )
+    )
 
 
 async def _get_history(task_id: str | None, limit: int) -> None:
