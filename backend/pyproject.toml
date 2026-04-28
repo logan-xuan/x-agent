@@ -84,11 +84,8 @@ dev = [
     "types-pyyaml>=6.0.12",
 ]
 
-[project.scripts]
-x-agent = "x_agent.main:main"
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/x_agent"]
+packages = ["src"]
 
 [tool.ruff]
 target-version = "py311"
